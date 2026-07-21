@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chamber-llm-trainer"
+version = "0.1.0"
+description = "A small, real PyTorch causal-language-model trainer mapped to the 3D LLM chambers."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["torch>=2.1"]
+
+[project.scripts]
+chamber-trainer = "chamber_trainer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

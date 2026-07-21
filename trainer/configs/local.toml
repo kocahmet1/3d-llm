@@ -1,0 +1,37 @@
+seed = 1337
+
+[data]
+source = "bin"
+train_bin = "../data/local/train.bin"
+val_bin = "../data/local/val.bin"
+
+[model]
+vocab_size = 257
+context_length = 256
+d_model = 256
+n_heads = 8
+n_layers = 6
+mlp_ratio = 4
+dropout = 0.1
+bias = true
+tie_embeddings = false
+
+[training]
+output_dir = "../runs/local"
+device = "auto"
+precision = "auto"
+micro_batch_size = 8
+gradient_accumulation_steps = 4
+max_steps = 10000
+learning_rate = 0.0003
+min_learning_rate = 0.00003
+warmup_steps = 200
+weight_decay = 0.1
+beta1 = 0.9
+beta2 = 0.95
+grad_clip = 1.0
+eval_interval = 250
+eval_batches = 20
+checkpoint_interval = 500
+log_interval = 10
+deterministic = false
