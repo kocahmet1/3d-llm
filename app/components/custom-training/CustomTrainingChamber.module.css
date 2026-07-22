@@ -254,8 +254,25 @@
   line-height: 1.55;
 }
 
+.localRequirementCopy a {
+  color: #ffdc91;
+  font-weight: 750;
+  text-decoration-color: rgba(255, 220, 145, 0.5);
+  text-underline-offset: 3px;
+}
+
+.localRequirementCopy a:hover,
+.localRequirementCopy a:focus-visible {
+  color: #fff3cf;
+  text-decoration-color: currentColor;
+}
+
 .localRequirement[data-status="online"] .localRequirementCopy p {
   color: #9fc0b5;
+}
+
+.localRequirement[data-status="online"] .localRequirementCopy a {
+  color: #8ff9c9;
 }
 
 .localCommandCard {

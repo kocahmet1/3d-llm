@@ -718,9 +718,16 @@ export function CustomTrainingChamber() {
               </h2>
               <p>
                 Training is unavailable on the hosted site because it cannot
-                reach the loopback-only PyTorch trainer. Clone or open this
-                project on the same computer, install its Node and trainer
-                dependencies, then start both pieces with this command.
+                reach the loopback-only PyTorch trainer. Download or clone{" "}
+                <a
+                  href="https://github.com/kocahmet1/3d-llm"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  kocahmet1/3d-llm from GitHub
+                </a>{" "}
+                onto the computer you want to train on, install its Node and
+                trainer dependencies, then start both pieces with this command.
               </p>
             </div>
             <div className={styles.localCommandCard}>

@@ -151,6 +151,8 @@ test("custom training chamber renders a truthful local-training setup", async ()
   assert.match(html, /Local trainer/i);
   assert.match(html, /Run this site on your local machine/i);
   assert.match(html, /Training is unavailable on the hosted site/i);
+  assert.match(html, /kocahmet1\/3d-llm from GitHub/i);
+  assert.match(html, /https:\/\/github\.com\/kocahmet1\/3d-llm/i);
   assert.match(html, /npm run dev:training/i);
   assert.match(html, /Local URL/i);
   assert.doesNotMatch(html, /mock training|simulated loss/i);
