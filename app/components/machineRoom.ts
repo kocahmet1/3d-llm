@@ -480,30 +480,54 @@ function createTrainingConsoleSignTexture(): THREE.CanvasTexture {
   const canvas = makeCanvas(1024, 256);
   const paint = canvas.getContext("2d");
   if (paint) {
+    // Bright cartoon marquee — candy letters with a glow.
     const background = paint.createLinearGradient(0, 0, 0, 256);
-    background.addColorStop(0, "#152837");
-    background.addColorStop(0.52, "#07131c");
-    background.addColorStop(1, "#03080d");
+    background.addColorStop(0, "#1b2c6e");
+    background.addColorStop(1, "#0d1330");
     paint.fillStyle = background;
     paint.fillRect(0, 0, 1024, 256);
-    paint.strokeStyle = "#77f8d0";
-    paint.lineWidth = 10;
-    paint.strokeRect(12, 12, 1000, 232);
-    paint.strokeStyle = "rgba(101, 220, 234, 0.45)";
-    paint.lineWidth = 3;
-    paint.strokeRect(29, 29, 966, 198);
+    const bloom = paint.createRadialGradient(512, 128, 30, 512, 128, 560);
+    bloom.addColorStop(0, "rgba(90, 220, 255, 0.28)");
+    bloom.addColorStop(1, "rgba(0, 0, 0, 0)");
+    paint.fillStyle = bloom;
+    paint.fillRect(0, 0, 1024, 256);
 
     paint.textAlign = "center";
     paint.textBaseline = "middle";
-    paint.shadowColor = "rgba(121, 248, 207, 0.78)";
+
+    // Chunky faux-3D extruded title: an outline, a stack of offset copies that
+    // read as extrusion depth, a candy-gradient face, and a top gloss highlight.
+    const title = "TRAIN YOUR OWN LLM HERE";
+    paint.font = '900 62px "Trebuchet MS", "Segoe UI", sans-serif';
+    paint.lineJoin = "round";
+    paint.strokeStyle = "#08112c";
+    paint.lineWidth = 13;
+    paint.strokeText(title, 512, 92);
+    for (let d = 9; d >= 1; d -= 1) {
+      paint.fillStyle = d > 4 ? "#0a2352" : "#0e2f6e";
+      paint.fillText(title, 512 + d * 0.5, 92 + d * 1.3);
+    }
+    paint.shadowColor = "rgba(90, 220, 255, 0.85)";
     paint.shadowBlur = 22;
-    paint.fillStyle = "#effff9";
-    paint.font = '800 72px system-ui, "Segoe UI", sans-serif';
-    paint.fillText("TRAIN YOUR OWN LLM HERE", 512, 112);
-    paint.shadowBlur = 10;
-    paint.fillStyle = "#77f8d0";
-    paint.font = '650 34px system-ui, "Segoe UI", sans-serif';
-    paint.fillText("CUSTOM TRAINING TERMINAL", 512, 184);
+    const titleFill = paint.createLinearGradient(0, 56, 0, 128);
+    titleFill.addColorStop(0, "#a9ff86");
+    titleFill.addColorStop(1, "#39d0ff");
+    paint.fillStyle = titleFill;
+    paint.fillText(title, 512, 92);
+    paint.shadowBlur = 0;
+    // Glossy highlight across the top of the letter faces.
+    paint.save();
+    paint.beginPath();
+    paint.rect(0, 60, 1024, 26);
+    paint.clip();
+    paint.fillStyle = "rgba(255, 255, 255, 0.4)";
+    paint.fillText(title, 512, 92);
+    paint.restore();
+
+    // Subtitle with a warm pop and playful stars.
+    paint.fillStyle = "#ffb43a";
+    paint.font = '800 28px "Trebuchet MS", sans-serif';
+    paint.fillText("★  CUSTOM TRAINING PLAYGROUND  ★", 512, 188);
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -516,38 +540,84 @@ function createTrainingConsoleScreenTexture(): THREE.CanvasTexture {
   const canvas = makeCanvas(640, 400);
   const paint = canvas.getContext("2d");
   if (paint) {
-    paint.fillStyle = "#02090c";
+    // Playful cartoon UI on a dark navy panel so the candy colors pop.
+    const bg = paint.createLinearGradient(0, 0, 0, 400);
+    bg.addColorStop(0, "#141a3a");
+    bg.addColorStop(1, "#0a0e24");
+    paint.fillStyle = bg;
     paint.fillRect(0, 0, 640, 400);
-    paint.strokeStyle = "rgba(102, 255, 214, 0.08)";
-    paint.lineWidth = 1;
-    for (let x = 0; x <= 640; x += 32) {
+
+    const rrect = (x: number, y: number, w: number, h: number, r: number) => {
       paint.beginPath();
-      paint.moveTo(x, 0);
-      paint.lineTo(x, 400);
-      paint.stroke();
-    }
-    for (let y = 0; y <= 400; y += 32) {
-      paint.beginPath();
-      paint.moveTo(0, y);
-      paint.lineTo(640, y);
-      paint.stroke();
-    }
+      paint.moveTo(x + r, y);
+      paint.arcTo(x + w, y, x + w, y + h, r);
+      paint.arcTo(x + w, y + h, x, y + h, r);
+      paint.arcTo(x, y + h, x, y, r);
+      paint.arcTo(x, y, x + w, y, r);
+      paint.closePath();
+    };
+
     paint.textAlign = "left";
-    paint.fillStyle = "#77f8d0";
-    paint.font = '800 54px ui-monospace, "Cascadia Code", monospace';
-    paint.fillText("MODEL LAB", 46, 82);
-    paint.fillStyle = "#eafff8";
-    paint.font = '700 34px ui-monospace, "Cascadia Code", monospace';
-    paint.fillText("READY TO TRAIN", 46, 139);
-    paint.fillStyle = "rgba(146, 222, 205, 0.84)";
-    paint.font = '600 25px ui-monospace, "Cascadia Code", monospace';
-    paint.fillText("01  ADD YOUR TEXT", 46, 218);
-    paint.fillText("02  CHOOSE A MODEL", 46, 270);
-    paint.fillText("03  START TRAINING", 46, 322);
-    paint.fillStyle = "#ffce69";
-    paint.fillRect(46, 352, 456, 9);
-    paint.fillStyle = "#77f8d0";
-    paint.fillRect(508, 342, 84, 28);
+    paint.textBaseline = "alphabetic";
+
+    // Chunky title with a soft drop shadow.
+    paint.fillStyle = "rgba(0, 0, 0, 0.35)";
+    paint.font = '800 60px "Trebuchet MS", "Segoe UI", sans-serif';
+    paint.fillText("MODEL LAB", 40, 88);
+    paint.fillStyle = "#7bff6a";
+    paint.fillText("MODEL LAB", 37, 85);
+
+    // Rounded status pill with a warm fill.
+    paint.fillStyle = "#ff8a34";
+    rrect(38, 104, 214, 34, 17);
+    paint.fill();
+    paint.fillStyle = "#20143a";
+    paint.font = '800 20px "Trebuchet MS", sans-serif';
+    paint.fillText("READY TO TRAIN", 56, 128);
+
+    // Step chips with colored number bubbles.
+    const chips: Array<[string, string, string]> = [
+      ["01", "Add your text", "#3fd0ff"],
+      ["02", "Choose a model", "#7bff5a"],
+      ["03", "Start training", "#ffd23f"],
+    ];
+    chips.forEach((chip, index) => {
+      const y = 172 + index * 58;
+      paint.fillStyle = "rgba(255, 255, 255, 0.06)";
+      rrect(38, y, 564, 46, 14);
+      paint.fill();
+      paint.fillStyle = chip[2];
+      paint.beginPath();
+      paint.arc(70, y + 23, 13, 0, Math.PI * 2);
+      paint.fill();
+      paint.fillStyle = "#0a0e24";
+      paint.textAlign = "center";
+      paint.font = '800 15px "Trebuchet MS", sans-serif';
+      paint.fillText(chip[0], 70, y + 28);
+      paint.textAlign = "left";
+      paint.fillStyle = "#eaf6ff";
+      paint.font = '700 26px "Trebuchet MS", sans-serif';
+      paint.fillText(chip[1], 100, y + 31);
+    });
+
+    // Rainbow progress bar.
+    const bx = 38;
+    const by = 356;
+    const bw = 564;
+    const bh = 16;
+    paint.fillStyle = "rgba(255, 255, 255, 0.08)";
+    rrect(bx, by, bw, bh, 8);
+    paint.fill();
+    const grad = paint.createLinearGradient(bx, 0, bx + bw, 0);
+    grad.addColorStop(0, "#7bff5a");
+    grad.addColorStop(0.5, "#3fd0ff");
+    grad.addColorStop(1, "#ffd23f");
+    paint.save();
+    rrect(bx, by, bw * 0.66, bh, 8);
+    paint.clip();
+    paint.fillStyle = grad;
+    paint.fillRect(bx, by, bw, bh);
+    paint.restore();
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -590,19 +660,22 @@ export function createMachineRoom(): MachineRoomRuntime {
     minY: 0.45,
     maxY: 3.7,
     walkY: 1.62,
-    // Start beside the reading chair, outside its padded collision footprint,
-    // so WASD works on the first keypress without requiring a wheel escape.
-    spawn: new THREE.Vector3(4.55, 1.62, 2.8),
-    spawnYaw: 0.94,
-    spawnPitch: -0.2,
+    // Resting pose: centered in front of the machine table, looking straight
+    // at the Transformer Tower. The opening fly-in settles here and R / M
+    // return the visitor here. Clear of the table collision footprint, so
+    // WASD works on the first keypress without requiring a wheel escape.
+    spawn: new THREE.Vector3(0, 1.62, 2.8),
+    spawnYaw: 0,
+    spawnPitch: -0.09,
     blockers: [
       { minX: -2.25, maxX: 2.25, minZ: -1.28, maxZ: 1.28 },
       { minX: 3.85, maxX: 5.65, minZ: 3.25, maxZ: 4.7 },
-      // The custom-training console sits just behind the north walk limit;
-      // this shallow bumper keeps WASD movement clear of its knobs and trim.
-      { minX: -0.92, maxX: 0.92, minZ: -4.7, maxZ: -4.15 },
+      // Potted plant relocated to the north-wall bay the console vacated.
+      { minX: -0.45, maxX: 0.45, minZ: -4.95, maxZ: -4.2 },
+      // North-west corner plant (unchanged).
       { minX: -6.1, maxX: -5.2, minZ: -4.7, maxZ: -3.9 },
-      { minX: 5.2, maxX: 6.1, minZ: -4.7, maxZ: -3.9 },
+      // Custom-training console, now angled into the north-east corner.
+      { minX: 5.4, maxX: 6.1, minZ: -5.3, maxZ: -4.05 },
     ],
   };
 
@@ -888,244 +961,364 @@ export function createMachineRoom(): MachineRoomRuntime {
    * ------------------------------------------------------------------ */
   const trainingConsoleGroup = new THREE.Group();
   trainingConsoleGroup.name = "custom-training-console";
-  trainingConsoleGroup.position.set(0, 0, -5.08);
+  // Tucked diagonally into the north-east corner — its flat back spans the two
+  // walls like the hypotenuse across the corner, front angled into the room.
+  // (Swapped with the potted plant that used to stand here.)
+  trainingConsoleGroup.position.set(6.1, 0, -4.7);
+  trainingConsoleGroup.rotation.y = -Math.PI / 4;
 
-  const consoleBodyMaterial = new THREE.MeshStandardMaterial({
-    color: "#151b25",
-    roughness: 0.28,
-    metalness: 0.82,
-    envMapIntensity: 1.45,
+  // A friendly, glossy "cartoon toy" terminal: saturated plastics in greens and
+  // blues with warm candy pops, rounded shapes, and lots of blinking lights.
+  const shellMain = new THREE.MeshStandardMaterial({
+    color: "#1fbcd6",
+    roughness: 0.22,
+    metalness: 0.0,
+    envMapIntensity: 1.1,
   });
-  const consoleInsetMaterial = new THREE.MeshStandardMaterial({
-    color: "#050a0e",
-    roughness: 0.52,
-    metalness: 0.46,
-  });
-  const consoleArchMaterial = new THREE.MeshStandardMaterial({
-    color: "#17483f",
-    emissive: "#77f8d0",
-    emissiveIntensity: 0.72,
+  const shellDeep = new THREE.MeshStandardMaterial({
+    color: "#1b64d8",
     roughness: 0.26,
-    metalness: 0.5,
+    metalness: 0.0,
+    envMapIntensity: 1.0,
+  });
+  const shellLime = new THREE.MeshStandardMaterial({
+    color: "#7be23f",
+    roughness: 0.24,
+    metalness: 0.0,
+    envMapIntensity: 1.0,
+  });
+  const glossDark = new THREE.MeshStandardMaterial({
+    color: "#0e1738",
+    roughness: 0.3,
+    metalness: 0.1,
+    envMapIntensity: 1.0,
+  });
+  const glossWhite = new THREE.MeshStandardMaterial({
+    color: "#eaf6ff",
+    roughness: 0.28,
+    metalness: 0.0,
+    envMapIntensity: 0.9,
+  });
+  const candyOrange = new THREE.MeshStandardMaterial({
+    color: "#ff8a34",
+    emissive: "#ff7a1e",
+    emissiveIntensity: 0.25,
+    roughness: 0.3,
+    metalness: 0.0,
+  });
+  // Bright accent that pulses with the visitor (emissive is animated below).
+  const consoleArchMaterial = new THREE.MeshStandardMaterial({
+    color: "#0f6f5a",
+    emissive: "#54ffc6",
+    emissiveIntensity: 0.9,
+    roughness: 0.24,
+    metalness: 0.2,
   });
 
+  // Chunky rounded base on four candy feet.
   const consolePlinth = new THREE.Mesh(
-    new THREE.BoxGeometry(1.58, 0.15, 0.58),
-    anodizeMaterial,
+    new THREE.BoxGeometry(1.16, 0.1, 0.5),
+    shellDeep,
   );
-  consolePlinth.position.y = 0.075;
+  consolePlinth.position.y = 0.16;
   consolePlinth.castShadow = true;
   trainingConsoleGroup.add(consolePlinth);
-
-  const consoleBody = new THREE.Mesh(
-    new THREE.BoxGeometry(1.42, 1.68, 0.5),
-    consoleBodyMaterial,
+  const baseTrim = new THREE.Mesh(
+    new THREE.BoxGeometry(1.2, 0.04, 0.54),
+    shellLime,
   );
-  consoleBody.position.y = 0.94;
-  consoleBody.castShadow = true;
-  trainingConsoleGroup.add(consoleBody);
-
-  // Walnut cheeks make the futuristic terminal feel like a jukebox that
-  // belongs in the room rather than a flat screen pasted onto the wall.
-  [-0.72, 0.72].forEach((x) => {
-    const cheek = new THREE.Mesh(
-      new THREE.BoxGeometry(0.13, 1.72, 0.56),
-      walnutMaterial,
+  baseTrim.position.y = 0.225;
+  trainingConsoleGroup.add(baseTrim);
+  const footColors = [shellLime, candyOrange, shellLime, candyOrange];
+  [
+    [-0.5, 0.2],
+    [0.5, 0.2],
+    [-0.5, -0.2],
+    [0.5, -0.2],
+  ].forEach(([x, z], index) => {
+    const foot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.07, 18, 14),
+      footColors[index],
     );
-    cheek.position.set(x, 0.96, 0);
-    cheek.castShadow = true;
-    trainingConsoleGroup.add(cheek);
-
-    const archPost = new THREE.Mesh(
-      new THREE.BoxGeometry(0.075, 0.92, 0.065),
-      consoleArchMaterial,
-    );
-    archPost.position.set(x * 0.86, 1.29, 0.292);
-    trainingConsoleGroup.add(archPost);
+    foot.scale.set(1, 0.7, 1);
+    foot.position.set(x, 0.05, z);
+    trainingConsoleGroup.add(foot);
   });
 
-  const consoleArch = new THREE.Mesh(
-    new THREE.TorusGeometry(0.62, 0.045, 10, 44, Math.PI),
-    consoleArchMaterial,
+  // Glossy teal body with a rounded lime crown and blue corner bumpers.
+  const consoleBody = new THREE.Mesh(
+    new THREE.BoxGeometry(1.14, 1.4, 0.42),
+    shellMain,
   );
-  consoleArch.position.set(0, 1.74, 0.292);
-  trainingConsoleGroup.add(consoleArch);
+  consoleBody.position.y = 0.95;
+  consoleBody.castShadow = true;
+  trainingConsoleGroup.add(consoleBody);
+  const crown = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.16, 0.16, 1.14, 24),
+    shellLime,
+  );
+  crown.rotation.z = Math.PI / 2;
+  crown.position.set(0, 1.62, 0);
+  trainingConsoleGroup.add(crown);
+  [
+    [-0.57, 0.3],
+    [0.57, 0.3],
+    [-0.57, 1.58],
+    [0.57, 1.58],
+  ].forEach(([x, y]) => {
+    const bumper = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 16, 14),
+      shellDeep,
+    );
+    bumper.position.set(x, y, 0.14);
+    trainingConsoleGroup.add(bumper);
+  });
+
+  // Two antennae; their globes blink with the light bank (added below).
+  [-0.34, 0.34].forEach((x) => {
+    const stalk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.013, 0.017, 0.32, 10),
+      glossWhite,
+    );
+    stalk.position.set(x, 1.9, 0);
+    trainingConsoleGroup.add(stalk);
+  });
+
+  // Dark screen well with a bright rounded bezel so the UI colors pop.
+  const fasciaBezel = new THREE.Mesh(
+    new THREE.BoxGeometry(0.98, 0.66, 0.06),
+    shellDeep,
+  );
+  fasciaBezel.position.set(0, 1.28, 0.2);
+  trainingConsoleGroup.add(fasciaBezel);
+  const fascia = new THREE.Mesh(
+    new THREE.BoxGeometry(0.9, 0.58, 0.04),
+    glossDark,
+  );
+  fascia.position.set(0, 1.28, 0.216);
+  trainingConsoleGroup.add(fascia);
 
   const consoleScreenTexture = createTrainingConsoleScreenTexture();
   const consoleScreenMaterial = new THREE.MeshStandardMaterial({
-    color: "#8eeed3",
+    color: "#bfe9ff",
     map: consoleScreenTexture,
-    emissive: "#86ffe0",
+    emissive: "#8fdcff",
     emissiveMap: consoleScreenTexture,
-    emissiveIntensity: 0.7,
-    roughness: 0.38,
-    metalness: 0.08,
+    emissiveIntensity: 0.75,
+    roughness: 0.3,
+    metalness: 0.0,
   });
-  const consoleScreenFrame = new THREE.Mesh(
-    new THREE.BoxGeometry(1.12, 0.7, 0.075),
-    alloyMaterial,
-  );
-  consoleScreenFrame.position.set(0, 1.47, 0.276);
-  trainingConsoleGroup.add(consoleScreenFrame);
   const consoleScreen = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.02, 0.6),
+    new THREE.PlaneGeometry(0.84, 0.52),
     consoleScreenMaterial,
   );
-  consoleScreen.position.set(0, 1.47, 0.317);
+  consoleScreen.position.set(0, 1.28, 0.237);
   trainingConsoleGroup.add(consoleScreen);
 
-  // A bank of phase-colored pilot lights chases gently even before the
-  // visitor approaches, making the cabinet easy to spot across the room.
+  // A big bank of blinking candy lights — greens, blues, cyans, warm pops.
   const consoleLedColors = [
-    PHASE_COLORS.data,
-    PHASE_COLORS.forward,
-    PHASE_COLORS.loss,
-    PHASE_COLORS.backward,
-    PHASE_COLORS.update,
-    "#77f8d0",
-    "#64dcea",
-    "#b494ff",
+    "#54ffd0",
+    "#3fd0ff",
+    "#7bff5a",
+    "#2f9bff",
+    "#ffd23f",
+    "#54ffd0",
+    "#3fd0ff",
+    "#7bff5a",
+    "#ff8a34",
+    "#2f9bff",
+    "#54ffd0",
+    "#3fd0ff",
   ];
   const consoleLedMaterials: THREE.MeshStandardMaterial[] = [];
-  consoleLedColors.forEach((color, index) => {
-    const ledMaterial = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(color).multiplyScalar(0.42),
-      emissive: color,
-      emissiveIntensity: 0.35,
-      roughness: 0.2,
-      metalness: 0.15,
-    });
-    const led = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 10), ledMaterial);
-    led.position.set(-0.49 + index * 0.14, 1.93, 0.31);
+  consoleLedColors.forEach((color) => {
+    consoleLedMaterials.push(
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color).multiplyScalar(0.45),
+        emissive: color,
+        emissiveIntensity: 0.5,
+        roughness: 0.2,
+        metalness: 0.0,
+      }),
+    );
+  });
+  const ledMat = (i: number) =>
+    consoleLedMaterials[i % consoleLedMaterials.length];
+
+  // Indicator row just beneath the screen.
+  for (let i = 0; i < 9; i += 1) {
+    const led = new THREE.Mesh(
+      new THREE.SphereGeometry(0.026, 16, 12),
+      ledMat(i),
+    );
+    led.position.set(-0.36 + i * 0.09, 0.92, 0.226);
     trainingConsoleGroup.add(led);
-    consoleLedMaterials.push(ledMaterial);
+  }
+  // Glowing globes on the antennae.
+  [-0.34, 0.34].forEach((x, index) => {
+    const globe = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 18, 16),
+      ledMat(index),
+    );
+    globe.position.set(x, 2.1, 0);
+    trainingConsoleGroup.add(globe);
   });
 
-  // Sloped controls: three tactile knobs, an analog needle, and one large
-  // illuminated button. They are real geometry so the terminal keeps its
-  // playful silhouette from oblique angles.
-  const controlDeck = new THREE.Mesh(
-    new THREE.BoxGeometry(1.18, 0.3, 0.1),
-    consoleInsetMaterial,
-  );
-  controlDeck.position.set(0, 0.93, 0.315);
-  controlDeck.rotation.x = -0.22;
-  trainingConsoleGroup.add(controlDeck);
-  [-0.39, 0, 0.39].forEach((x, index) => {
+  // Chunky candy knobs with white caps.
+  const knobColors = [shellLime, candyOrange, shellDeep];
+  [-0.3, 0, 0.3].forEach((x, index) => {
     const knob = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.075, 0.075, 0.065, 18),
-      index === 1 ? steelMaterial : alloyMaterial,
+      new THREE.CylinderGeometry(0.075, 0.08, 0.06, 24),
+      knobColors[index],
     );
     knob.rotation.x = Math.PI / 2;
-    knob.position.set(x, 0.96, 0.39);
+    knob.position.set(x, 0.72, 0.235);
     knob.castShadow = true;
     trainingConsoleGroup.add(knob);
-    const marker = new THREE.Mesh(
-      new THREE.BoxGeometry(0.012, 0.055, 0.012),
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 0.03, 20),
+      glossWhite,
+    );
+    cap.rotation.x = Math.PI / 2;
+    cap.position.set(x, 0.72, 0.265);
+    trainingConsoleGroup.add(cap);
+    const pointer = new THREE.Mesh(
+      new THREE.BoxGeometry(0.01, 0.05, 0.01),
       consoleArchMaterial,
     );
-    marker.position.set(x, 0.99, 0.429);
-    marker.rotation.z = (index - 1) * 0.55;
-    trainingConsoleGroup.add(marker);
+    pointer.position.set(x, 0.75, 0.272);
+    pointer.rotation.z = (index - 1) * 0.5;
+    trainingConsoleGroup.add(pointer);
   });
 
+  // Playful round dial with a live red needle.
   const gauge = new THREE.Mesh(
-    new THREE.CircleGeometry(0.18, 28),
-    new THREE.MeshStandardMaterial({
-      color: "#efe4c8",
-      emissive: "#ffce69",
-      emissiveIntensity: 0.18,
-      roughness: 0.72,
-      metalness: 0.05,
-    }),
+    new THREE.CircleGeometry(0.13, 36),
+    glossWhite,
   );
-  gauge.position.set(-0.31, 0.61, 0.276);
+  gauge.position.set(-0.26, 0.46, 0.226);
   trainingConsoleGroup.add(gauge);
   const gaugeBezel = new THREE.Mesh(
-    new THREE.TorusGeometry(0.184, 0.018, 8, 28),
-    steelMaterial,
+    new THREE.TorusGeometry(0.14, 0.02, 14, 32),
+    shellLime,
   );
-  gaugeBezel.position.copy(gauge.position);
+  gaugeBezel.position.set(-0.26, 0.46, 0.23);
   trainingConsoleGroup.add(gaugeBezel);
   const consoleNeedlePivot = new THREE.Group();
-  consoleNeedlePivot.position.set(-0.31, 0.61, 0.305);
+  consoleNeedlePivot.position.set(-0.26, 0.46, 0.234);
   const consoleNeedle = new THREE.Mesh(
-    new THREE.BoxGeometry(0.018, 0.14, 0.014),
-    new THREE.MeshStandardMaterial({ color: "#242018", roughness: 0.55 }),
+    new THREE.BoxGeometry(0.012, 0.11, 0.01),
+    new THREE.MeshStandardMaterial({ color: "#ff5d5d", roughness: 0.4 }),
   );
-  consoleNeedle.position.y = 0.06;
+  consoleNeedle.position.y = 0.045;
   consoleNeedlePivot.add(consoleNeedle);
   trainingConsoleGroup.add(consoleNeedlePivot);
 
+  // Big glowing candy START button (the warm pop among the greens and blues).
   const consoleStartMaterial = new THREE.MeshStandardMaterial({
-    color: "#1d5c4e",
-    emissive: "#77f8d0",
-    emissiveIntensity: 1.05,
-    roughness: 0.22,
-    metalness: 0.18,
+    color: "#ff6a2b",
+    emissive: "#ff8a34",
+    emissiveIntensity: 1.1,
+    roughness: 0.28,
+    metalness: 0.0,
   });
   const consoleStartRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.19, 0.025, 10, 30),
-    chromePipeMaterial,
+    new THREE.TorusGeometry(0.15, 0.028, 16, 32),
+    glossWhite,
   );
-  consoleStartRing.position.set(0.3, 0.61, 0.303);
+  consoleStartRing.position.set(0.28, 0.46, 0.234);
   trainingConsoleGroup.add(consoleStartRing);
   const consoleStartButton = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.135, 0.135, 0.075, 28),
+    new THREE.CylinderGeometry(0.125, 0.13, 0.07, 32),
     consoleStartMaterial,
   );
   consoleStartButton.rotation.x = Math.PI / 2;
-  consoleStartButton.position.set(0.3, 0.61, 0.337);
+  consoleStartButton.position.set(0.28, 0.46, 0.25);
   trainingConsoleGroup.add(consoleStartButton);
 
-  for (let slot = 0; slot < 9; slot += 1) {
-    const grilleSlot = new THREE.Mesh(
-      new THREE.BoxGeometry(0.075, 0.012, 0.015),
-      slot % 3 === 0 ? consoleArchMaterial : steelMaterial,
-    );
-    grilleSlot.position.set(-0.34 + slot * 0.085, 0.32, 0.273);
-    trainingConsoleGroup.add(grilleSlot);
+  // Cheerful speaker dots.
+  for (let row = 0; row < 2; row += 1) {
+    for (let col = 0; col < 7; col += 1) {
+      const dot = new THREE.Mesh(
+        new THREE.CircleGeometry(0.016, 12),
+        col % 2 === 0 ? shellDeep : shellLime,
+      );
+      dot.position.set(-0.3 + col * 0.1, 0.3 + row * 0.06, 0.221);
+      trainingConsoleGroup.add(dot);
+    }
   }
 
+  // Bright floating sign on candy posts, ringed with blinking bulbs.
   const consoleSignTexture = createTrainingConsoleSignTexture();
   const consoleMarqueeMaterial = new THREE.MeshStandardMaterial({
-    color: "#d8fff2",
+    color: "#bfe9ff",
     map: consoleSignTexture,
-    emissive: "#a4ffe2",
+    emissive: "#9fe0ff",
     emissiveMap: consoleSignTexture,
-    emissiveIntensity: 0.82,
-    roughness: 0.34,
-    metalness: 0.08,
+    emissiveIntensity: 0.85,
+    roughness: 0.3,
+    metalness: 0.0,
   });
-  [-0.58, 0.58].forEach((x) => {
-    const support = new THREE.Mesh(
-      new THREE.BoxGeometry(0.045, 0.38, 0.045),
-      steelMaterial,
+  [-0.42, 0.42].forEach((x) => {
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.02, 0.5, 12),
+      shellLime,
     );
-    support.position.set(x, 2.22, 0.02);
-    trainingConsoleGroup.add(support);
+    post.position.set(x, 1.95, 0.04);
+    trainingConsoleGroup.add(post);
   });
+  // Chunky 3D nameplate: a thick body with a raised bezel, corner knobs, a
+  // recessed text panel, and a slight backward tilt so it reads dimensional.
+  const signGroup = new THREE.Group();
+  signGroup.position.set(0, 2.36, 0.06);
+  signGroup.rotation.x = -0.1;
+  trainingConsoleGroup.add(signGroup);
   const consoleSignFrame = new THREE.Mesh(
-    new THREE.BoxGeometry(2.02, 0.5, 0.085),
-    anodizeMaterial,
+    new THREE.BoxGeometry(1.52, 0.46, 0.2),
+    shellDeep,
   );
-  consoleSignFrame.position.set(0, 2.5, 0.08);
   consoleSignFrame.castShadow = true;
-  trainingConsoleGroup.add(consoleSignFrame);
+  signGroup.add(consoleSignFrame);
+  const railLR = new THREE.BoxGeometry(0.06, 0.46, 0.06);
+  const railTB = new THREE.BoxGeometry(1.52, 0.06, 0.06);
+  [-0.73, 0.73].forEach((x) => {
+    const rail = new THREE.Mesh(railLR, shellLime);
+    rail.position.set(x, 0, 0.12);
+    signGroup.add(rail);
+  });
+  [0.2, -0.2].forEach((y) => {
+    const rail = new THREE.Mesh(railTB, shellLime);
+    rail.position.set(0, y, 0.12);
+    signGroup.add(rail);
+  });
+  [
+    [-0.73, 0.2],
+    [0.73, 0.2],
+    [-0.73, -0.2],
+    [0.73, -0.2],
+  ].forEach(([x, y]) => {
+    const knob = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 16, 14),
+      glossWhite,
+    );
+    knob.position.set(x, y, 0.12);
+    signGroup.add(knob);
+  });
   const consoleSign = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.91, 0.39),
+    new THREE.PlaneGeometry(1.36, 0.34),
     consoleMarqueeMaterial,
   );
-  consoleSign.position.set(0, 2.5, 0.126);
-  trainingConsoleGroup.add(consoleSign);
-  [-0.96, 0.96].forEach((x) => {
-    const marqueeBulb = new THREE.Mesh(
-      new THREE.SphereGeometry(0.045, 14, 12),
-      consoleArchMaterial,
+  consoleSign.position.set(0, 0, 0.105);
+  signGroup.add(consoleSign);
+  for (let i = 0; i < 12; i += 1) {
+    const bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.028, 14, 12),
+      ledMat(i + 3),
     );
-    marqueeBulb.position.set(x, 2.5, 0.135);
-    trainingConsoleGroup.add(marqueeBulb);
-  });
+    const t = i / 11;
+    bulb.position.set(-0.74 + t * 1.48, i % 2 === 0 ? 0.29 : -0.29, 0.11);
+    signGroup.add(bulb);
+  }
 
   trainingConsoleGroup.traverse((child) => {
     if (child instanceof THREE.Mesh) child.castShadow = true;
@@ -1133,7 +1326,7 @@ export function createMachineRoom(): MachineRoomRuntime {
   group.add(trainingConsoleGroup);
 
   const trainingConsole: MachineRoomTrainingConsoleRuntime = {
-    approachLocal: new THREE.Vector3(0, bounds.walkY, -3.48),
+    approachLocal: new THREE.Vector3(5.05, bounds.walkY, -3.65),
     activationRadius: 2.55,
   };
   let trainingConsoleWake = 0;
@@ -1294,10 +1487,14 @@ export function createMachineRoom(): MachineRoomRuntime {
   sideTable.castShadow = true;
   group.add(sideTable);
 
-  // Potted plants in the two window corners.
-  [-5.85, 5.85].forEach((x) => {
+  // North-west corner keeps its plant; the north-east one moves to the
+  // north-wall bay the console vacated (they traded places).
+  [
+    [-5.85, -4.5],
+    [0, -4.6],
+  ].forEach(([px, pz]) => {
     const plant = new THREE.Group();
-    plant.position.set(x, 0, -4.5);
+    plant.position.set(px, 0, pz);
     const pot = new THREE.Mesh(
       new THREE.CylinderGeometry(0.26, 0.2, 0.42, 18),
       new THREE.MeshStandardMaterial({ color: "#4b423b", roughness: 0.85 }),

@@ -4803,6 +4803,71 @@ export function TrainingWorldCanvas({
     let movementDiscoveryReported = false;
     cameraLight.intensity = 1.0;
 
+    /* ---------------------------------------------------------------- *
+     * Opening fly-in. On first load the camera opens on a wide
+     * establishing view of the room, then eases forward over a few
+     * seconds to the resting pose facing the Transformer Tower. Any
+     * manual input (WASD, click, or scroll) cancels it instantly and
+     * hands control to the visitor from wherever the camera currently
+     * sits — no snap. Tweak the START constants below to reframe the
+     * opening shot; the END pose tracks the machine-room spawn.
+     * ---------------------------------------------------------------- */
+    const INTRO_START_POSITION = new THREE.Vector3(2.6, 2.35, 4.15);
+    const INTRO_START_YAW = 0.58;
+    const INTRO_START_PITCH = -0.22;
+    const INTRO_START_FOV = 64;
+    const INTRO_END_POSITION = machineRoom.bounds.spawn.clone();
+    const INTRO_END_YAW = machineRoom.bounds.spawnYaw;
+    const INTRO_END_PITCH = machineRoom.bounds.spawnPitch;
+    const INTRO_DURATION = 5; // seconds — cinematic glide
+    let introActive = true;
+    let introElapsed = 0;
+    // Seed the pose so the very first rendered frame already sits at the
+    // wide establishing shot rather than at the resting spawn.
+    roomPlayerPosition.copy(INTRO_START_POSITION);
+    targetYaw = INTRO_START_YAW;
+    targetPitch = INTRO_START_PITCH;
+    glanceYaw = INTRO_START_YAW;
+    glancePitch = INTRO_START_PITCH;
+
+    /** Cancel the opening fly-in and hand control over with no snap. */
+    const cancelIntro = () => {
+      if (!introActive) return;
+      introActive = false;
+      // glance* / roomPlayerPosition already hold the last interpolated
+      // frame; lock the free-roam targets onto them so nothing jumps.
+      targetYaw = glanceYaw;
+      targetPitch = glancePitch;
+    };
+
+    /**
+     * Grab the pointer for FPS look. Called from the first movement key so
+     * the visitor starts looking with the mouse without a separate click.
+     * Skipped near the training console, where the cursor is handed back on
+     * purpose so its call-to-action stays clickable.
+     */
+    const requestRoomPointerLock = () => {
+      if (
+        navigationRegion.kind === "machine-room" &&
+        !reportedTrainingConsoleNearby &&
+        document.pointerLockElement !== canvas &&
+        typeof canvas.requestPointerLock === "function"
+      ) {
+        try {
+          const result = canvas.requestPointerLock() as unknown;
+          if (
+            result &&
+            typeof (result as Promise<void>).then === "function"
+          ) {
+            (result as Promise<void>).catch(() => {});
+          }
+        } catch {
+          // Pointer lock can reject if requested too soon after an exit;
+          // the next keypress simply tries again.
+        }
+      }
+    };
+
     const reportNavigationMode = (mode: NavigationMode) => {
       if (reportedNavigationMode === mode) return;
       reportedNavigationMode = mode;
@@ -5572,6 +5637,7 @@ export function TrainingWorldCanvas({
     const onWheel = (event: WheelEvent) => {
       if (event.ctrlKey || event.metaKey) return;
       event.preventDefault();
+      cancelIntro();
       beginManualControl();
       verticalRoamEnabled = true;
       const pixelDelta =
@@ -5651,6 +5717,7 @@ export function TrainingWorldCanvas({
       }
       if (event.button !== 0) return;
       canvas.focus();
+      cancelIntro();
       beginManualControl();
       if (
         event.pointerType === "mouse" &&
@@ -5727,7 +5794,11 @@ export function TrainingWorldCanvas({
         event.preventDefault();
         pressedKeys.add(event.code);
         if (!event.repeat) {
+          cancelIntro();
           beginManualControl();
+          // The first movement key also captures the mouse for FPS look, so
+          // the visitor never has to click the scene first. Esc frees it.
+          requestRoomPointerLock();
         }
       } else if (["ShiftLeft", "ShiftRight"].includes(event.code)) {
         pressedKeys.add(event.code);
@@ -6009,6 +6080,10 @@ export function TrainingWorldCanvas({
 
       const inMachineRoom = navigationRegion.kind === "machine-room";
       if (!inMachineRoom || roomTransition) reportMachineRoomCue(null);
+      // The fly-in only owns the opening moment in the room; any path that
+      // leaves the room (guided ride, a dive) retires it for good so it can
+      // never replay on a later return.
+      if (!inMachineRoom) introActive = false;
       const guidedRide = !manualOverride && !inMachineRoom;
       let stationFloat = cameraProgress * stationDenominator;
       let currentStation = activeStationIndex;
@@ -6038,6 +6113,51 @@ export function TrainingWorldCanvas({
           placeIntoChamber(dive.targetStation);
           roomTransition = { mode: "reveal", t: 0 };
         }
+      } else if (inMachineRoom && introActive && !roomTransition) {
+        // Opening fly-in: glide from the wide establishing shot to the
+        // resting pose facing the machine. Fully owns the camera until it
+        // finishes or cancelIntro() is called from a manual input.
+        reportNavigationMode("machine-room");
+        introElapsed += delta;
+        const introT = Math.min(1, introElapsed / INTRO_DURATION);
+        const introEased = introT * introT * (3 - 2 * introT);
+        roomPlayerPosition.lerpVectors(
+          INTRO_START_POSITION,
+          INTRO_END_POSITION,
+          introEased,
+        );
+        glanceYaw = THREE.MathUtils.lerp(
+          INTRO_START_YAW,
+          INTRO_END_YAW,
+          introEased,
+        );
+        glancePitch = THREE.MathUtils.lerp(
+          INTRO_START_PITCH,
+          INTRO_END_PITCH,
+          introEased,
+        );
+        // Keep the free-roam targets in lock-step so a mid-fly cancel is seamless.
+        targetYaw = glanceYaw;
+        targetPitch = glancePitch;
+        glanceEuler.set(glancePitch, glanceYaw, 0, "YXZ");
+        glanceQuaternion.setFromEuler(glanceEuler);
+        roomHoveredIndex = -1;
+        reportMachineRoomCue(null);
+        currentStation = activeStationIndex;
+        stationFloat = currentStation;
+        cameraPosition.copy(roomPlayerPosition).add(MACHINE_ROOM_ORIGIN);
+        camera.position.copy(cameraPosition);
+        camera.quaternion.copy(glanceQuaternion);
+        camera.fov = THREE.MathUtils.lerp(
+          INTRO_START_FOV,
+          MACHINE_ROOM_FOV,
+          introEased,
+        );
+        cameraLight.position
+          .copy(cameraPosition)
+          .addScaledVector(WORLD_UP, 0.8);
+        cameraLight.color.set("#ffd9b0");
+        if (introT >= 1) introActive = false;
       } else if (inMachineRoom) {
         reportNavigationMode("machine-room");
         glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, 18, delta);

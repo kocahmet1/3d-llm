@@ -197,7 +197,7 @@ export function TrainingHUD({
     navigationMode === "machine-room"
       ? {
           label: "Machine room",
-          hint: "Aim at a chamber · scroll to lean in and enter · WASD walk · M returns here",
+          hint: "WASD to move · mouse to look · aim at any station and scroll to move in · Esc frees the mouse to use this panel · M returns here",
         }
       : navigationMode === "free-roam"
         ? {
@@ -284,8 +284,8 @@ export function TrainingHUD({
           <span className={styles.machineRoomCueCopy}>
             <strong>
               {machineRoomCue.approaching
-                ? "Keep scrolling to enter"
-                : "Use the scroll wheel to zoom in"}
+                ? "Keep scrolling to move in"
+                : "Choose a station and scroll to move in"}
             </strong>
             <span>Enter {machineRoomCue.label}</span>
           </span>
@@ -302,7 +302,7 @@ export function TrainingHUD({
             <kbd>S</kbd>
             <kbd>D</kbd>
           </span>
-          <span>WASD · move around</span>
+          <span>Aim at any station and scroll to move in</span>
         </div>
       ) : null}
 
@@ -570,8 +570,10 @@ export function TrainingHUD({
           <p>First-person navigation</p>
           <dl>
             <div>
-              <dt className={styles.clickKey}>Click scene</dt>
-              <dd>Capture mouse</dd>
+              <dt>
+                <kbd>W</kbd> / <span className={styles.clickKey}>Click</span>
+              </dt>
+              <dd>Take control · capture mouse</dd>
             </div>
             <div>
               <dt className={styles.mouseKey}>Mouse</dt>
@@ -603,7 +605,7 @@ export function TrainingHUD({
               <dt>
                 <kbd>Esc</kbd>
               </dt>
-              <dd>Release mouse</dd>
+              <dd>Free mouse · use the panel</dd>
             </div>
             <div>
               <dt>

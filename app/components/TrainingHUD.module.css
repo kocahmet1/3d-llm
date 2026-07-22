@@ -1183,6 +1183,7 @@
   position: absolute;
   right: 50%;
   bottom: 174px;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 9px;

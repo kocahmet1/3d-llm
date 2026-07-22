@@ -101,8 +101,10 @@ export function TrainingExperience() {
   const [reportedStation, setReportedStation] = useState(0);
   const [dataPrepProgress, setDataPrepProgress] = useState(0);
   const [dataPrepPlaying, setDataPrepPlaying] = useState(true);
+  // The experience opens in the machine room (first-person free roam), so the
+  // very first HUD frame reflects that rather than flashing the guided-ride cue.
   const [navigationMode, setNavigationMode] =
-    useState<NavigationMode>("guided-ride");
+    useState<NavigationMode>("machine-room");
   const [machineRoomCue, setMachineRoomCue] =
     useState<MachineRoomCue | null>(null);
   const [movementDiscovered, setMovementDiscovered] = useState(false);
