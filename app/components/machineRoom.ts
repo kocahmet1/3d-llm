@@ -64,22 +64,34 @@ export interface MachineRoomBounds {
   blockers: MachineRoomBlocker[];
 }
 
+export interface MachineRoomTrainingConsoleRuntime {
+  /** Point in front of the cabinet used for the visitor proximity check. */
+  approachLocal: THREE.Vector3;
+  /** Wake radius for the DOM call to action. */
+  activationRadius: number;
+}
+
 export interface MachineRoomRuntime {
   group: THREE.Group;
   units: MachineRoomUnitRuntime[];
   /** Raycast target containing every unit's meshes and pick proxies. */
   pickRoot: THREE.Group;
   bounds: MachineRoomBounds;
+  trainingConsole: MachineRoomTrainingConsoleRuntime;
   unitIndexForStation(stationIndex: number): number;
   update(
     elapsed: number,
     delta: number,
     hoveredIndex: number,
     motionEnabled: boolean,
+    trainingConsoleNearby: boolean,
   ): void;
 }
 
 const TAU = Math.PI * 2;
+
+/** Horizontal breathing room kept between the visitor and room furniture. */
+export const MACHINE_ROOM_PLAYER_CLEARANCE = 0.28;
 
 /**
  * Platform top surface: the "ground" every machine unit stands on. Lowered
@@ -463,6 +475,86 @@ function createPlaqueTexture(): THREE.CanvasTexture {
   return texture;
 }
 
+/** High-contrast marquee above the room's custom-training console. */
+function createTrainingConsoleSignTexture(): THREE.CanvasTexture {
+  const canvas = makeCanvas(1024, 256);
+  const paint = canvas.getContext("2d");
+  if (paint) {
+    const background = paint.createLinearGradient(0, 0, 0, 256);
+    background.addColorStop(0, "#152837");
+    background.addColorStop(0.52, "#07131c");
+    background.addColorStop(1, "#03080d");
+    paint.fillStyle = background;
+    paint.fillRect(0, 0, 1024, 256);
+    paint.strokeStyle = "#77f8d0";
+    paint.lineWidth = 10;
+    paint.strokeRect(12, 12, 1000, 232);
+    paint.strokeStyle = "rgba(101, 220, 234, 0.45)";
+    paint.lineWidth = 3;
+    paint.strokeRect(29, 29, 966, 198);
+
+    paint.textAlign = "center";
+    paint.textBaseline = "middle";
+    paint.shadowColor = "rgba(121, 248, 207, 0.78)";
+    paint.shadowBlur = 22;
+    paint.fillStyle = "#effff9";
+    paint.font = '800 72px system-ui, "Segoe UI", sans-serif';
+    paint.fillText("TRAIN YOUR OWN LLM HERE", 512, 112);
+    paint.shadowBlur = 10;
+    paint.fillStyle = "#77f8d0";
+    paint.font = '650 34px system-ui, "Segoe UI", sans-serif';
+    paint.fillText("CUSTOM TRAINING TERMINAL", 512, 184);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+/** CRT-style status screen set into the training console cabinet. */
+function createTrainingConsoleScreenTexture(): THREE.CanvasTexture {
+  const canvas = makeCanvas(640, 400);
+  const paint = canvas.getContext("2d");
+  if (paint) {
+    paint.fillStyle = "#02090c";
+    paint.fillRect(0, 0, 640, 400);
+    paint.strokeStyle = "rgba(102, 255, 214, 0.08)";
+    paint.lineWidth = 1;
+    for (let x = 0; x <= 640; x += 32) {
+      paint.beginPath();
+      paint.moveTo(x, 0);
+      paint.lineTo(x, 400);
+      paint.stroke();
+    }
+    for (let y = 0; y <= 400; y += 32) {
+      paint.beginPath();
+      paint.moveTo(0, y);
+      paint.lineTo(640, y);
+      paint.stroke();
+    }
+    paint.textAlign = "left";
+    paint.fillStyle = "#77f8d0";
+    paint.font = '800 54px ui-monospace, "Cascadia Code", monospace';
+    paint.fillText("MODEL LAB", 46, 82);
+    paint.fillStyle = "#eafff8";
+    paint.font = '700 34px ui-monospace, "Cascadia Code", monospace';
+    paint.fillText("READY TO TRAIN", 46, 139);
+    paint.fillStyle = "rgba(146, 222, 205, 0.84)";
+    paint.font = '600 25px ui-monospace, "Cascadia Code", monospace';
+    paint.fillText("01  ADD YOUR TEXT", 46, 218);
+    paint.fillText("02  CHOOSE A MODEL", 46, 270);
+    paint.fillText("03  START TRAINING", 46, 322);
+    paint.fillStyle = "#ffce69";
+    paint.fillRect(46, 352, 456, 9);
+    paint.fillStyle = "#77f8d0";
+    paint.fillRect(508, 342, 84, 28);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 interface PulseLane {
   curve: THREE.CatmullRomCurve3;
   pulses: THREE.Mesh[];
@@ -498,12 +590,17 @@ export function createMachineRoom(): MachineRoomRuntime {
     minY: 0.45,
     maxY: 3.7,
     walkY: 1.62,
-    spawn: new THREE.Vector3(4.55, 1.62, 3.35),
+    // Start beside the reading chair, outside its padded collision footprint,
+    // so WASD works on the first keypress without requiring a wheel escape.
+    spawn: new THREE.Vector3(4.55, 1.62, 2.8),
     spawnYaw: 0.94,
     spawnPitch: -0.2,
     blockers: [
       { minX: -2.25, maxX: 2.25, minZ: -1.28, maxZ: 1.28 },
       { minX: 3.85, maxX: 5.65, minZ: 3.25, maxZ: 4.7 },
+      // The custom-training console sits just behind the north walk limit;
+      // this shallow bumper keeps WASD movement clear of its knobs and trim.
+      { minX: -0.92, maxX: 0.92, minZ: -4.7, maxZ: -4.15 },
       { minX: -6.1, maxX: -5.2, minZ: -4.7, maxZ: -3.9 },
       { minX: 5.2, maxX: 6.1, minZ: -4.7, maxZ: -3.9 },
     ],
@@ -785,6 +882,261 @@ export function createMachineRoom(): MachineRoomRuntime {
     windowGroup.add(sill);
     group.add(windowGroup);
   });
+
+  /* ------------------------------------------------------------------ *
+   * Custom-training console (north-wall window bay)
+   * ------------------------------------------------------------------ */
+  const trainingConsoleGroup = new THREE.Group();
+  trainingConsoleGroup.name = "custom-training-console";
+  trainingConsoleGroup.position.set(0, 0, -5.08);
+
+  const consoleBodyMaterial = new THREE.MeshStandardMaterial({
+    color: "#151b25",
+    roughness: 0.28,
+    metalness: 0.82,
+    envMapIntensity: 1.45,
+  });
+  const consoleInsetMaterial = new THREE.MeshStandardMaterial({
+    color: "#050a0e",
+    roughness: 0.52,
+    metalness: 0.46,
+  });
+  const consoleArchMaterial = new THREE.MeshStandardMaterial({
+    color: "#17483f",
+    emissive: "#77f8d0",
+    emissiveIntensity: 0.72,
+    roughness: 0.26,
+    metalness: 0.5,
+  });
+
+  const consolePlinth = new THREE.Mesh(
+    new THREE.BoxGeometry(1.58, 0.15, 0.58),
+    anodizeMaterial,
+  );
+  consolePlinth.position.y = 0.075;
+  consolePlinth.castShadow = true;
+  trainingConsoleGroup.add(consolePlinth);
+
+  const consoleBody = new THREE.Mesh(
+    new THREE.BoxGeometry(1.42, 1.68, 0.5),
+    consoleBodyMaterial,
+  );
+  consoleBody.position.y = 0.94;
+  consoleBody.castShadow = true;
+  trainingConsoleGroup.add(consoleBody);
+
+  // Walnut cheeks make the futuristic terminal feel like a jukebox that
+  // belongs in the room rather than a flat screen pasted onto the wall.
+  [-0.72, 0.72].forEach((x) => {
+    const cheek = new THREE.Mesh(
+      new THREE.BoxGeometry(0.13, 1.72, 0.56),
+      walnutMaterial,
+    );
+    cheek.position.set(x, 0.96, 0);
+    cheek.castShadow = true;
+    trainingConsoleGroup.add(cheek);
+
+    const archPost = new THREE.Mesh(
+      new THREE.BoxGeometry(0.075, 0.92, 0.065),
+      consoleArchMaterial,
+    );
+    archPost.position.set(x * 0.86, 1.29, 0.292);
+    trainingConsoleGroup.add(archPost);
+  });
+
+  const consoleArch = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.045, 10, 44, Math.PI),
+    consoleArchMaterial,
+  );
+  consoleArch.position.set(0, 1.74, 0.292);
+  trainingConsoleGroup.add(consoleArch);
+
+  const consoleScreenTexture = createTrainingConsoleScreenTexture();
+  const consoleScreenMaterial = new THREE.MeshStandardMaterial({
+    color: "#8eeed3",
+    map: consoleScreenTexture,
+    emissive: "#86ffe0",
+    emissiveMap: consoleScreenTexture,
+    emissiveIntensity: 0.7,
+    roughness: 0.38,
+    metalness: 0.08,
+  });
+  const consoleScreenFrame = new THREE.Mesh(
+    new THREE.BoxGeometry(1.12, 0.7, 0.075),
+    alloyMaterial,
+  );
+  consoleScreenFrame.position.set(0, 1.47, 0.276);
+  trainingConsoleGroup.add(consoleScreenFrame);
+  const consoleScreen = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.02, 0.6),
+    consoleScreenMaterial,
+  );
+  consoleScreen.position.set(0, 1.47, 0.317);
+  trainingConsoleGroup.add(consoleScreen);
+
+  // A bank of phase-colored pilot lights chases gently even before the
+  // visitor approaches, making the cabinet easy to spot across the room.
+  const consoleLedColors = [
+    PHASE_COLORS.data,
+    PHASE_COLORS.forward,
+    PHASE_COLORS.loss,
+    PHASE_COLORS.backward,
+    PHASE_COLORS.update,
+    "#77f8d0",
+    "#64dcea",
+    "#b494ff",
+  ];
+  const consoleLedMaterials: THREE.MeshStandardMaterial[] = [];
+  consoleLedColors.forEach((color, index) => {
+    const ledMaterial = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color).multiplyScalar(0.42),
+      emissive: color,
+      emissiveIntensity: 0.35,
+      roughness: 0.2,
+      metalness: 0.15,
+    });
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.032, 12, 10), ledMaterial);
+    led.position.set(-0.49 + index * 0.14, 1.93, 0.31);
+    trainingConsoleGroup.add(led);
+    consoleLedMaterials.push(ledMaterial);
+  });
+
+  // Sloped controls: three tactile knobs, an analog needle, and one large
+  // illuminated button. They are real geometry so the terminal keeps its
+  // playful silhouette from oblique angles.
+  const controlDeck = new THREE.Mesh(
+    new THREE.BoxGeometry(1.18, 0.3, 0.1),
+    consoleInsetMaterial,
+  );
+  controlDeck.position.set(0, 0.93, 0.315);
+  controlDeck.rotation.x = -0.22;
+  trainingConsoleGroup.add(controlDeck);
+  [-0.39, 0, 0.39].forEach((x, index) => {
+    const knob = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.075, 0.075, 0.065, 18),
+      index === 1 ? steelMaterial : alloyMaterial,
+    );
+    knob.rotation.x = Math.PI / 2;
+    knob.position.set(x, 0.96, 0.39);
+    knob.castShadow = true;
+    trainingConsoleGroup.add(knob);
+    const marker = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012, 0.055, 0.012),
+      consoleArchMaterial,
+    );
+    marker.position.set(x, 0.99, 0.429);
+    marker.rotation.z = (index - 1) * 0.55;
+    trainingConsoleGroup.add(marker);
+  });
+
+  const gauge = new THREE.Mesh(
+    new THREE.CircleGeometry(0.18, 28),
+    new THREE.MeshStandardMaterial({
+      color: "#efe4c8",
+      emissive: "#ffce69",
+      emissiveIntensity: 0.18,
+      roughness: 0.72,
+      metalness: 0.05,
+    }),
+  );
+  gauge.position.set(-0.31, 0.61, 0.276);
+  trainingConsoleGroup.add(gauge);
+  const gaugeBezel = new THREE.Mesh(
+    new THREE.TorusGeometry(0.184, 0.018, 8, 28),
+    steelMaterial,
+  );
+  gaugeBezel.position.copy(gauge.position);
+  trainingConsoleGroup.add(gaugeBezel);
+  const consoleNeedlePivot = new THREE.Group();
+  consoleNeedlePivot.position.set(-0.31, 0.61, 0.305);
+  const consoleNeedle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.018, 0.14, 0.014),
+    new THREE.MeshStandardMaterial({ color: "#242018", roughness: 0.55 }),
+  );
+  consoleNeedle.position.y = 0.06;
+  consoleNeedlePivot.add(consoleNeedle);
+  trainingConsoleGroup.add(consoleNeedlePivot);
+
+  const consoleStartMaterial = new THREE.MeshStandardMaterial({
+    color: "#1d5c4e",
+    emissive: "#77f8d0",
+    emissiveIntensity: 1.05,
+    roughness: 0.22,
+    metalness: 0.18,
+  });
+  const consoleStartRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.19, 0.025, 10, 30),
+    chromePipeMaterial,
+  );
+  consoleStartRing.position.set(0.3, 0.61, 0.303);
+  trainingConsoleGroup.add(consoleStartRing);
+  const consoleStartButton = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.135, 0.135, 0.075, 28),
+    consoleStartMaterial,
+  );
+  consoleStartButton.rotation.x = Math.PI / 2;
+  consoleStartButton.position.set(0.3, 0.61, 0.337);
+  trainingConsoleGroup.add(consoleStartButton);
+
+  for (let slot = 0; slot < 9; slot += 1) {
+    const grilleSlot = new THREE.Mesh(
+      new THREE.BoxGeometry(0.075, 0.012, 0.015),
+      slot % 3 === 0 ? consoleArchMaterial : steelMaterial,
+    );
+    grilleSlot.position.set(-0.34 + slot * 0.085, 0.32, 0.273);
+    trainingConsoleGroup.add(grilleSlot);
+  }
+
+  const consoleSignTexture = createTrainingConsoleSignTexture();
+  const consoleMarqueeMaterial = new THREE.MeshStandardMaterial({
+    color: "#d8fff2",
+    map: consoleSignTexture,
+    emissive: "#a4ffe2",
+    emissiveMap: consoleSignTexture,
+    emissiveIntensity: 0.82,
+    roughness: 0.34,
+    metalness: 0.08,
+  });
+  [-0.58, 0.58].forEach((x) => {
+    const support = new THREE.Mesh(
+      new THREE.BoxGeometry(0.045, 0.38, 0.045),
+      steelMaterial,
+    );
+    support.position.set(x, 2.22, 0.02);
+    trainingConsoleGroup.add(support);
+  });
+  const consoleSignFrame = new THREE.Mesh(
+    new THREE.BoxGeometry(2.02, 0.5, 0.085),
+    anodizeMaterial,
+  );
+  consoleSignFrame.position.set(0, 2.5, 0.08);
+  consoleSignFrame.castShadow = true;
+  trainingConsoleGroup.add(consoleSignFrame);
+  const consoleSign = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.91, 0.39),
+    consoleMarqueeMaterial,
+  );
+  consoleSign.position.set(0, 2.5, 0.126);
+  trainingConsoleGroup.add(consoleSign);
+  [-0.96, 0.96].forEach((x) => {
+    const marqueeBulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 14, 12),
+      consoleArchMaterial,
+    );
+    marqueeBulb.position.set(x, 2.5, 0.135);
+    trainingConsoleGroup.add(marqueeBulb);
+  });
+
+  trainingConsoleGroup.traverse((child) => {
+    if (child instanceof THREE.Mesh) child.castShadow = true;
+  });
+  group.add(trainingConsoleGroup);
+
+  const trainingConsole: MachineRoomTrainingConsoleRuntime = {
+    approachLocal: new THREE.Vector3(0, bounds.walkY, -3.48),
+    activationRadius: 2.55,
+  };
+  let trainingConsoleWake = 0;
 
   // Door on the east wall.
   const doorGroup = new THREE.Group();
@@ -2015,6 +2367,7 @@ export function createMachineRoom(): MachineRoomRuntime {
     delta: number,
     hoveredIndex: number,
     motionEnabled: boolean,
+    trainingConsoleNearby: boolean,
   ) => {
     units.forEach((unit, index) => {
       const internals = unitInternals[index];
@@ -2074,6 +2427,38 @@ export function createMachineRoom(): MachineRoomRuntime {
         });
       });
     }
+
+    trainingConsoleWake = THREE.MathUtils.damp(
+      trainingConsoleWake,
+      trainingConsoleNearby ? 1 : 0,
+      6,
+      delta,
+    );
+    consoleLedMaterials.forEach((material, index) => {
+      const chase = motionEnabled
+        ? Math.pow(0.5 + 0.5 * Math.sin(elapsed * 2.1 - index * 0.82), 5)
+        : index === 0
+          ? 1
+          : 0.18;
+      material.emissiveIntensity =
+        0.2 + chase * (0.72 + trainingConsoleWake * 1.15);
+    });
+    const consolePulse = motionEnabled
+      ? 0.5 + 0.5 * Math.sin(elapsed * (trainingConsoleNearby ? 3.2 : 1.6))
+      : 0.6;
+    consoleStartMaterial.emissiveIntensity =
+      0.72 + consolePulse * (0.55 + trainingConsoleWake * 1.25);
+    consoleArchMaterial.emissiveIntensity =
+      0.46 + trainingConsoleWake * 0.58 + consolePulse * 0.12;
+    consoleScreenMaterial.emissiveIntensity = 0.62 + trainingConsoleWake * 0.44;
+    consoleMarqueeMaterial.emissiveIntensity = 0.76 + trainingConsoleWake * 0.52;
+    const buttonScale = motionEnabled
+      ? 1 + consolePulse * (0.025 + trainingConsoleWake * 0.055)
+      : 1;
+    consoleStartButton.scale.setScalar(buttonScale);
+    consoleNeedlePivot.rotation.z = motionEnabled
+      ? -0.72 + (0.5 + 0.5 * Math.sin(elapsed * 0.78)) * 1.35
+      : -0.08;
   };
 
   return {
@@ -2081,6 +2466,7 @@ export function createMachineRoom(): MachineRoomRuntime {
     units,
     pickRoot,
     bounds,
+    trainingConsole,
     unitIndexForStation,
     update,
   };

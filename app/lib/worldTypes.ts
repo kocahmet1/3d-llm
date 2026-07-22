@@ -23,6 +23,12 @@ export type AssistantCanvasStatus =
   | "speaking"
   | "error";
 
+export interface MachineRoomCue {
+  unitId: string;
+  label: string;
+  approaching: boolean;
+}
+
 export interface BranchChoice {
   left: string;
   right: string;
@@ -58,6 +64,8 @@ export interface TrainingWorldState {
 export interface TrainingHUDProps extends TrainingWorldState {
   stations: TrainingStation[];
   navigationMode: NavigationMode;
+  machineRoomCue: MachineRoomCue | null;
+  movementDiscovered: boolean;
   dataPrepProgress: number;
   dataPrepPlaying: boolean;
   onProgressChange: (progress: number) => void;
@@ -87,6 +95,8 @@ export interface TrainingCanvasProps {
   onProgressChange: (progress: number) => void;
   onManualNavigation: () => void;
   onNavigationModeChange: (mode: NavigationMode) => void;
+  onMachineRoomCueChange: (cue: MachineRoomCue | null) => void;
+  onMovementDiscovered: () => void;
   onStationChange: (index: number) => void;
   onAssistantTargetChange: (targetId: string | null) => void;
   /**

@@ -505,8 +505,12 @@ export function CustomTrainingChamber() {
 
           {bridge === "offline" ? (
             <div className={styles.inlineWarning} role="status">
-              Live connection was interrupted. The last received state is still
-              shown; reconnecting does not stop the local run.
+              <span>
+                Live connection was interrupted. If the local launcher stopped,
+                run <code>npm run dev:training</code> once from the project root,
+                leave it open, and use the Local URL it prints. The last received
+                run state remains safe here.
+              </span>
               <button type="button" onClick={() => void connect()}>
                 Reconnect
               </button>
@@ -700,13 +704,48 @@ export function CustomTrainingChamber() {
             </div>
           </div>
 
-          {bridge === "offline" ? (
-            <div className={styles.bridgeCallout} role="alert">
-              <div><span className={styles.offlineOrb} /><div><strong>Connect one local trainer</strong><p>Open PowerShell in this project folder, run the command once, leave it open, and use the Local URL it prints. If it is already running, do not start another copy.</p></div></div>
-              <code>npm run dev:training</code>
-              <button type="button" onClick={() => void connect()}>Try connection again</button>
+          <aside
+            className={styles.localRequirement}
+            aria-labelledby="local-training-required-title"
+            data-status={bridge}
+          >
+            <div className={styles.localRequirementCopy}>
+              <span className={styles.localRequirementKicker}>
+                Required for real training
+              </span>
+              <h2 id="local-training-required-title">
+                Run this site on your local machine.
+              </h2>
+              <p>
+                Training is unavailable on the hosted site because it cannot
+                reach the loopback-only PyTorch trainer. Clone or open this
+                project on the same computer, install its Node and trainer
+                dependencies, then start both pieces with this command.
+              </p>
             </div>
-          ) : null}
+            <div className={styles.localCommandCard}>
+              <span>From the project root</span>
+              <code>npm run dev:training</code>
+              <small>
+                Run it once, leave that terminal open, then open the <strong>Local URL</strong> it prints.
+              </small>
+            </div>
+            <div className={styles.localConnectionState} role="status">
+              <span aria-hidden="true" />
+              <strong>
+                {bridge === "online"
+                  ? "Local trainer connected"
+                  : bridge === "checking"
+                    ? "Checking this machine"
+                    : "No local trainer detected"}
+              </strong>
+              {bridge === "offline" ? (
+                <button type="button" onClick={() => void connect()}>
+                  Try connection again
+                </button>
+              ) : null}
+            </div>
+          </aside>
           {message ? <div className={styles.inlineError}>{message}</div> : null}
 
           <div className={styles.setupGrid}>
@@ -780,7 +819,10 @@ export function CustomTrainingChamber() {
               <button data-director="start" className={styles.startButton} type="button" onClick={() => void beginTraining()} disabled={starting || bridge !== "online" || documentCount === 0 || totalUploadBytes > MAX_UPLOAD_BYTES}>
                 <span>{starting ? "Preparing run…" : "Start real training"}</span><span aria-hidden="true">→</span>
               </button>
-              <small className={styles.localNote}>Runs locally. Leaving this page does not stop the trainer.</small>
+              <small className={styles.localNote}>
+                Requires the locally launched site and trainer. Leaving this
+                page does not stop the trainer.
+              </small>
             </aside>
           </div>
         </section>

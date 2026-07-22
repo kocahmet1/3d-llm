@@ -192,6 +192,158 @@
   font-size: 8px;
 }
 
+.localRequirement {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.4fr) minmax(280px, 0.8fr) auto;
+  align-items: stretch;
+  gap: 18px;
+  padding: 18px;
+  margin-top: 30px;
+  border: 1px solid rgba(255, 201, 92, 0.38);
+  border-radius: 18px;
+  background:
+    linear-gradient(120deg, rgba(72, 47, 8, 0.62), rgba(16, 20, 15, 0.78) 58%),
+    rgba(22, 18, 8, 0.9);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 240, 200, 0.07);
+}
+
+.localRequirement[data-status="online"] {
+  border-color: rgba(121, 247, 189, 0.32);
+  background:
+    linear-gradient(120deg, rgba(16, 61, 46, 0.52), rgba(8, 24, 21, 0.78) 58%),
+    rgba(5, 19, 17, 0.9);
+}
+
+.localRequirementCopy {
+  align-self: center;
+}
+
+.localRequirementKicker,
+.localCommandCard > span {
+  color: #ffcf6c;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.localRequirement[data-status="online"] .localRequirementKicker {
+  color: #79f7bd;
+}
+
+.localRequirementCopy h2 {
+  margin: 7px 0 0;
+  color: #fff2cf;
+  font-size: clamp(17px, 1.6vw, 23px);
+  font-weight: 720;
+  letter-spacing: -0.025em;
+}
+
+.localRequirement[data-status="online"] .localRequirementCopy h2 {
+  color: #e7fff5;
+}
+
+.localRequirementCopy p {
+  max-width: 720px;
+  margin: 8px 0 0;
+  color: #c6b994;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.localRequirement[data-status="online"] .localRequirementCopy p {
+  color: #9fc0b5;
+}
+
+.localCommandCard {
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  padding: 13px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 13px;
+  background: rgba(0, 5, 6, 0.48);
+}
+
+.localCommandCard code {
+  width: fit-content;
+  color: #f4fff9;
+  font-family: var(--font-mono);
+  font-size: clamp(13px, 1.3vw, 17px);
+  font-weight: 720;
+  letter-spacing: -0.02em;
+  user-select: all;
+}
+
+.localCommandCard small {
+  color: #918c76;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.localCommandCard small strong {
+  color: #ddd4b3;
+}
+
+.localConnectionState {
+  display: grid;
+  min-width: 150px;
+  align-content: center;
+  justify-items: start;
+  gap: 8px;
+  padding: 4px 2px;
+}
+
+.localConnectionState > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ffc95c;
+  box-shadow: 0 0 13px rgba(255, 201, 92, 0.5);
+}
+
+.localRequirement[data-status="online"] .localConnectionState > span {
+  background: #79f7bd;
+  box-shadow: 0 0 13px rgba(121, 247, 189, 0.66);
+}
+
+.localRequirement[data-status="offline"] .localConnectionState > span {
+  background: #ff6b91;
+  box-shadow: 0 0 13px rgba(255, 107, 145, 0.56);
+}
+
+.localConnectionState strong {
+  color: #d7cba8;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.localRequirement[data-status="online"] .localConnectionState strong {
+  color: #bffbe4;
+}
+
+.localConnectionState button {
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 201, 92, 0.25);
+  border-radius: 7px;
+  background: rgba(255, 201, 92, 0.1);
+  color: #ffe8b4;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.localConnectionState button:hover {
+  border-color: rgba(255, 222, 151, 0.52);
+  background: rgba(255, 201, 92, 0.17);
+}
+
 .bridgeCallout,
 .inlineWarning,
 .inlineError {
@@ -267,6 +419,16 @@
   margin: 16px 0;
   font-size: 11px;
   line-height: 1.5;
+}
+
+.inlineWarning > span {
+  min-width: 0;
+}
+
+.inlineWarning code {
+  color: #ffe6a9;
+  font-family: var(--font-mono);
+  font-size: 0.95em;
 }
 
 .recoveryGuide {
@@ -1691,6 +1853,22 @@
     grid-template-columns: 1fr;
   }
 
+  .localRequirement {
+    grid-template-columns: 1fr;
+  }
+
+  .localConnectionState {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 9px;
+    padding: 0;
+  }
+
+  .localConnectionState button {
+    margin-left: auto;
+  }
+
   .launchPanel,
   .logPanel,
   .healthPanel {
@@ -1751,6 +1929,20 @@
 
   .promiseRow {
     display: grid;
+  }
+
+  .localRequirement {
+    gap: 14px;
+    padding: 14px;
+  }
+
+  .localConnectionState {
+    display: grid;
+  }
+
+  .localConnectionState button {
+    width: 100%;
+    margin-left: 0;
   }
 
   .bridgeCallout {
@@ -1870,6 +2062,7 @@
 @media (prefers-contrast: more) {
   .panel,
   .controlBar,
+  .localRequirement,
   .bridgeCallout {
     border-color: rgba(223, 255, 245, 0.55);
     background-color: #020a0b;

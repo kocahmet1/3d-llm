@@ -115,6 +115,28 @@ test("production worker renders the finished training experience", async () => {
   );
 });
 
+test("the opening room exposes a proximity-gated custom-training console", async () => {
+  const [room, canvas, promptStyles] = await Promise.all([
+    readSource("app/components/machineRoom.ts"),
+    readSource("app/components/TrainingWorldCanvas.tsx"),
+    readSource("app/components/TrainingWorldCanvas.module.css"),
+  ]);
+
+  assert.match(room, /custom-training-console/);
+  assert.match(room, /TRAIN YOUR OWN LLM HERE/);
+  assert.match(room, /trainingConsole[\s\S]*?activationRadius/);
+  assert.match(
+    canvas,
+    /roomPlayerPosition\.distanceTo\([\s\S]*?machineRoom\.trainingConsole\.approachLocal/,
+  );
+  assert.match(canvas, /CLICK HERE TO BEGIN/);
+  assert.match(canvas, /href="\/custom-training"/);
+  assert.match(canvas, /reportedTrainingConsoleNearby/);
+  assert.match(canvas, /event\.code === "KeyE"/);
+  assert.match(promptStyles, /@keyframes trainingConsoleHop/);
+  assert.match(promptStyles, /prefers-reduced-motion/);
+});
+
 test("custom training chamber renders a truthful local-training setup", async () => {
   const response = await render("/custom-training");
   assert.equal(response.status, 200);
@@ -127,6 +149,10 @@ test("custom training chamber renders a truthful local-training setup", async ()
   assert.match(html, /Training choices/i);
   assert.match(html, /Start real training/i);
   assert.match(html, /Local trainer/i);
+  assert.match(html, /Run this site on your local machine/i);
+  assert.match(html, /Training is unavailable on the hosted site/i);
+  assert.match(html, /npm run dev:training/i);
+  assert.match(html, /Local URL/i);
   assert.doesNotMatch(html, /mock training|simulated loss/i);
 });
 
@@ -635,6 +661,92 @@ test("semantic process lines stay lightweight while navigation avoids a visible 
   assert.match(hud, /useState\(false\)[\s\S]*?hudMinimized/);
   assert.match(hud, /Show interface panels[\s\S]*?Hide interface panels/);
   assert.match(hud, /styles\.rootMinimized/);
+});
+
+test("the opening room starts walkable and teaches movement before contextual zoom", async () => {
+  const [machineRoom, canvas, experience, hud, hudStyles, worldTypes] =
+    await Promise.all([
+      readSource("app/components/machineRoom.ts"),
+      readSource("app/components/TrainingWorldCanvas.tsx"),
+      readSource("app/components/TrainingExperience.tsx"),
+      readSource("app/components/TrainingHUD.tsx"),
+      readSource("app/components/TrainingHUD.module.css"),
+      readSource("app/lib/worldTypes.ts"),
+    ]);
+
+  const coordinate = String.raw`(-?\d+(?:\.\d+)?)`;
+  const spawnMatch = new RegExp(
+    String.raw`spawn:\s*new THREE\.Vector3\(\s*${coordinate}\s*,\s*${coordinate}\s*,\s*${coordinate}\s*\)`,
+  ).exec(machineRoom);
+  const clearanceMatch =
+    /MACHINE_ROOM_PLAYER_CLEARANCE\s*=\s*(-?\d+(?:\.\d+)?)/.exec(machineRoom);
+  const blockersSource =
+    /blockers:\s*\[([\s\S]*?)\n\s*\],/.exec(machineRoom)?.[1] ?? "";
+  const blockerPattern = new RegExp(
+    String.raw`\{\s*minX:\s*${coordinate}\s*,\s*maxX:\s*${coordinate}\s*,\s*minZ:\s*${coordinate}\s*,\s*maxZ:\s*${coordinate}\s*\}`,
+    "g",
+  );
+  const blockers = [...blockersSource.matchAll(blockerPattern)].map((match) => ({
+    minX: Number(match[1]),
+    maxX: Number(match[2]),
+    minZ: Number(match[3]),
+    maxZ: Number(match[4]),
+  }));
+
+  assert.ok(spawnMatch, "the opening room should expose a literal spawn for review");
+  assert.ok(clearanceMatch, "the furniture clearance should be a shared named constant");
+  assert.ok(blockers.length >= 3, "the room furniture blockers should be discoverable");
+
+  const spawnX = Number(spawnMatch[1]);
+  const spawnZ = Number(spawnMatch[3]);
+  const clearance = Number(clearanceMatch[1]);
+  blockers.forEach((blocker, index) => {
+    const startsTrapped =
+      spawnX > blocker.minX - clearance &&
+      spawnX < blocker.maxX + clearance &&
+      spawnZ > blocker.minZ - clearance &&
+      spawnZ < blocker.maxZ + clearance;
+    assert.equal(
+      startsTrapped,
+      false,
+      `machine-room spawn must clear padded blocker ${index + 1}`,
+    );
+  });
+
+  assert.match(
+    canvas,
+    /const\s+nearMachineTable\s*=[\s\S]*?Math\.hypot\(roomPlayerPosition\.x,\s*roomPlayerPosition\.z\)[\s\S]*?MACHINE_ROOM_CUE_RADIUS/,
+  );
+  assert.match(canvas, /nearMachineTable\s*&&\s*roomHoveredIndex\s*>=\s*0/);
+  assert.match(
+    canvas,
+    /const\s+reportMachineRoomCue[\s\S]*?reportedMachineRoomCueKey[\s\S]*?onMachineRoomCueChange/,
+    "the render loop should report cue changes without updating React every frame",
+  );
+  assert.match(
+    canvas,
+    /const\s+movementStartX[\s\S]*?roomPlayerPosition\.x\s*!==\s*movementStartX[\s\S]*?reportMovementDiscovered\(\)/,
+    "the WASD hint should retire only after position actually changes",
+  );
+  const keyboardGuard =
+    /const\s+isTextEntryTarget[\s\S]*?const\s+onKeyDown/.exec(canvas)?.[0] ?? "";
+  assert.match(keyboardGuard, /input/);
+  assert.doesNotMatch(
+    keyboardGuard,
+    /button|\ba\s*,/,
+    "focused HUD buttons and links should not suppress FPS movement keys",
+  );
+
+  assert.match(worldTypes, /interface\s+MachineRoomCue/);
+  assert.match(experience, /onMachineRoomCueChange=\{setMachineRoomCue\}/);
+  assert.match(experience, /onMovementDiscovered=\{handleMovementDiscovered\}/);
+  assert.match(hud, /Use the scroll wheel to zoom in/i);
+  assert.match(hud, /Keep scrolling to enter/i);
+  assert.match(hud, /WASD · move around/i);
+  assert.match(hud, /className=\{styles\.machineRoomCue\}[\s\S]*?role="status"[\s\S]*?aria-live="polite"/);
+  assert.match(hudStyles, /\.machineRoomCue\s*\{/);
+  assert.match(hudStyles, /\.movementCue\s*\{/);
+  assert.match(hudStyles, /@keyframes\s+scrollWheelNudge/);
 });
 
 test("the data-preparation chamber is a readable open observation arena", async () => {

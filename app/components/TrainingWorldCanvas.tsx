@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -19,6 +20,7 @@ import { resolveAssistantTarget } from "../lib/assistantContext";
 import type {
   BranchSide,
   DetailMode,
+  MachineRoomCue,
   NavigationMode,
   TrainingCanvasProps,
   TrainingPhase,
@@ -35,7 +37,10 @@ import {
   setObjectOpacity,
 } from "./chambers/processShared";
 import { createAssistantController } from "./assistant";
-import { createMachineRoom } from "./machineRoom";
+import {
+  createMachineRoom,
+  MACHINE_ROOM_PLAYER_CLEARANCE,
+} from "./machineRoom";
 import {
   getDirectorProcessOverride,
   isDirectorDriving,
@@ -43,6 +48,7 @@ import {
   unregisterDirectorCanvas,
   type DirectorCanvasApi,
 } from "../lib/director/registry";
+import styles from "./TrainingWorldCanvas.module.css";
 
 const TAU = Math.PI * 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -64,6 +70,7 @@ const MACHINE_ROOM_DIVE_SECONDS = 1.2;
 const MACHINE_ROOM_RISE_SECONDS = 0.42;
 const MACHINE_ROOM_REVEAL_SECONDS = 0.65;
 const MACHINE_ROOM_FOV = 58;
+const MACHINE_ROOM_CUE_RADIUS = 4;
 
 const FALLBACK_PHASE_COLORS: Record<TrainingPhase, string> = {
   overview: "#72f5c3",
@@ -162,6 +169,8 @@ interface WorldRefs {
   onProgressChange: TrainingCanvasProps["onProgressChange"];
   onManualNavigation: TrainingCanvasProps["onManualNavigation"];
   onNavigationModeChange: TrainingCanvasProps["onNavigationModeChange"];
+  onMachineRoomCueChange: TrainingCanvasProps["onMachineRoomCueChange"];
+  onMovementDiscovered: TrainingCanvasProps["onMovementDiscovered"];
   onStationChange: TrainingCanvasProps["onStationChange"];
   onAssistantTargetChange: TrainingCanvasProps["onAssistantTargetChange"];
   onAssistantFocusChange: TrainingCanvasProps["onAssistantFocusChange"];
@@ -4389,6 +4398,8 @@ export function TrainingWorldCanvas({
   onProgressChange,
   onManualNavigation,
   onNavigationModeChange,
+  onMachineRoomCueChange,
+  onMovementDiscovered,
   onStationChange,
   onAssistantTargetChange,
   onAssistantFocusChange,
@@ -4396,9 +4407,11 @@ export function TrainingWorldCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fallbackRef = useRef<HTMLDivElement>(null);
+  const trainingConsoleLinkRef = useRef<HTMLAnchorElement>(null);
   const [interactionHint, setInteractionHint] = useState<"focus" | null>(
     null,
   );
+  const [trainingConsoleNearby, setTrainingConsoleNearby] = useState(false);
   const latest = useRef<WorldRefs>({
     progress,
     stationIndex,
@@ -4415,6 +4428,8 @@ export function TrainingWorldCanvas({
     onProgressChange,
     onManualNavigation,
     onNavigationModeChange,
+    onMachineRoomCueChange,
+    onMovementDiscovered,
     onStationChange,
     onAssistantTargetChange,
     onAssistantFocusChange,
@@ -4437,6 +4452,8 @@ export function TrainingWorldCanvas({
       onProgressChange,
       onManualNavigation,
       onNavigationModeChange,
+      onMachineRoomCueChange,
+      onMovementDiscovered,
       onStationChange,
       onAssistantTargetChange,
       onAssistantFocusChange,
@@ -4455,6 +4472,8 @@ export function TrainingWorldCanvas({
     onProgressChange,
     onManualNavigation,
     onNavigationModeChange,
+    onMachineRoomCueChange,
+    onMovementDiscovered,
     playing,
     progress,
     rideMode,
@@ -4779,12 +4798,43 @@ export function TrainingWorldCanvas({
     let manualOverride = true;
     let wasPlaying = latest.current.playing;
     let reportedNavigationMode: NavigationMode | null = null;
+    let reportedMachineRoomCueKey: string | null = null;
+    let reportedTrainingConsoleNearby = false;
+    let movementDiscoveryReported = false;
     cameraLight.intensity = 1.0;
 
     const reportNavigationMode = (mode: NavigationMode) => {
       if (reportedNavigationMode === mode) return;
       reportedNavigationMode = mode;
       latest.current.onNavigationModeChange(mode);
+    };
+
+    const reportMachineRoomCue = (cue: MachineRoomCue | null) => {
+      const cueKey = cue
+        ? `${cue.unitId}:${cue.approaching ? "approaching" : "ready"}`
+        : null;
+      if (reportedMachineRoomCueKey === cueKey) return;
+      reportedMachineRoomCueKey = cueKey;
+      latest.current.onMachineRoomCueChange(cue);
+    };
+
+    const reportTrainingConsoleProximity = (nearby: boolean) => {
+      if (reportedTrainingConsoleNearby === nearby) return;
+      reportedTrainingConsoleNearby = nearby;
+      setTrainingConsoleNearby(nearby);
+      if (nearby && document.pointerLockElement === canvas) {
+        // Give the cursor back as the call to action appears so the visitor
+        // can click it immediately after walking into the wake radius.
+        document.exitPointerLock();
+        pressedKeys.clear();
+        pendingDollyDistance = 0;
+      }
+    };
+
+    const reportMovementDiscovered = () => {
+      if (movementDiscoveryReported) return;
+      movementDiscoveryReported = true;
+      latest.current.onMovementDiscovered();
     };
 
     const reportAssistantTarget = (targetId: string | null) => {
@@ -5362,6 +5412,7 @@ export function TrainingWorldCanvas({
       if (roomTransition) return;
       const unit = machineRoom.units[unitIndex];
       clearPressedKeys();
+      reportMachineRoomCue(null);
       exitFocus();
       if (reduceProcessMotion) {
         roomVeilOpacity = 1;
@@ -5655,17 +5706,24 @@ export function TrainingWorldCanvas({
       pressedKeys.clear();
       pendingDollyDistance = 0;
     };
-    const isInteractiveTarget = (target: EventTarget | null) => {
+    const isTextEntryTarget = (target: EventTarget | null) => {
       const element = target instanceof HTMLElement ? target : null;
       return Boolean(
         element?.closest(
-          "input, button, select, textarea, a, [contenteditable='true']",
+          "input:not([type]), input[type='text'], input[type='search'], input[type='email'], input[type='url'], input[type='tel'], input[type='password'], input[type='number'], select, textarea, [contenteditable='true']",
         ),
       );
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isInteractiveTarget(event.target)) return;
-      if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
+      if (isTextEntryTarget(event.target)) return;
+      if (
+        event.code === "KeyE" &&
+        !event.repeat &&
+        reportedTrainingConsoleNearby
+      ) {
+        event.preventDefault();
+        trainingConsoleLinkRef.current?.click();
+      } else if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
         event.preventDefault();
         pressedKeys.add(event.code);
         if (!event.repeat) {
@@ -5950,6 +6008,7 @@ export function TrainingWorldCanvas({
       wasPlaying = state.playing;
 
       const inMachineRoom = navigationRegion.kind === "machine-room";
+      if (!inMachineRoom || roomTransition) reportMachineRoomCue(null);
       const guidedRide = !manualOverride && !inMachineRoom;
       let stationFloat = cameraProgress * stationDenominator;
       let currentStation = activeStationIndex;
@@ -6069,6 +6128,20 @@ export function TrainingWorldCanvas({
         roomHoveredIndex =
           roomZoomLockIndex >= 0 ? roomZoomLockIndex : aimHoverIndex;
 
+        const nearMachineTable =
+          Math.hypot(roomPlayerPosition.x, roomPlayerPosition.z) <=
+          MACHINE_ROOM_CUE_RADIUS;
+        if (!roomTransition && nearMachineTable && roomHoveredIndex >= 0) {
+          const hoveredUnit = machineRoom.units[roomHoveredIndex];
+          reportMachineRoomCue({
+            unitId: hoveredUnit.id,
+            label: hoveredUnit.label,
+            approaching: roomZoomLockIndex === roomHoveredIndex,
+          });
+        } else {
+          reportMachineRoomCue(null);
+        }
+
         if (frameDollyDistance !== 0) {
           dollyDirection
             .set(0, 0, -1)
@@ -6105,6 +6178,8 @@ export function TrainingWorldCanvas({
           );
         }
 
+        const movementStartX = roomPlayerPosition.x;
+        const movementStartZ = roomPlayerPosition.z;
         const forwardIntent =
           (pressedKeys.has("KeyW") ? 1 : 0) -
           (pressedKeys.has("KeyS") ? 1 : 0);
@@ -6126,10 +6201,10 @@ export function TrainingWorldCanvas({
           const blockedAt = (x: number, z: number) =>
             bounds.blockers.some(
               (blocker) =>
-                x > blocker.minX - 0.28 &&
-                x < blocker.maxX + 0.28 &&
-                z > blocker.minZ - 0.28 &&
-                z < blocker.maxZ + 0.28,
+                x > blocker.minX - MACHINE_ROOM_PLAYER_CLEARANCE &&
+                x < blocker.maxX + MACHINE_ROOM_PLAYER_CLEARANCE &&
+                z > blocker.minZ - MACHINE_ROOM_PLAYER_CLEARANCE &&
+                z < blocker.maxZ + MACHINE_ROOM_PLAYER_CLEARANCE,
             );
           const nextX = THREE.MathUtils.clamp(
             roomPlayerPosition.x + localMove.x * walkSpeed * delta,
@@ -6146,6 +6221,12 @@ export function TrainingWorldCanvas({
           );
           if (!blockedAt(roomPlayerPosition.x, nextZ)) {
             roomPlayerPosition.z = nextZ;
+          }
+          if (
+            roomPlayerPosition.x !== movementStartX ||
+            roomPlayerPosition.z !== movementStartZ
+          ) {
+            reportMovementDiscovered();
           }
         }
 
@@ -6606,6 +6687,17 @@ export function TrainingWorldCanvas({
       // Region may have changed mid-frame (dive completion, veiled jump), so
       // recompute room visibility here rather than reusing `inMachineRoom`.
       const roomVisible = navigationRegion.kind === "machine-room";
+      const trainingConsoleDistance = roomPlayerPosition.distanceTo(
+        machineRoom.trainingConsole.approachLocal,
+      );
+      const trainingConsoleWakeRadius =
+        machineRoom.trainingConsole.activationRadius +
+        (reportedTrainingConsoleNearby ? 0.35 : 0);
+      const trainingConsoleIsNearby =
+        roomVisible &&
+        !roomTransition &&
+        trainingConsoleDistance <= trainingConsoleWakeRadius;
+      reportTrainingConsoleProximity(trainingConsoleIsNearby);
       machineRoom.group.visible = roomVisible;
       corridorSystem.visible = !roomVisible;
       routeBeacon.group.visible = !roomVisible;
@@ -6615,6 +6707,7 @@ export function TrainingWorldCanvas({
           delta,
           roomTransition ? -1 : roomHoveredIndex,
           !reduceProcessMotion,
+          trainingConsoleIsNearby,
         );
       }
 
@@ -6922,7 +7015,7 @@ export function TrainingWorldCanvas({
         ref={canvasRef}
         role="application"
         tabIndex={0}
-        aria-label="First-person 3D training world. You begin in a room with the training machine on a pedestal: aim at one of its chambers and scroll toward it to step inside, and press M at any time to return to the room. Click to capture the mouse, look with the mouse, move with W A S D, move toward or away along the current view with the mouse wheel, sprint with Shift, hold V to ask the voice guide about the centered target, right-click a component under the pointer or the center crosshair to spotlight it center stage and start the guide listening for your question, right-click empty space or press Escape to release the spotlight, and return to the chamber overlook with R."
+        aria-label="First-person 3D training world. You begin in a room with the training machine on a pedestal and a custom-training console between the windows. Walk close to that console to open the Train your own LLM link, or aim at one of the machine chambers and scroll toward it to step inside. Press M at any time to return to the room. Click to capture the mouse, look with the mouse, move with W A S D, move toward or away along the current view with the mouse wheel, sprint with Shift, hold V to ask the voice guide about the centered target, right-click a component under the pointer or the center crosshair to spotlight it center stage and start the guide listening for your question, right-click empty space or press Escape to release the spotlight, and return to the chamber overlook with R."
         style={{
           display: "block",
           width: "100%",
@@ -6931,6 +7024,24 @@ export function TrainingWorldCanvas({
           outline: "none",
         }}
       />
+      {trainingConsoleNearby ? (
+        <div className={styles.trainingConsolePrompt} aria-live="polite">
+          <span className={styles.trainingConsoleNotice} aria-hidden="true">
+            CLICK HERE TO BEGIN <span>↓</span>
+          </span>
+          <Link
+            ref={trainingConsoleLinkRef}
+            href="/custom-training"
+            className={styles.trainingConsoleLink}
+            aria-label="Open the custom training panel to train your own LLM"
+          >
+            <span className={styles.trainingConsoleStatus}>LOCAL MODEL LAB</span>
+            <strong>Train your own LLM</strong>
+            <span>Bring your text. Build a tiny model.</span>
+          </Link>
+          <span className={styles.trainingConsoleKey}>or press E</span>
+        </div>
+      ) : null}
       {!playing || assistantEnabled ? (
         <span
           aria-hidden="true"
@@ -6996,7 +7107,8 @@ export function TrainingWorldCanvas({
         embeddings, Transformer attention and MLP computation, logits, cross-entropy loss,
         backpropagation, AdamW state, a weight update, and the next batch. It opens in a room
         where the whole machine sits on a pedestal; aim at a chamber and scroll toward it to
-        step inside, and press M to return to the room. Click to capture the mouse, use
+        step inside, or walk to the labeled console between the windows to train your own
+        model. Press M to return to the room. Click to capture the mouse, use
         W A S D to move freely inside a chamber, use the wheel to move toward or away
         along the current view, and press R to return to its overlook.
       </div>

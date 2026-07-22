@@ -87,6 +87,8 @@ export function TrainingHUD({
   playing,
   rideMode,
   navigationMode,
+  machineRoomCue,
+  movementDiscovered,
   detailMode,
   branchSide,
   dataPrepProgress,
@@ -267,6 +269,42 @@ export function TrainingHUD({
           );
         })}
       </nav>
+
+      {navigationMode === "machine-room" && machineRoomCue ? (
+        <div
+          className={styles.machineRoomCue}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-approaching={machineRoomCue.approaching}
+        >
+          <span className={styles.scrollMouse} aria-hidden="true">
+            <span className={styles.scrollWheel} />
+          </span>
+          <span className={styles.machineRoomCueCopy}>
+            <strong>
+              {machineRoomCue.approaching
+                ? "Keep scrolling to enter"
+                : "Use the scroll wheel to zoom in"}
+            </strong>
+            <span>Enter {machineRoomCue.label}</span>
+          </span>
+        </div>
+      ) : null}
+
+      {navigationMode === "machine-room" &&
+      !movementDiscovered &&
+      !machineRoomCue ? (
+        <div className={styles.movementCue} role="status" aria-live="polite">
+          <span className={styles.movementKeys} aria-label="W A S D keys">
+            <kbd>W</kbd>
+            <kbd>A</kbd>
+            <kbd>S</kbd>
+            <kbd>D</kbd>
+          </span>
+          <span>WASD · move around</span>
+        </div>
+      ) : null}
 
       <section
         className={`${styles.stationPanel} ${

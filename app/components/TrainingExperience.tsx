@@ -21,6 +21,7 @@ import {
 import type {
   BranchSide,
   DetailMode,
+  MachineRoomCue,
   NavigationMode,
   RideMode,
 } from "../lib/worldTypes";
@@ -102,6 +103,9 @@ export function TrainingExperience() {
   const [dataPrepPlaying, setDataPrepPlaying] = useState(true);
   const [navigationMode, setNavigationMode] =
     useState<NavigationMode>("guided-ride");
+  const [machineRoomCue, setMachineRoomCue] =
+    useState<MachineRoomCue | null>(null);
+  const [movementDiscovered, setMovementDiscovered] = useState(false);
   const [assistantTargetId, setAssistantTargetId] = useState<string | null>(
     null,
   );
@@ -670,6 +674,10 @@ export function TrainingExperience() {
     setPlaying(false);
   }, []);
 
+  const handleMovementDiscovered = useCallback(() => {
+    setMovementDiscovered(true);
+  }, []);
+
   const handleWorldProgress = useCallback((value: number) => {
     setPlaying(false);
     setProgressState(clamp01(value));
@@ -733,6 +741,8 @@ export function TrainingExperience() {
         onProgressChange={handleWorldProgress}
         onManualNavigation={beginManualNavigation}
         onNavigationModeChange={setNavigationMode}
+        onMachineRoomCueChange={setMachineRoomCue}
+        onMovementDiscovered={handleMovementDiscovered}
         onStationChange={setReportedStation}
         onAssistantTargetChange={setAssistantTargetId}
         onAssistantFocusChange={handleAssistantFocusChange}
@@ -745,6 +755,8 @@ export function TrainingExperience() {
         detailMode={detailMode}
         branchSide={branchSide}
         navigationMode={navigationMode}
+        machineRoomCue={machineRoomCue}
+        movementDiscovered={movementDiscovered}
         stations={TRAINING_STATIONS}
         dataPrepProgress={dataPrepProgress}
         dataPrepPlaying={dataPrepPlaying}

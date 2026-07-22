@@ -256,6 +256,8 @@
 .rootMinimized .phaseRail,
 .rootMinimized .legend,
 .rootMinimized .keyHelp,
+.rootMinimized .machineRoomCue,
+.rootMinimized .movementCue,
 .rootMinimized .navigationStatus,
 .rootMinimized .branchLayer,
 .rootMinimized .processDock,
@@ -1082,6 +1084,137 @@
   width: 68px;
 }
 
+.machineRoomCue {
+  position: absolute;
+  top: calc(50% + 52px);
+  left: 50%;
+  display: flex;
+  min-width: min(340px, calc(100vw - 40px));
+  max-width: min(430px, calc(100vw - 40px));
+  align-items: center;
+  gap: 13px;
+  box-sizing: border-box;
+  padding: 11px 15px 11px 12px;
+  border: 1px solid rgba(100, 220, 234, 0.44);
+  border-radius: 15px;
+  background:
+    linear-gradient(135deg, rgba(100, 220, 234, 0.12), transparent 48%),
+    rgba(2, 13, 17, 0.9);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.42),
+    0 0 26px rgba(100, 220, 234, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  backdrop-filter: blur(18px) saturate(125%);
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: machineCueReveal 220ms ease-out both;
+}
+
+.machineRoomCue[data-approaching="true"] {
+  border-color: rgba(121, 248, 207, 0.58);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.42),
+    0 0 30px rgba(121, 248, 207, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.065);
+}
+
+.scrollMouse {
+  position: relative;
+  display: block;
+  width: 25px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(218, 252, 245, 0.72);
+  border-radius: 13px;
+  box-shadow: 0 0 15px rgba(100, 220, 234, 0.18);
+}
+
+.scrollMouse::after {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 50%;
+  width: 1px;
+  background: rgba(218, 252, 245, 0.16);
+  content: "";
+  transform: translateX(-50%);
+}
+
+.scrollWheel {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 50%;
+  width: 3px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--mint);
+  box-shadow: 0 0 8px rgba(121, 248, 207, 0.72);
+  transform: translateX(-50%);
+  animation: scrollWheelNudge 1.35s ease-in-out infinite;
+}
+
+.machineRoomCueCopy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.machineRoomCueCopy strong {
+  color: #effffb;
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0.015em;
+  line-height: 1.2;
+}
+
+.machineRoomCueCopy > span {
+  overflow: hidden;
+  color: #85aaa2;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.075em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.movementCue {
+  position: absolute;
+  right: 50%;
+  bottom: 174px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px 6px 7px;
+  border: 1px solid rgba(151, 246, 216, 0.13);
+  border-radius: 999px;
+  background: rgba(3, 14, 18, 0.64);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+  color: #78938c;
+  font-size: 7px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  transform: translateX(50%);
+  white-space: nowrap;
+  animation: machineCueReveal 260ms ease-out both;
+}
+
+.movementKeys {
+  display: flex;
+  gap: 3px;
+}
+
+.movementCue .movementKeys kbd {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  color: #9fb9b2;
+  font-size: 7px;
+}
+
 .navigationStatus {
   position: absolute;
   right: 50%;
@@ -1776,6 +1909,34 @@
   }
 }
 
+@keyframes machineCueReveal {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes scrollWheelNudge {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  30% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -5px);
+  }
+}
+
 @media (max-width: 1280px) {
   .phaseRail {
     left: auto;
@@ -2087,6 +2248,18 @@
     display: none;
   }
 
+  .machineRoomCue {
+    top: auto;
+    bottom: calc(205px + env(safe-area-inset-bottom));
+    min-width: 0;
+    width: min(360px, calc(100vw - 24px));
+    padding: 9px 12px 9px 10px;
+  }
+
+  .movementCue {
+    bottom: calc(205px + env(safe-area-inset-bottom));
+  }
+
   .branchButton {
     top: 53%;
     width: 52px;
@@ -2229,6 +2402,8 @@
   .rootCode .breadcrumbs,
   .rootCode .legend,
   .rootCode .keyHelp,
+  .rootCode .machineRoomCue,
+  .rootCode .movementCue,
   .rootCode .navigationStatus,
   .rootCode .branchLayer,
   .rootCode .processDock,
@@ -2352,11 +2527,19 @@
   }
 }
 
+@media (pointer: coarse) {
+  .movementCue {
+    display: none;
+  }
+}
+
 @media (prefers-contrast: more) {
   .stationPanel,
   .phaseRail,
   .transport,
   .legend,
+  .machineRoomCue,
+  .movementCue,
   .keyHelp summary,
   .keySheet {
     border-color: rgba(222, 255, 246, 0.5);
