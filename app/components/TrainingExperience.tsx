@@ -21,6 +21,7 @@ import {
 import type {
   BranchSide,
   DetailMode,
+  IntroTourState,
   MachineRoomCue,
   NavigationMode,
   RideMode,
@@ -108,6 +109,9 @@ export function TrainingExperience() {
   const [machineRoomCue, setMachineRoomCue] =
     useState<MachineRoomCue | null>(null);
   const [movementDiscovered, setMovementDiscovered] = useState(false);
+  // First-visit guided tour: "touring" while the canvas drives the camera,
+  // "handoff" briefly after it releases control (auto-dismissed below).
+  const [introTour, setIntroTour] = useState<IntroTourState>(null);
   const [assistantTargetId, setAssistantTargetId] = useState<string | null>(
     null,
   );
@@ -118,6 +122,13 @@ export function TrainingExperience() {
   const previousStationIndex = useRef(0);
   const assistantKeyHeld = useRef(false);
   const autoListenTargetRef = useRef<string | null>(null);
+
+  // The hand-off notice ("you have control now") dismisses itself.
+  useEffect(() => {
+    if (introTour !== "handoff") return undefined;
+    const timer = window.setTimeout(() => setIntroTour(null), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [introTour]);
 
   const derivedStation = useMemo(
     () =>
@@ -745,6 +756,7 @@ export function TrainingExperience() {
         onNavigationModeChange={setNavigationMode}
         onMachineRoomCueChange={setMachineRoomCue}
         onMovementDiscovered={handleMovementDiscovered}
+        onIntroTourChange={setIntroTour}
         onStationChange={setReportedStation}
         onAssistantTargetChange={setAssistantTargetId}
         onAssistantFocusChange={handleAssistantFocusChange}
@@ -759,6 +771,7 @@ export function TrainingExperience() {
         navigationMode={navigationMode}
         machineRoomCue={machineRoomCue}
         movementDiscovered={movementDiscovered}
+        introTour={introTour}
         stations={TRAINING_STATIONS}
         dataPrepProgress={dataPrepProgress}
         dataPrepPlaying={dataPrepPlaying}

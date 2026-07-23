@@ -89,6 +89,7 @@ export function TrainingHUD({
   navigationMode,
   machineRoomCue,
   movementDiscovered,
+  introTour,
   detailMode,
   branchSide,
   dataPrepProgress,
@@ -105,6 +106,19 @@ export function TrainingHUD({
 }: TrainingHUDProps) {
   const [fullCodeOpen, setFullCodeOpen] = useState(false);
   const [hudMinimized, setHudMinimized] = useState(false);
+  // As soon as the visitor lands in a chamber (free roam), surface a short
+  // prompt reminding them to left-click for mouse look before walking. It
+  // auto-dismisses so it never lingers once they're moving.
+  const [chamberEntryHint, setChamberEntryHint] = useState(false);
+  useEffect(() => {
+    if (navigationMode !== "free-roam") {
+      setChamberEntryHint(false);
+      return;
+    }
+    setChamberEntryHint(true);
+    const timer = window.setTimeout(() => setChamberEntryHint(false), 7000);
+    return () => window.clearTimeout(timer);
+  }, [navigationMode]);
   const fullCodeDialogId = useId();
   const fullCodeDialogTitleId = useId();
   const fullCodeDialogDescriptionId = useId();
@@ -277,23 +291,58 @@ export function TrainingHUD({
           aria-live="polite"
           aria-atomic="true"
           data-approaching={machineRoomCue.approaching}
+          data-touring={introTour === "touring"}
         >
-          <span className={styles.scrollMouse} aria-hidden="true">
-            <span className={styles.scrollWheel} />
-          </span>
+          {introTour !== "touring" ? (
+            <span className={styles.scrollMouse} aria-hidden="true">
+              <span className={styles.scrollWheel} />
+            </span>
+          ) : null}
           <span className={styles.machineRoomCueCopy}>
             <strong>
-              {machineRoomCue.approaching
-                ? "Keep scrolling to move in"
-                : "Choose a station and scroll to move in"}
+              {introTour === "touring"
+                ? machineRoomCue.label
+                : machineRoomCue.approaching
+                  ? "Keep scrolling to move in"
+                  : "Choose a station and scroll to move in"}
             </strong>
-            <span>Enter {machineRoomCue.label}</span>
+            <span>
+              {introTour === "touring"
+                ? "One of the machine's 7 stations"
+                : `Enter ${machineRoomCue.label}`}
+            </span>
+          </span>
+        </div>
+      ) : null}
+
+      {introTour === "touring" ? (
+        <div className={styles.tourCue} role="status" aria-live="polite">
+          <span className={styles.machineRoomCueCopy}>
+            <strong>Guided tour</strong>
+            <span>Press any key or click to take control at any time</span>
+          </span>
+        </div>
+      ) : null}
+
+      {introTour === "handoff" ? (
+        <div
+          className={`${styles.tourCue} ${styles.tourCueHandoff}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span className={styles.machineRoomCueCopy}>
+            <strong>You have the control now</strong>
+            <span>
+              Move around with WASD and the mouse — or aim at one of the 7
+              stations and scroll in to zoom into it
+            </span>
           </span>
         </div>
       ) : null}
 
       {navigationMode === "machine-room" &&
       !movementDiscovered &&
+      introTour === null &&
       !machineRoomCue ? (
         <div className={styles.movementCue} role="status" aria-live="polite">
           <span className={styles.movementKeys} aria-label="W A S D keys">
@@ -303,6 +352,23 @@ export function TrainingHUD({
             <kbd>D</kbd>
           </span>
           <span>Aim at any station and scroll to move in</span>
+        </div>
+      ) : null}
+
+      {chamberEntryHint && introTour !== "touring" ? (
+        <div
+          className={styles.chamberEntryCue}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span className={styles.scrollMouse} aria-hidden="true">
+            <span className={styles.scrollWheel} />
+          </span>
+          <span className={styles.machineRoomCueCopy}>
+            <strong>Left-click, then walk with WASD</strong>
+            <span>Esc frees the mouse · M returns to the machine room</span>
+          </span>
         </div>
       ) : null}
 

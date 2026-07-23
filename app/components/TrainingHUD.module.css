@@ -257,7 +257,9 @@
 .rootMinimized .legend,
 .rootMinimized .keyHelp,
 .rootMinimized .machineRoomCue,
+.rootMinimized .chamberEntryCue,
 .rootMinimized .movementCue,
+.rootMinimized .tourCue,
 .rootMinimized .navigationStatus,
 .rootMinimized .branchLayer,
 .rootMinimized .processDock,
@@ -1110,12 +1112,63 @@
   animation: machineCueReveal 220ms ease-out both;
 }
 
+.chamberEntryCue {
+  position: absolute;
+  top: calc(50% + 52px);
+  left: 50%;
+  display: flex;
+  min-width: min(340px, calc(100vw - 40px));
+  max-width: min(460px, calc(100vw - 40px));
+  align-items: center;
+  gap: 13px;
+  box-sizing: border-box;
+  padding: 11px 15px 11px 12px;
+  border: 1px solid rgba(121, 248, 207, 0.5);
+  border-radius: 15px;
+  background:
+    linear-gradient(135deg, rgba(121, 248, 207, 0.12), transparent 48%),
+    rgba(2, 13, 17, 0.9);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.42),
+    0 0 26px rgba(121, 248, 207, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  backdrop-filter: blur(18px) saturate(125%);
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: machineCueReveal 220ms ease-out both;
+}
+
 .machineRoomCue[data-approaching="true"] {
   border-color: rgba(121, 248, 207, 0.58);
   box-shadow:
     0 18px 50px rgba(0, 0, 0, 0.42),
     0 0 30px rgba(121, 248, 207, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.065);
+}
+
+/* During the guided tour the nameplate cue moves up out of the way of the
+ * bottom transport/process UI and reads bigger — it's the whole point of
+ * this beat of the tour, so it needs to actually be noticed. */
+.machineRoomCue[data-touring="true"] {
+  top: 174px;
+  min-width: min(380px, calc(100vw - 40px));
+  max-width: min(480px, calc(100vw - 40px));
+  padding: 15px 22px;
+  border-width: 1.5px;
+  border-color: rgba(100, 220, 234, 0.62);
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.48),
+    0 0 34px rgba(100, 220, 234, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.machineRoomCue[data-touring="true"] .machineRoomCueCopy strong {
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+.machineRoomCue[data-touring="true"] .machineRoomCueCopy > span {
+  font-size: 11px;
 }
 
 .scrollMouse {
@@ -1177,6 +1230,52 @@
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+/* First-visit guided tour notices: a quiet "any key takes control" pill
+ * while the flow drives the camera, and a mint hand-off banner when it
+ * releases the visitor. */
+.tourCue {
+  position: absolute;
+  top: 92px;
+  right: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  box-sizing: border-box;
+  max-width: min(520px, calc(100vw - 40px));
+  padding: 13px 22px;
+  border: 1.5px solid rgba(100, 220, 234, 0.5);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(100, 220, 234, 0.16), transparent 48%),
+    rgba(2, 13, 17, 0.92);
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(100, 220, 234, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(18px) saturate(130%);
+  pointer-events: none;
+  transform: translateX(50%);
+  animation: machineCueReveal 260ms ease-out both;
+}
+
+.tourCue .machineRoomCueCopy strong {
+  font-size: 15px;
+}
+
+.tourCue .machineRoomCueCopy > span {
+  white-space: normal;
+  font-size: 10.5px;
+}
+
+.tourCueHandoff {
+  border-color: rgba(121, 248, 207, 0.62);
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.5),
+    0 0 36px rgba(121, 248, 207, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .movementCue {

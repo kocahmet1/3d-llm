@@ -171,6 +171,7 @@ interface WorldRefs {
   onNavigationModeChange: TrainingCanvasProps["onNavigationModeChange"];
   onMachineRoomCueChange: TrainingCanvasProps["onMachineRoomCueChange"];
   onMovementDiscovered: TrainingCanvasProps["onMovementDiscovered"];
+  onIntroTourChange: TrainingCanvasProps["onIntroTourChange"];
   onStationChange: TrainingCanvasProps["onStationChange"];
   onAssistantTargetChange: TrainingCanvasProps["onAssistantTargetChange"];
   onAssistantFocusChange: TrainingCanvasProps["onAssistantFocusChange"];
@@ -1025,6 +1026,82 @@ function addShell(
     trimScales,
     trimColors,
   );
+
+  // --- Wayfinding: a bright neon marquee over the exit door -------------
+  // The exit sits on the back wall (−z); it carries the training story on to
+  // the next chamber. A glowing "NEXT CHAMBER" plate with a stack of downward
+  // chevrons makes that direction unmistakable while free-roaming. Skipped in
+  // the final chamber, which has nowhere further to send the visitor.
+  if (context.index < TRAINING_STATIONS.length - 1) {
+    const marquee = new THREE.Group();
+    marquee.name = "next-chamber-marquee";
+    const signZ = -depth / 2 + 0.34; // just inside the back wall, facing the arena
+    const neonColor = context.palette.phaseBase
+      .clone()
+      .lerp(new THREE.Color("#ffffff"), 0.34);
+    const neonMaterial = new THREE.MeshBasicMaterial({
+      color: neonColor,
+      transparent: true,
+      opacity: 0.96,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
+    // Downward chevrons, stacked with the lowest tip near the door lintel.
+    const chevronWidth = Math.min(2.4, doorWidth * 0.5);
+    const chevronHalfWidth = chevronWidth / 2;
+    const chevronHeight = 0.32;
+    const barThickness = 0.12;
+    const barLength = Math.hypot(chevronHalfWidth, chevronHeight);
+    const chevronTilt = Math.atan2(chevronHalfWidth, chevronHeight);
+    const chevronGap = 0.4;
+    const chevronRows = 3;
+    for (let row = 0; row < chevronRows; row += 1) {
+      const apexY = row * chevronGap; // local: row 0 lowest, points down
+      for (const side of [-1, 1] as const) {
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(barThickness, barLength, barThickness),
+          neonMaterial,
+        );
+        bar.position.set(
+          (side * chevronHalfWidth) / 2,
+          apexY + chevronHeight / 2,
+          0,
+        );
+        bar.rotation.z = -side * chevronTilt;
+        marquee.add(bar);
+      }
+    }
+
+    // Text plate above the chevrons.
+    const plateHeight = 0.85;
+    const plateWidth = Math.min(doorWidth + 1.2, width - 1.2);
+    const plate = createFacePanel(["NEXT CHAMBER"], {
+      width: plateWidth,
+      height: plateHeight,
+      color: "#eaf4ff",
+      borderColor: neonColor,
+      fontScale: 0.94,
+    });
+    const chevronStackTop = (chevronRows - 1) * chevronGap + chevronHeight;
+    plate.position.set(0, chevronStackTop + 0.14 + plateHeight / 2, 0.02);
+    plate.renderOrder = 8;
+    marquee.add(plate);
+
+    // Anchor the group just above the door, then clamp/scale so nothing pokes
+    // through the ceiling in shorter halls.
+    const localTop = chevronStackTop + 0.14 + plateHeight;
+    const maxTop = ceilingY - 0.15;
+    let baseY = doorTop + 0.3;
+    if (baseY + localTop > maxTop) baseY = maxTop - localTop;
+    if (baseY < doorTop + 0.05) {
+      const avail = maxTop - (doorTop + 0.05);
+      marquee.scale.setScalar(Math.max(0.55, avail / localTop));
+      baseY = doorTop + 0.05;
+    }
+    marquee.position.set(0, baseY, signZ);
+    chamber.add(marquee);
+  }
 
   context.group.add(chamber);
   const spawnInset = Math.max(8, depth * 0.16);
@@ -4400,6 +4477,7 @@ export function TrainingWorldCanvas({
   onNavigationModeChange,
   onMachineRoomCueChange,
   onMovementDiscovered,
+  onIntroTourChange,
   onStationChange,
   onAssistantTargetChange,
   onAssistantFocusChange,
@@ -4430,6 +4508,7 @@ export function TrainingWorldCanvas({
     onNavigationModeChange,
     onMachineRoomCueChange,
     onMovementDiscovered,
+    onIntroTourChange,
     onStationChange,
     onAssistantTargetChange,
     onAssistantFocusChange,
@@ -4454,6 +4533,7 @@ export function TrainingWorldCanvas({
       onNavigationModeChange,
       onMachineRoomCueChange,
       onMovementDiscovered,
+      onIntroTourChange,
       onStationChange,
       onAssistantTargetChange,
       onAssistantFocusChange,
@@ -4474,6 +4554,7 @@ export function TrainingWorldCanvas({
     onNavigationModeChange,
     onMachineRoomCueChange,
     onMovementDiscovered,
+    onIntroTourChange,
     playing,
     progress,
     rideMode,
@@ -4804,13 +4885,21 @@ export function TrainingWorldCanvas({
     cameraLight.intensity = 1.0;
 
     /* ---------------------------------------------------------------- *
-     * Opening fly-in. On first load the camera opens on a wide
-     * establishing view of the room, then eases forward over a few
-     * seconds to the resting pose facing the Transformer Tower. Any
-     * manual input (WASD, click, or scroll) cancels it instantly and
-     * hands control to the visitor from wherever the camera currently
-     * sits — no snap. Tweak the START constants below to reframe the
-     * opening shot; the END pose tracks the machine-room spawn.
+     * Opening fly-in + first-visit guided tour.
+     *
+     * Every load opens with the fly-in: a wide establishing view of the
+     * room easing forward to the resting pose facing the machine. On a
+     * first visit (nothing in localStorage; force with ?tour=1) the flow
+     * keeps going: the gaze walks across all seven desk units (dwelling
+     * on each until its nameplate appears), dives into Data Preparation,
+     * strolls up to the matrices and back, walks on to the next chamber,
+     * lingers, then rises back to the machine room and hands over.
+     *
+     * Any manual input (any key, click, or scroll) cancels the whole flow
+     * instantly and hands control to the visitor from wherever the camera
+     * currently sits — no snap. Tweak the START constants below to
+     * reframe the opening shot; the END pose tracks the machine-room
+     * spawn.
      * ---------------------------------------------------------------- */
     const INTRO_START_POSITION = new THREE.Vector3(2.6, 2.35, 4.15);
     const INTRO_START_YAW = 0.58;
@@ -4819,7 +4908,7 @@ export function TrainingWorldCanvas({
     const INTRO_END_POSITION = machineRoom.bounds.spawn.clone();
     const INTRO_END_YAW = machineRoom.bounds.spawnYaw;
     const INTRO_END_PITCH = machineRoom.bounds.spawnPitch;
-    const INTRO_DURATION = 5; // seconds — cinematic glide
+    const INTRO_DURATION = 3.4; // seconds — cinematic glide
     let introActive = true;
     let introElapsed = 0;
     // Seed the pose so the very first rendered frame already sits at the
@@ -4830,15 +4919,137 @@ export function TrainingWorldCanvas({
     glanceYaw = INTRO_START_YAW;
     glancePitch = INTRO_START_PITCH;
 
-    /** Cancel the opening fly-in and hand control over with no snap. */
-    const cancelIntro = () => {
+    type IntroTourPhase =
+      | "fly-in" // the original establishing glide
+      | "units" // gaze across the seven desk units, nameplate by nameplate
+      | "dive-aim" // settle back onto Data Preparation before the dive
+      | "dive" // dive + reveal transitions own the camera
+      | "prep-walk" // stroll through the Data Preparation chamber
+      | "to-next" // line up with the portal and walk the tunnel
+      | "next-dwell" // linger in the next chamber
+      | "rise"; // veiled return to the machine room, then hand over
+
+    const INTRO_TOUR_SEEN_KEY = "training-world:intro-tour-seen";
+    /** Glance tween onto each desk unit before its nameplate appears. */
+    const TOUR_UNIT_AIM_SECONDS = 0.85;
+    /** Hold on the nameplate before moving to the next unit. */
+    const TOUR_UNIT_HOLD_SECONDS = 1.25;
+    /** Re-aim onto Data Preparation before diving in. */
+    const TOUR_DIVE_AIM_SECONDS = 1.0;
+    /** Linger time inside the follow-up chamber before heading home. */
+    const TOUR_NEXT_DWELL_SECONDS = 4.5;
+    /** Safety cap on the tunnel walk before the tour bails back home. */
+    const TOUR_TRANSIT_TIMEOUT_SECONDS = 14;
+    /** Safety cap on dive/rise transitions before the tour lets go. */
+    const TOUR_TRANSITION_TIMEOUT_SECONDS = 6;
+
+    /**
+     * Data Preparation stroll, in fractions of the chamber's walkable
+     * bounds (mirrors the DATA_PREP_TRACK convention so it survives
+     * resizing): drift to mid-hall, push close to the matrices with a
+     * slight climb, then settle back down toward the entrance side.
+     */
+    const TOUR_PREP_WAYPOINTS = [
+      { fx: 0.45, lift: 0, fz: 0.62, yaw: 0.18, pitch: -0.02, travel: 3.6, hold: 0.6 },
+      { fx: 0.76, lift: 0.9, fz: 0.42, yaw: -0.3, pitch: 0.05, travel: 3.9, hold: 2.6 },
+      { fx: 0.5, lift: 0, fz: 0.7, yaw: 0.02, pitch: -0.03, travel: 3.2, hold: 1.8 },
+    ] as const;
+
+    // The extended tour is a first-visit experience: it runs when the seen
+    // marker is absent (or ?tour=1 forces it) and prefers-reduced-motion is
+    // off. Repeat visitors keep only the short fly-in.
+    let tourExtended = false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const reducedMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      tourExtended =
+        !reducedMotion &&
+        (params.get("tour") === "1" ||
+          window.localStorage.getItem(INTRO_TOUR_SEEN_KEY) === null);
+    } catch {
+      tourExtended = false;
+    }
+
+    let tourPhase: IntroTourPhase = "fly-in";
+    /** Time inside the current unit glance / dwell beat. */
+    let tourTimer = 0;
+    /** Time since the current phase began — drives the safety bails. */
+    let tourPhaseElapsed = 0;
+    let tourUnitIndex = 0;
+    let tourCueShown = false;
+    let tourFromYaw = INTRO_START_YAW;
+    let tourFromPitch = INTRO_START_PITCH;
+    let tourAimYaw = INTRO_START_YAW;
+    let tourAimPitch = INTRO_START_PITCH;
+    let tourWaypointIndex = 0;
+    let tourWaypointTimer = 0;
+    let tourStationMismatch = 0;
+    const tourMoveFrom = new THREE.Vector3();
+    let tourMoveFromYaw = 0;
+    let tourMoveFromPitch = 0;
+
+    const wrapAngle = (angle: number): number =>
+      Math.atan2(Math.sin(angle), Math.cos(angle));
+
+    /** Yaw/pitch that looks at a desk unit from where the visitor stands. */
+    const resolveTourUnitAim = (unitIndex: number) => {
+      const unit = machineRoom.units[unitIndex];
+      machineAimToUnit.copy(unit.focusLocal).sub(roomPlayerPosition);
+      const length = Math.max(machineAimToUnit.length(), 1e-4);
+      tourAimYaw = Math.atan2(-machineAimToUnit.x, -machineAimToUnit.z);
+      tourAimPitch = THREE.MathUtils.clamp(
+        Math.asin(THREE.MathUtils.clamp(machineAimToUnit.y / length, -1, 1)),
+        -Math.PI * 0.485,
+        Math.PI * 0.485,
+      );
+    };
+
+    const beginTourWaypoint = (index: number) => {
+      tourWaypointIndex = index;
+      tourWaypointTimer = 0;
+      tourMoveFrom.copy(localPlayerPosition);
+      tourMoveFromYaw = glanceYaw;
+      tourMoveFromPitch = glancePitch;
+    };
+
+    const markTourSeen = () => {
+      try {
+        window.localStorage.setItem(INTRO_TOUR_SEEN_KEY, "1");
+      } catch {
+        // Private browsing or blocked storage: the tour simply replays.
+      }
+    };
+
+    /**
+     * End the flow — either the natural hand-off at the tour's finish
+     * (handoff = true, which surfaces the "you have control" notice) or a
+     * silent cancel because the visitor took over. Control transfers from
+     * the camera's current pose with no snap.
+     */
+    const finishTour = (handoff: boolean) => {
       if (!introActive) return;
       introActive = false;
-      // glance* / roomPlayerPosition already hold the last interpolated
-      // frame; lock the free-roam targets onto them so nothing jumps.
+      markTourSeen();
+      if (tourPhase === "to-next") {
+        // Release only the scripted travel keys; a visitor-held key that
+        // triggered this cancel stays pressed.
+        pressedKeys.delete("KeyW");
+        pressedKeys.delete("ShiftLeft");
+      }
+      verticalRoamEnabled = false;
+      // glance* already holds the last interpolated frame; lock the
+      // free-roam targets onto it so nothing jumps.
       targetYaw = glanceYaw;
       targetPitch = glancePitch;
+      latest.current.onIntroTourChange?.(handoff ? "handoff" : null);
     };
+
+    /** Cancel the flow and hand control over with no snap. */
+    const cancelIntro = () => finishTour(false);
+
+    if (tourExtended) latest.current.onIntroTourChange?.("touring");
 
     /**
      * Grab the pointer for FPS look. Called from the first movement key so
@@ -5625,6 +5836,104 @@ export function TrainingWorldCanvas({
       }
     };
 
+    /**
+     * Chamber-side leg of the first-visit tour. Runs inside the manual
+     * free-roam branch each frame, so the scripted stroll moves exactly
+     * like a visitor would: through moveWithinChamber (collisions, portal
+     * crossings) and the scripted W key for the tunnel walk.
+     */
+    const driveTourChamber = (delta: number) => {
+      if (navigationRegion.kind !== "chamber") return;
+      const bounds = stationRuntimes[activeStationIndex].navigationBounds;
+      if (tourPhase === "prep-walk" && activeStationIndex === 1) {
+        const waypoint = TOUR_PREP_WAYPOINTS[tourWaypointIndex];
+        tourWaypointTimer += delta;
+        const t = Math.min(1, tourWaypointTimer / waypoint.travel);
+        const eased = t * t * (3 - 2 * t);
+        const goalX = THREE.MathUtils.lerp(
+          bounds.minX + 0.9,
+          bounds.maxX - 0.9,
+          waypoint.fx,
+        );
+        const goalZ = THREE.MathUtils.lerp(
+          bounds.minZ + 0.9,
+          bounds.maxZ - 0.9,
+          waypoint.fz,
+        );
+        const goalY = THREE.MathUtils.clamp(
+          bounds.walkY + waypoint.lift,
+          bounds.minY,
+          bounds.maxY,
+        );
+        verticalRoamEnabled = true;
+        moveWithinChamber(
+          THREE.MathUtils.lerp(tourMoveFrom.x, goalX, eased) -
+            localPlayerPosition.x,
+          THREE.MathUtils.lerp(tourMoveFrom.y, goalY, eased) -
+            localPlayerPosition.y,
+          THREE.MathUtils.lerp(tourMoveFrom.z, goalZ, eased) -
+            localPlayerPosition.z,
+        );
+        targetYaw =
+          tourMoveFromYaw + wrapAngle(waypoint.yaw - tourMoveFromYaw) * eased;
+        targetPitch = THREE.MathUtils.lerp(
+          tourMoveFromPitch,
+          waypoint.pitch,
+          eased,
+        );
+        if (tourWaypointTimer >= waypoint.travel + waypoint.hold) {
+          if (tourWaypointIndex < TOUR_PREP_WAYPOINTS.length - 1) {
+            beginTourWaypoint(tourWaypointIndex + 1);
+          } else {
+            // Stroll done — head for the doorway to the next chamber.
+            tourPhase = "to-next";
+            tourPhaseElapsed = 0;
+            beginTourWaypoint(tourWaypointIndex);
+          }
+        }
+      } else if (tourPhase === "to-next" && activeStationIndex === 1) {
+        // Line up with the portal first, then walk forward; the regular
+        // portal crossing hands over to tunnel travel, where the scripted
+        // W key keeps the visitor moving until arrival.
+        tourWaypointTimer += delta;
+        const t = Math.min(1, tourWaypointTimer / 2.2);
+        const eased = t * t * (3 - 2 * t);
+        verticalRoamEnabled = false;
+        targetYaw = tourMoveFromYaw + wrapAngle(0 - tourMoveFromYaw) * eased;
+        targetPitch = THREE.MathUtils.lerp(tourMoveFromPitch, 0, eased);
+        if (t < 1) {
+          moveWithinChamber(
+            THREE.MathUtils.lerp(tourMoveFrom.x, bounds.portalCenterX, eased) -
+              localPlayerPosition.x,
+            THREE.MathUtils.lerp(tourMoveFrom.y, bounds.walkY, eased) -
+              localPlayerPosition.y,
+            THREE.MathUtils.lerp(tourMoveFrom.z, bounds.minZ + 2.2, eased) -
+              localPlayerPosition.z,
+          );
+        } else {
+          pressedKeys.add("KeyW");
+        }
+      } else if (tourPhase === "next-dwell" && activeStationIndex === 2) {
+        // Linger: a slow drift forward with a gentle look-around, then
+        // rise back to the machine room and hand over.
+        tourTimer += delta;
+        targetYaw = Math.sin(tourTimer * 0.9) * 0.22;
+        targetPitch = -0.02 + Math.sin(tourTimer * 0.6) * 0.04;
+        if (tourTimer < 2.6) {
+          moveWithinChamber(
+            -Math.sin(glanceYaw) * 1.3 * delta,
+            0,
+            -Math.cos(glanceYaw) * 1.3 * delta,
+          );
+        }
+        if (tourTimer >= TOUR_NEXT_DWELL_SECONDS) {
+          tourPhase = "rise";
+          tourPhaseElapsed = 0;
+          beginReturnToRoom();
+        }
+      }
+    };
+
     const applyLookDelta = (deltaX: number, deltaY: number) => {
       targetYaw -= deltaX * 0.00235;
       targetPitch = THREE.MathUtils.clamp(
@@ -5708,6 +6017,36 @@ export function TrainingWorldCanvas({
       exitFocus();
     };
 
+    /**
+     * Left-clicking the console screen opens the custom-training panel. Uses
+     * the center crosshair while pointer-locked (FPS mode, where the DOM prompt
+     * link can't be reached with the captured cursor), or the cursor position
+     * otherwise. Returns true if the screen was hit and navigation fired.
+     */
+    const tryOpenTrainingScreen = (event: PointerEvent): boolean => {
+      if (navigationRegion.kind !== "machine-room" || roomTransition) {
+        return false;
+      }
+      if (document.pointerLockElement === canvas) {
+        pickNdc.set(0, 0);
+      } else {
+        clientToNdc(event.clientX, event.clientY, pickNdc);
+      }
+      machineRoom.group.updateMatrixWorld();
+      assistantRaycaster.setFromCamera(pickNdc, camera);
+      const hits = assistantRaycaster.intersectObject(machineRoom.group, true);
+      if (hits.length === 0) return false;
+      let object: THREE.Object3D | null = hits[0].object;
+      while (object) {
+        if (object.userData?.customTrainingTarget) {
+          trainingConsoleLinkRef.current?.click();
+          return true;
+        }
+        object = object.parent;
+      }
+      return false;
+    };
+
     const onPointerDown = (event: PointerEvent) => {
       if (event.button === 2) {
         event.preventDefault();
@@ -5719,6 +6058,14 @@ export function TrainingWorldCanvas({
       canvas.focus();
       cancelIntro();
       beginManualControl();
+      // Aiming at the console screen and clicking opens the training panel —
+      // this works in FPS mode where the captured cursor can't reach the DOM
+      // prompt link. Do this before grabbing pointer lock so the first click
+      // on the screen navigates instead of only capturing the mouse.
+      if (tryOpenTrainingScreen(event)) {
+        event.preventDefault();
+        return;
+      }
       if (
         event.pointerType === "mouse" &&
         document.pointerLockElement !== canvas &&
@@ -5783,6 +6130,9 @@ export function TrainingWorldCanvas({
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTextEntryTarget(event.target)) return;
+      // Any key hands control back during the intro flow (the WASD branch
+      // below also cancels, but the tour promises "any key").
+      if (introActive && !event.repeat) cancelIntro();
       if (
         event.code === "KeyE" &&
         !event.repeat &&
@@ -6057,7 +6407,9 @@ export function TrainingWorldCanvas({
         state.rideMode !== "explore"
       ) {
         // Starting the guided ride always leaves the machine room (and
-        // cancels any half-finished dive) so playback can take the camera.
+        // cancels any half-finished dive or intro tour) so playback can
+        // take the camera.
+        cancelIntro();
         if (navigationRegion.kind === "machine-room" || roomTransition) {
           roomTransition = null;
           roomVeilOpacity = 0;
@@ -6078,12 +6430,96 @@ export function TrainingWorldCanvas({
       }
       wasPlaying = state.playing;
 
+      /* -------------------------------------------------------------- *
+       * Intro-tour bookkeeping: watch the transitions the tour merely
+       * waits on (dive, tunnel arrival, rise home) and advance or bail.
+       * Camera-owning phases live in the branches below.
+       * -------------------------------------------------------------- */
+      if (introActive) {
+        if (isDirectorDriving()) {
+          // The demo director outranks the tour.
+          cancelIntro();
+        } else if (
+          navigationRegion.kind === "machine-room" &&
+          !roomTransition &&
+          state.stationIndex !== roomReferenceStationIndex
+        ) {
+          // HUD scrubbing / voice navigation takes priority: cancel so the
+          // regular room branch performs its veiled jump.
+          cancelIntro();
+        } else if (tourExtended) {
+          tourPhaseElapsed += delta;
+          // Parent stationIndex normally trails the tour by a frame or
+          // two; a persistent mismatch means the HUD navigated elsewhere.
+          if (
+            navigationRegion.kind === "chamber" &&
+            state.stationIndex !== activeStationIndex
+          ) {
+            tourStationMismatch += delta;
+            if (tourStationMismatch > 0.6) cancelIntro();
+          } else {
+            tourStationMismatch = 0;
+          }
+          if (!introActive) {
+            // Cancelled just above — fall through to normal handling.
+          } else if (tourPhase === "dive") {
+            if (
+              navigationRegion.kind === "chamber" &&
+              !roomTransition &&
+              activeStationIndex === 1
+            ) {
+              tourPhase = "prep-walk";
+              tourPhaseElapsed = 0;
+              beginTourWaypoint(0);
+            } else if (tourPhaseElapsed > TOUR_TRANSITION_TIMEOUT_SECONDS) {
+              finishTour(true);
+            }
+          } else if (tourPhase === "to-next") {
+            if (
+              navigationRegion.kind === "chamber" &&
+              activeStationIndex === 2
+            ) {
+              pressedKeys.delete("KeyW");
+              pressedKeys.delete("ShiftLeft");
+              tourPhase = "next-dwell";
+              tourPhaseElapsed = 0;
+              tourTimer = 0;
+            } else if (tourPhaseElapsed > TOUR_TRANSIT_TIMEOUT_SECONDS) {
+              // The walk never arrived (blocked, resized, …): head home so
+              // the flow still ends where it promised to.
+              pressedKeys.delete("KeyW");
+              pressedKeys.delete("ShiftLeft");
+              tourPhase = "rise";
+              tourPhaseElapsed = 0;
+              beginReturnToRoom();
+            }
+          } else if (tourPhase === "rise") {
+            if (
+              navigationRegion.kind === "machine-room" ||
+              tourPhaseElapsed > TOUR_TRANSITION_TIMEOUT_SECONDS
+            ) {
+              // Back overlooking the machine (the reveal may still be
+              // fading): the visitor takes it from here.
+              finishTour(true);
+            }
+          }
+        }
+      }
+
       const inMachineRoom = navigationRegion.kind === "machine-room";
       if (!inMachineRoom || roomTransition) reportMachineRoomCue(null);
-      // The fly-in only owns the opening moment in the room; any path that
-      // leaves the room (guided ride, a dive) retires it for good so it can
-      // never replay on a later return.
-      if (!inMachineRoom) introActive = false;
+      // The intro flow only leaves the room along its own scripted dive;
+      // any other path out (guided ride, HUD jump) retires it for good so
+      // it can never replay on a later return.
+      if (
+        !inMachineRoom &&
+        introActive &&
+        (tourPhase === "fly-in" ||
+          tourPhase === "units" ||
+          tourPhase === "dive-aim")
+      ) {
+        cancelIntro();
+      }
       const guidedRide = !manualOverride && !inMachineRoom;
       let stationFloat = cameraProgress * stationDenominator;
       let currentStation = activeStationIndex;
@@ -6114,50 +6550,122 @@ export function TrainingWorldCanvas({
           roomTransition = { mode: "reveal", t: 0 };
         }
       } else if (inMachineRoom && introActive && !roomTransition) {
-        // Opening fly-in: glide from the wide establishing shot to the
-        // resting pose facing the machine. Fully owns the camera until it
-        // finishes or cancelIntro() is called from a manual input.
+        // Scripted intro flow inside the room: the fly-in glide, then (on
+        // first visits) the gaze walk across the seven desk units and the
+        // re-aim before the Data Preparation dive. Fully owns the camera
+        // until it finishes or cancelIntro() is called from a manual input.
         reportNavigationMode("machine-room");
-        introElapsed += delta;
-        const introT = Math.min(1, introElapsed / INTRO_DURATION);
-        const introEased = introT * introT * (3 - 2 * introT);
-        roomPlayerPosition.lerpVectors(
-          INTRO_START_POSITION,
-          INTRO_END_POSITION,
-          introEased,
-        );
-        glanceYaw = THREE.MathUtils.lerp(
-          INTRO_START_YAW,
-          INTRO_END_YAW,
-          introEased,
-        );
-        glancePitch = THREE.MathUtils.lerp(
-          INTRO_START_PITCH,
-          INTRO_END_PITCH,
-          introEased,
-        );
-        // Keep the free-roam targets in lock-step so a mid-fly cancel is seamless.
+        if (tourPhase === "fly-in") {
+          introElapsed += delta;
+          const introT = Math.min(1, introElapsed / INTRO_DURATION);
+          const introEased = introT * introT * (3 - 2 * introT);
+          roomPlayerPosition.lerpVectors(
+            INTRO_START_POSITION,
+            INTRO_END_POSITION,
+            introEased,
+          );
+          glanceYaw = THREE.MathUtils.lerp(
+            INTRO_START_YAW,
+            INTRO_END_YAW,
+            introEased,
+          );
+          glancePitch = THREE.MathUtils.lerp(
+            INTRO_START_PITCH,
+            INTRO_END_PITCH,
+            introEased,
+          );
+          roomHoveredIndex = -1;
+          reportMachineRoomCue(null);
+          camera.fov = THREE.MathUtils.lerp(
+            INTRO_START_FOV,
+            MACHINE_ROOM_FOV,
+            introEased,
+          );
+          if (introT >= 1) {
+            if (tourExtended) {
+              // Settled near the table — start looking the machine over.
+              tourPhase = "units";
+              tourPhaseElapsed = 0;
+              tourTimer = 0;
+              tourUnitIndex = 0;
+              tourCueShown = false;
+              tourFromYaw = glanceYaw;
+              tourFromPitch = glancePitch;
+              resolveTourUnitAim(0);
+            } else {
+              introActive = false;
+            }
+          }
+        } else {
+          // "units" / "dive-aim": glance from unit to unit while standing
+          // still. Each unit keeps the gaze until its nameplate has been
+          // up for a beat, then the eyes move on.
+          tourTimer += delta;
+          const aimSeconds =
+            tourPhase === "units"
+              ? TOUR_UNIT_AIM_SECONDS
+              : TOUR_DIVE_AIM_SECONDS;
+          const aimT = Math.min(1, tourTimer / aimSeconds);
+          const aimEased = aimT * aimT * (3 - 2 * aimT);
+          glanceYaw =
+            tourFromYaw + wrapAngle(tourAimYaw - tourFromYaw) * aimEased;
+          glancePitch = THREE.MathUtils.lerp(
+            tourFromPitch,
+            tourAimPitch,
+            aimEased,
+          );
+          camera.fov = MACHINE_ROOM_FOV;
+          if (tourPhase === "units") {
+            if (aimT >= 1 && !tourCueShown) {
+              // Gaze has settled: surface the hovering nameplate.
+              tourCueShown = true;
+              roomHoveredIndex = tourUnitIndex;
+              const unit = machineRoom.units[tourUnitIndex];
+              reportMachineRoomCue({
+                unitId: unit.id,
+                label: unit.label,
+                approaching: false,
+              });
+            }
+            if (tourTimer >= aimSeconds + TOUR_UNIT_HOLD_SECONDS) {
+              reportMachineRoomCue(null);
+              roomHoveredIndex = -1;
+              tourFromYaw = glanceYaw;
+              tourFromPitch = glancePitch;
+              tourTimer = 0;
+              tourCueShown = false;
+              if (tourUnitIndex < machineRoom.units.length - 1) {
+                tourUnitIndex += 1;
+                resolveTourUnitAim(tourUnitIndex);
+              } else {
+                // All seven seen — swing back onto Data Preparation.
+                tourPhase = "dive-aim";
+                tourPhaseElapsed = 0;
+                resolveTourUnitAim(0);
+              }
+            }
+          } else if (tourTimer >= aimSeconds + 0.45) {
+            // Settled on Data Preparation: dive into the miniature.
+            tourPhase = "dive";
+            tourPhaseElapsed = 0;
+            startRoomDive(0);
+          }
+        }
+        // Keep the free-roam targets in lock-step so a mid-flow cancel is
+        // seamless, then compose the frame from the scripted pose.
         targetYaw = glanceYaw;
         targetPitch = glancePitch;
         glanceEuler.set(glancePitch, glanceYaw, 0, "YXZ");
         glanceQuaternion.setFromEuler(glanceEuler);
-        roomHoveredIndex = -1;
-        reportMachineRoomCue(null);
         currentStation = activeStationIndex;
         stationFloat = currentStation;
         cameraPosition.copy(roomPlayerPosition).add(MACHINE_ROOM_ORIGIN);
         camera.position.copy(cameraPosition);
         camera.quaternion.copy(glanceQuaternion);
-        camera.fov = THREE.MathUtils.lerp(
-          INTRO_START_FOV,
-          MACHINE_ROOM_FOV,
-          introEased,
-        );
         cameraLight.position
           .copy(cameraPosition)
           .addScaledVector(WORLD_UP, 0.8);
         cameraLight.color.set("#ffd9b0");
-        if (introT >= 1) introActive = false;
       } else if (inMachineRoom) {
         reportNavigationMode("machine-room");
         glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, 18, delta);
@@ -6511,14 +7019,19 @@ export function TrainingWorldCanvas({
         if (
           navigationRegion.kind === "chamber" &&
           state.stationIndex !== activeStationIndex &&
-          !isDirectorDriving()
+          !isDirectorDriving() &&
+          !introActive
         ) {
           // HUD/voice navigation while free-roaming. Skipped for director
-          // flights: the director moves stations imperatively and React's
-          // stationIndex may lag a frame behind, which would otherwise
-          // yank the camera back to the previous chamber's spawn.
+          // flights and the intro tour: both move stations imperatively
+          // and React's stationIndex may lag a frame behind, which would
+          // otherwise yank the camera back to the previous chamber's
+          // spawn. (A persistent mismatch during the tour cancels it via
+          // the bookkeeping block above instead.)
           resetManualPose(state.stationIndex);
         }
+
+        if (introActive && tourExtended) driveTourChamber(delta);
 
         glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, 18, delta);
         glancePitch = THREE.MathUtils.damp(glancePitch, targetPitch, 18, delta);
@@ -7087,6 +7600,11 @@ export function TrainingWorldCanvas({
 
     return () => {
       disposed = true;
+      // Leave no stale tour banner behind if the canvas unmounts mid-flow.
+      if (introActive && tourExtended) {
+        introActive = false;
+        latest.current.onIntroTourChange?.(null);
+      }
       unregisterDirectorCanvas(directorApi);
       window.cancelAnimationFrame(frameHandle);
       resizeObserver.disconnect();
@@ -7135,7 +7653,7 @@ export function TrainingWorldCanvas({
         ref={canvasRef}
         role="application"
         tabIndex={0}
-        aria-label="First-person 3D training world. You begin in a room with the training machine on a pedestal and a custom-training console between the windows. Walk close to that console to open the Train your own LLM link, or aim at one of the machine chambers and scroll toward it to step inside. Press M at any time to return to the room. Click to capture the mouse, look with the mouse, move with W A S D, move toward or away along the current view with the mouse wheel, sprint with Shift, hold V to ask the voice guide about the centered target, right-click a component under the pointer or the center crosshair to spotlight it center stage and start the guide listening for your question, right-click empty space or press Escape to release the spotlight, and return to the chamber overlook with R."
+        aria-label="First-person 3D training world. You begin in a room with the training machine on a pedestal and a custom-training console angled into a corner. Aim at its screen and click (or walk up and press E) to open the Train your own LLM panel, or aim at one of the machine chambers and scroll toward it to step inside. Press M at any time to return to the room. Click to capture the mouse, look with the mouse, move with W A S D, move toward or away along the current view with the mouse wheel, sprint with Shift, hold V to ask the voice guide about the centered target, right-click a component under the pointer or the center crosshair to spotlight it center stage and start the guide listening for your question, right-click empty space or press Escape to release the spotlight, and return to the chamber overlook with R."
         style={{
           display: "block",
           width: "100%",
@@ -7144,13 +7662,32 @@ export function TrainingWorldCanvas({
           outline: "none",
         }}
       />
+      {/* Persistent hidden link so the screen-click and E shortcut can navigate
+          regardless of whether the proximity prompt is currently shown. */}
+      <Link
+        ref={trainingConsoleLinkRef}
+        href="/custom-training"
+        aria-hidden="true"
+        tabIndex={-1}
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          margin: -1,
+          padding: 0,
+          overflow: "hidden",
+          opacity: 0,
+          pointerEvents: "none",
+        }}
+      >
+        Open the custom training panel
+      </Link>
       {trainingConsoleNearby ? (
         <div className={styles.trainingConsolePrompt} aria-live="polite">
           <span className={styles.trainingConsoleNotice} aria-hidden="true">
             CLICK HERE TO BEGIN <span>↓</span>
           </span>
           <Link
-            ref={trainingConsoleLinkRef}
             href="/custom-training"
             className={styles.trainingConsoleLink}
             aria-label="Open the custom training panel to train your own LLM"

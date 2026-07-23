@@ -29,6 +29,13 @@ export interface MachineRoomCue {
   approaching: boolean;
 }
 
+/**
+ * First-visit guided tour: "touring" while the scripted flow drives the
+ * camera (any input hands control back), "handoff" right after the tour
+ * releases the visitor, null otherwise.
+ */
+export type IntroTourState = "touring" | "handoff" | null;
+
 export interface BranchChoice {
   left: string;
   right: string;
@@ -66,6 +73,7 @@ export interface TrainingHUDProps extends TrainingWorldState {
   navigationMode: NavigationMode;
   machineRoomCue: MachineRoomCue | null;
   movementDiscovered: boolean;
+  introTour: IntroTourState;
   dataPrepProgress: number;
   dataPrepPlaying: boolean;
   onProgressChange: (progress: number) => void;
@@ -97,6 +105,8 @@ export interface TrainingCanvasProps {
   onNavigationModeChange: (mode: NavigationMode) => void;
   onMachineRoomCueChange: (cue: MachineRoomCue | null) => void;
   onMovementDiscovered: () => void;
+  /** First-visit guided tour lifecycle (see IntroTourState). */
+  onIntroTourChange?: (state: IntroTourState) => void;
   onStationChange: (index: number) => void;
   onAssistantTargetChange: (targetId: string | null) => void;
   /**

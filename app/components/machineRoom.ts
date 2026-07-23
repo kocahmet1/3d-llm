@@ -491,6 +491,21 @@ function createTrainingConsoleSignTexture(): THREE.CanvasTexture {
     bloom.addColorStop(1, "rgba(0, 0, 0, 0)");
     paint.fillStyle = bloom;
     paint.fillRect(0, 0, 1024, 256);
+    // Subtle radial rays behind the title, like a burst sticker.
+    paint.save();
+    paint.translate(512, 128);
+    for (let ray = 0; ray < 18; ray += 1) {
+      paint.rotate(TAU / 18);
+      if (ray % 2 === 0) {
+        paint.fillStyle = "rgba(110, 180, 255, 0.06)";
+        paint.beginPath();
+        paint.moveTo(0, 0);
+        paint.arc(0, 0, 720, -TAU / 80, TAU / 80);
+        paint.closePath();
+        paint.fill();
+      }
+    }
+    paint.restore();
 
     paint.textAlign = "center";
     paint.textBaseline = "middle";
@@ -524,10 +539,38 @@ function createTrainingConsoleSignTexture(): THREE.CanvasTexture {
     paint.fillText(title, 512, 92);
     paint.restore();
 
-    // Subtitle with a warm pop and playful stars.
-    paint.fillStyle = "#ffb43a";
-    paint.font = '800 28px "Trebuchet MS", sans-serif';
-    paint.fillText("★  CUSTOM TRAINING PLAYGROUND  ★", 512, 188);
+    // Subtitle on a warm candy ribbon so it reads as its own element.
+    const ribbonWidth = 590;
+    const ribbonHeight = 48;
+    const ribbonX = 512 - ribbonWidth / 2;
+    const ribbonY = 188 - ribbonHeight / 2;
+    const ribbonFill = paint.createLinearGradient(0, ribbonY, 0, ribbonY + ribbonHeight);
+    ribbonFill.addColorStop(0, "#ffc23f");
+    ribbonFill.addColorStop(1, "#ff8a34");
+    paint.fillStyle = ribbonFill;
+    paint.beginPath();
+    const rr = ribbonHeight / 2;
+    paint.moveTo(ribbonX + rr, ribbonY);
+    paint.arcTo(ribbonX + ribbonWidth, ribbonY, ribbonX + ribbonWidth, ribbonY + ribbonHeight, rr);
+    paint.arcTo(ribbonX + ribbonWidth, ribbonY + ribbonHeight, ribbonX, ribbonY + ribbonHeight, rr);
+    paint.arcTo(ribbonX, ribbonY + ribbonHeight, ribbonX, ribbonY, rr);
+    paint.arcTo(ribbonX, ribbonY, ribbonX + ribbonWidth, ribbonY, rr);
+    paint.closePath();
+    paint.fill();
+    paint.strokeStyle = "rgba(255, 255, 255, 0.55)";
+    paint.lineWidth = 3;
+    paint.stroke();
+    paint.fillStyle = "#2a1330";
+    paint.font = '800 27px "Trebuchet MS", sans-serif';
+    paint.fillText("★  CUSTOM TRAINING PLAYGROUND  ★", 512, 190);
+
+    // Glowing pinstripe border framing the whole marquee.
+    paint.strokeStyle = "rgba(120, 225, 255, 0.55)";
+    paint.lineWidth = 5;
+    paint.strokeRect(12, 12, 1000, 232);
+    paint.strokeStyle = "rgba(120, 225, 255, 0.2)";
+    paint.lineWidth = 2;
+    paint.strokeRect(24, 24, 976, 208);
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -600,24 +643,44 @@ function createTrainingConsoleScreenTexture(): THREE.CanvasTexture {
       paint.fillText(chip[1], 100, y + 31);
     });
 
-    // Rainbow progress bar.
-    const bx = 38;
-    const by = 356;
-    const bw = 564;
-    const bh = 16;
-    paint.fillStyle = "rgba(255, 255, 255, 0.08)";
-    rrect(bx, by, bw, bh, 8);
-    paint.fill();
-    const grad = paint.createLinearGradient(bx, 0, bx + bw, 0);
-    grad.addColorStop(0, "#7bff5a");
-    grad.addColorStop(0.5, "#3fd0ff");
-    grad.addColorStop(1, "#ffd23f");
+    // Bright call-to-action button — aim the crosshair at the screen and click
+    // (or press E when nearby) to open the training panel.
+    const bx = 40;
+    const by = 346;
+    const bw = 560;
+    const bh = 42;
     paint.save();
-    rrect(bx, by, bw * 0.66, bh, 8);
-    paint.clip();
-    paint.fillStyle = grad;
-    paint.fillRect(bx, by, bw, bh);
+    paint.shadowColor = "rgba(55, 224, 106, 0.7)";
+    paint.shadowBlur = 20;
+    const cta = paint.createLinearGradient(bx, by, bx, by + bh);
+    cta.addColorStop(0, "#4cec88");
+    cta.addColorStop(1, "#22c264");
+    paint.fillStyle = cta;
+    rrect(bx, by, bw, bh, 21);
+    paint.fill();
     paint.restore();
+    paint.fillStyle = "#06331c";
+    paint.textAlign = "center";
+    paint.font = '800 25px "Trebuchet MS", "Segoe UI", sans-serif';
+    paint.fillText("▶  CLICK TO TRAIN", bx + bw / 2, by + 28);
+    paint.textAlign = "left";
+
+    // CRT polish: faint scanlines, a diagonal glass glare, and a glowing
+    // inner border so the panel reads as an actual lit display.
+    paint.fillStyle = "rgba(4, 8, 22, 0.12)";
+    for (let line = 0; line < 400; line += 4) {
+      paint.fillRect(0, line, 640, 2);
+    }
+    const glare = paint.createLinearGradient(0, 0, 640, 400);
+    glare.addColorStop(0, "rgba(255, 255, 255, 0.10)");
+    glare.addColorStop(0.3, "rgba(255, 255, 255, 0.02)");
+    glare.addColorStop(1, "rgba(255, 255, 255, 0)");
+    paint.fillStyle = glare;
+    paint.fillRect(0, 0, 640, 400);
+    paint.strokeStyle = "rgba(140, 225, 255, 0.4)";
+    paint.lineWidth = 3;
+    rrect(5, 5, 630, 390, 16);
+    paint.stroke();
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -971,9 +1034,9 @@ export function createMachineRoom(): MachineRoomRuntime {
   // blues with warm candy pops, rounded shapes, and lots of blinking lights.
   const shellMain = new THREE.MeshStandardMaterial({
     color: "#1fbcd6",
-    roughness: 0.22,
+    roughness: 0.16,
     metalness: 0.0,
-    envMapIntensity: 1.1,
+    envMapIntensity: 1.35,
   });
   const shellDeep = new THREE.MeshStandardMaterial({
     color: "#1b64d8",
@@ -1053,6 +1116,39 @@ export function createMachineRoom(): MachineRoomRuntime {
   consoleBody.position.y = 0.95;
   consoleBody.castShadow = true;
   trainingConsoleGroup.add(consoleBody);
+  // Molded rounded corners: vertical tubes soften the boxy silhouette so the
+  // cabinet reads as injection-molded plastic rather than a plain slab.
+  [-0.57, 0.57].forEach((edgeX) => {
+    [-0.21, 0.21].forEach((edgeZ) => {
+      const edge = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.055, 0.055, 1.4, 18),
+        shellMain,
+      );
+      edge.position.set(edgeX, 0.95, edgeZ);
+      trainingConsoleGroup.add(edge);
+    });
+  });
+  // Recessed dark control fascia: gives the knobs, dial, and START button a
+  // defined panel to live on instead of floating over bare teal.
+  const controlPanelTrim = new THREE.Mesh(
+    new THREE.BoxGeometry(1.04, 0.66, 0.012),
+    shellLime,
+  );
+  controlPanelTrim.position.set(0, 0.56, 0.207);
+  trainingConsoleGroup.add(controlPanelTrim);
+  const controlPanel = new THREE.Mesh(
+    new THREE.BoxGeometry(1.0, 0.62, 0.015),
+    glossDark,
+  );
+  controlPanel.position.set(0, 0.56, 0.21);
+  trainingConsoleGroup.add(controlPanel);
+  // Lime housing strip behind the indicator LED row.
+  const ledBelt = new THREE.Mesh(
+    new THREE.BoxGeometry(0.86, 0.07, 0.025),
+    shellLime,
+  );
+  ledBelt.position.set(0, 0.92, 0.208);
+  trainingConsoleGroup.add(ledBelt);
   const crown = new THREE.Mesh(
     new THREE.CylinderGeometry(0.16, 0.16, 1.14, 24),
     shellLime,
@@ -1114,6 +1210,12 @@ export function createMachineRoom(): MachineRoomRuntime {
   );
   consoleScreen.position.set(0, 1.28, 0.237);
   trainingConsoleGroup.add(consoleScreen);
+  // The screen panel is a click target that opens the custom-training panel
+  // (TrainingWorldCanvas raycasts this on left-click; E also works nearby).
+  consoleScreen.name = "custom-training-screen";
+  consoleScreen.userData.customTrainingTarget = true;
+  fascia.userData.customTrainingTarget = true;
+  fasciaBezel.userData.customTrainingTarget = true;
 
   // A big bank of blinking candy lights — greens, blues, cyans, warm pops.
   const consoleLedColors = [
@@ -1261,11 +1363,25 @@ export function createMachineRoom(): MachineRoomRuntime {
   });
   [-0.42, 0.42].forEach((x) => {
     const post = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.02, 0.02, 0.5, 12),
-      shellLime,
+      new THREE.CylinderGeometry(0.028, 0.036, 0.5, 14),
+      glossWhite,
     );
     post.position.set(x, 1.95, 0.04);
     trainingConsoleGroup.add(post);
+    const collar = new THREE.Mesh(
+      new THREE.TorusGeometry(0.048, 0.014, 10, 20),
+      candyOrange,
+    );
+    collar.rotation.x = Math.PI / 2;
+    collar.position.set(x, 1.73, 0.04);
+    trainingConsoleGroup.add(collar);
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 14, 12),
+      shellLime,
+    );
+    cap.scale.set(1, 0.6, 1);
+    cap.position.set(x, 2.2, 0.04);
+    trainingConsoleGroup.add(cap);
   });
   // Chunky 3D nameplate: a thick body with a raised bezel, corner knobs, a
   // recessed text panel, and a slight backward tilt so it reads dimensional.
