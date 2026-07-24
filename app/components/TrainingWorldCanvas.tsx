@@ -4925,8 +4925,9 @@ export function TrainingWorldCanvas({
       | "dive-aim" // settle back onto Data Preparation before the dive
       | "dive" // dive + reveal transitions own the camera
       | "prep-walk" // stroll through the Data Preparation chamber
-      | "to-next" // line up with the portal and walk the tunnel
-      | "next-dwell" // linger in the next chamber
+      | "to-next" // line up with a portal and walk the tunnel onward
+      | "next-dwell" // linger in an intermediate chamber, then walk on again
+      | "final-dwell" // linger in the last chamber, then rise home
       | "rise"; // veiled return to the machine room, then hand over
 
     const INTRO_TOUR_SEEN_KEY = "training-world:intro-tour-seen";
@@ -4934,10 +4935,30 @@ export function TrainingWorldCanvas({
     const TOUR_UNIT_AIM_SECONDS = 0.85;
     /** Hold on the nameplate before moving to the next unit. */
     const TOUR_UNIT_HOLD_SECONDS = 1.25;
+    /**
+     * After the first couple of units the survey picks up speed — a quick
+     * glance at each of the remaining stations rather than a full dwell.
+     */
+    const TOUR_UNIT_AIM_QUICK_SECONDS = 0.4;
+    const TOUR_UNIT_HOLD_QUICK_SECONDS = 0.5;
+    /** Units shown at the leisurely pace before the survey speeds up. */
+    const TOUR_UNIT_SLOW_COUNT = 2;
     /** Re-aim onto Data Preparation before diving in. */
     const TOUR_DIVE_AIM_SECONDS = 1.0;
-    /** Linger time inside the follow-up chamber before heading home. */
-    const TOUR_NEXT_DWELL_SECONDS = 4.5;
+    /**
+     * Quick pass through an intermediate chamber (the token stream): step
+     * in, a brief look, then straight on to the next one.
+     */
+    const TOUR_PASS_DWELL_SECONDS = 1.6;
+    /** Linger in the final chamber before heading home. */
+    const TOUR_FINAL_DWELL_SECONDS = 4.5;
+    /**
+     * Last station the walking leg visits before rising back to the room.
+     * The dive lands in Data Preparation (station 1) and the tour then
+     * walks on to stations 2 and 3 — three chambers explored in all before
+     * heading home.
+     */
+    const TOUR_LAST_STATION = 3;
     /** Safety cap on the tunnel walk before the tour bails back home. */
     const TOUR_TRANSIT_TIMEOUT_SECONDS = 14;
     /** Safety cap on dive/rise transitions before the tour lets go. */
@@ -4946,13 +4967,17 @@ export function TrainingWorldCanvas({
     /**
      * Data Preparation stroll, in fractions of the chamber's walkable
      * bounds (mirrors the DATA_PREP_TRACK convention so it survives
-     * resizing): drift to mid-hall, push close to the matrices with a
-     * slight climb, then settle back down toward the entrance side.
+     * resizing). The exhibits sit centered (fx ≈ 0.5), so both beats stay
+     * on the centerline — no wandering out to the empty flanks:
+     *   1. approach and hold on the matrices (the establishing view), then
+     *   2. back off and up to a broad look at the whole chamber before
+     *      walking on to the next one.
      */
     const TOUR_PREP_WAYPOINTS = [
-      { fx: 0.45, lift: 0, fz: 0.62, yaw: 0.18, pitch: -0.02, travel: 3.6, hold: 0.6 },
-      { fx: 0.76, lift: 0.9, fz: 0.42, yaw: -0.3, pitch: 0.05, travel: 3.9, hold: 2.6 },
-      { fx: 0.5, lift: 0, fz: 0.7, yaw: 0.02, pitch: -0.03, travel: 3.2, hold: 1.8 },
+      // Approach from the entrance and dwell, centered, on the matrix row.
+      { fx: 0.5, lift: 0.2, fz: 0.6, yaw: 0.05, pitch: -0.03, travel: 3.6, hold: 3.4 },
+      // Back off a little and rise for a broad view of the chamber.
+      { fx: 0.5, lift: 1.0, fz: 0.76, yaw: 0, pitch: -0.08, travel: 3.0, hold: 1.8 },
     ] as const;
 
     // The extended tour is a first-visit experience: it runs when the seen
@@ -4986,6 +5011,8 @@ export function TrainingWorldCanvas({
     let tourWaypointIndex = 0;
     let tourWaypointTimer = 0;
     let tourStationMismatch = 0;
+    /** Station a forward walk departs from; arrival is origin + 1. */
+    let tourWalkOrigin = 1;
     const tourMoveFrom = new THREE.Vector3();
     let tourMoveFromYaw = 0;
     let tourMoveFromPitch = 0;
@@ -5887,14 +5914,16 @@ export function TrainingWorldCanvas({
           } else {
             // Stroll done — head for the doorway to the next chamber.
             tourPhase = "to-next";
+            tourWalkOrigin = activeStationIndex;
             tourPhaseElapsed = 0;
             beginTourWaypoint(tourWaypointIndex);
           }
         }
-      } else if (tourPhase === "to-next" && activeStationIndex === 1) {
-        // Line up with the portal first, then walk forward; the regular
-        // portal crossing hands over to tunnel travel, where the scripted
-        // W key keeps the visitor moving until arrival.
+      } else if (tourPhase === "to-next") {
+        // Line up with the forward portal, then walk through it; the
+        // regular portal crossing hands over to tunnel travel, where the
+        // scripted W key keeps the visitor moving until arrival. Runs from
+        // whichever chamber the walk departs (station 1, then 2).
         tourWaypointTimer += delta;
         const t = Math.min(1, tourWaypointTimer / 2.2);
         const eased = t * t * (3 - 2 * t);
@@ -5911,25 +5940,42 @@ export function TrainingWorldCanvas({
               localPlayerPosition.z,
           );
         } else {
+          // Hold Shift too so the corridor is taken at a run.
           pressedKeys.add("KeyW");
+          pressedKeys.add("ShiftLeft");
         }
-      } else if (tourPhase === "next-dwell" && activeStationIndex === 2) {
-        // Linger: a slow drift forward with a gentle look-around, then
-        // rise back to the machine room and hand over.
+      } else if (tourPhase === "next-dwell" || tourPhase === "final-dwell") {
+        // Linger in the chamber: a slow drift forward with a gentle
+        // look-around. An intermediate stop is a quick pass (the token
+        // stream) before walking on; the final stop is a longer look,
+        // then it rises back to the machine room.
         tourTimer += delta;
         targetYaw = Math.sin(tourTimer * 0.9) * 0.22;
         targetPitch = -0.02 + Math.sin(tourTimer * 0.6) * 0.04;
-        if (tourTimer < 2.6) {
+        const dwellSeconds =
+          tourPhase === "final-dwell"
+            ? TOUR_FINAL_DWELL_SECONDS
+            : TOUR_PASS_DWELL_SECONDS;
+        if (tourTimer < Math.min(2.6, dwellSeconds)) {
           moveWithinChamber(
             -Math.sin(glanceYaw) * 1.3 * delta,
             0,
             -Math.cos(glanceYaw) * 1.3 * delta,
           );
         }
-        if (tourTimer >= TOUR_NEXT_DWELL_SECONDS) {
-          tourPhase = "rise";
-          tourPhaseElapsed = 0;
-          beginReturnToRoom();
+        if (tourTimer >= dwellSeconds) {
+          if (tourPhase === "next-dwell") {
+            // Walk on to the next chamber.
+            tourPhase = "to-next";
+            tourWalkOrigin = activeStationIndex;
+            tourPhaseElapsed = 0;
+            beginTourWaypoint(0);
+          } else {
+            // Last chamber seen — rise back to the machine room and hand over.
+            tourPhase = "rise";
+            tourPhaseElapsed = 0;
+            beginReturnToRoom();
+          }
         }
       }
     };
@@ -6477,13 +6523,18 @@ export function TrainingWorldCanvas({
           } else if (tourPhase === "to-next") {
             if (
               navigationRegion.kind === "chamber" &&
-              activeStationIndex === 2
+              activeStationIndex === tourWalkOrigin + 1
             ) {
+              // Arrived at the next chamber. Dwell here, then either walk
+              // onward or (once the last station is reached) rise home.
               pressedKeys.delete("KeyW");
               pressedKeys.delete("ShiftLeft");
-              tourPhase = "next-dwell";
               tourPhaseElapsed = 0;
               tourTimer = 0;
+              tourPhase =
+                activeStationIndex >= TOUR_LAST_STATION
+                  ? "final-dwell"
+                  : "next-dwell";
             } else if (tourPhaseElapsed > TOUR_TRANSIT_TIMEOUT_SECONDS) {
               // The walk never arrived (blocked, resized, …): head home so
               // the flow still ends where it promised to.
@@ -6601,9 +6652,18 @@ export function TrainingWorldCanvas({
           // still. Each unit keeps the gaze until its nameplate has been
           // up for a beat, then the eyes move on.
           tourTimer += delta;
+          // The first couple of units get a leisurely look; the rest are a
+          // quick glance so the survey doesn't drag.
+          const quickUnit =
+            tourPhase === "units" && tourUnitIndex >= TOUR_UNIT_SLOW_COUNT;
+          const unitHoldSeconds = quickUnit
+            ? TOUR_UNIT_HOLD_QUICK_SECONDS
+            : TOUR_UNIT_HOLD_SECONDS;
           const aimSeconds =
             tourPhase === "units"
-              ? TOUR_UNIT_AIM_SECONDS
+              ? quickUnit
+                ? TOUR_UNIT_AIM_QUICK_SECONDS
+                : TOUR_UNIT_AIM_SECONDS
               : TOUR_DIVE_AIM_SECONDS;
           const aimT = Math.min(1, tourTimer / aimSeconds);
           const aimEased = aimT * aimT * (3 - 2 * aimT);
@@ -6627,7 +6687,7 @@ export function TrainingWorldCanvas({
                 approaching: false,
               });
             }
-            if (tourTimer >= aimSeconds + TOUR_UNIT_HOLD_SECONDS) {
+            if (tourTimer >= aimSeconds + unitHoldSeconds) {
               reportMachineRoomCue(null);
               roomHoveredIndex = -1;
               tourFromYaw = glanceYaw;
