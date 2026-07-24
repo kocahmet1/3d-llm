@@ -1917,7 +1917,7 @@
 
 .rideSelector {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   justify-self: center;
   gap: 3px;
   min-width: 270px;
