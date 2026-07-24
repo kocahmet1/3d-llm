@@ -32,6 +32,7 @@ const PHASES: ReadonlyArray<{
 
 const RIDE_MODES: ReadonlyArray<{ id: RideMode; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "learn", label: "Learn" },
   { id: "explore", label: "Explore" },
 ];
 

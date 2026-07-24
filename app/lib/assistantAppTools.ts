@@ -57,7 +57,7 @@ const RELATIVE_CHAMBER_DESTINATIONS = [
 
 const JOURNEY_ACTIONS = ["play", "pause", "restart"] as const;
 const DETAIL_MODES = ["story", "structure", "math", "code"] as const;
-const RIDE_MODES = ["overview", "explore"] as const;
+const RIDE_MODES = ["overview", "learn", "explore"] as const;
 const BRANCH_SIDES = ["left", "right"] as const;
 const DATA_PREPARATION_ACTIONS = ["play", "pause", "restart"] as const;
 
@@ -153,7 +153,7 @@ export const ASSISTANT_APP_TOOLS: readonly AssistantAppToolDefinition[] =
     ),
     functionTool(
       "set_ride_mode",
-      "Change the overall experience between a guided overview ride and free exploration.",
+      "Change the overall experience between a quick overview, a slower learn mode, or free exploration.",
       "mode",
       "The ride mode to activate.",
       RIDE_MODES,

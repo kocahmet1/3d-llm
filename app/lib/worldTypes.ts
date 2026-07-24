@@ -7,7 +7,7 @@ export type TrainingPhase =
   | "update";
 
 export type DetailMode = "story" | "structure" | "math" | "code";
-export type RideMode = "overview" | "explore";
+export type RideMode = "overview" | "learn" | "explore";
 export type BranchSide = "left" | "right";
 export type NavigationMode =
   | "guided-ride"

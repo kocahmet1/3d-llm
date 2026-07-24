@@ -34,9 +34,8 @@ import {
 } from "../lib/director/registry";
 import styles from "./TrainingExperience.module.css";
 
-// The guided "Overview" ride runs at a calm, readable pace (the old quick
-// 25s fly-through has been removed).
-const OVERVIEW_DURATION_SECONDS = 150;
+const OVERVIEW_DURATION_SECONDS = 25;
+const LEARN_DURATION_SECONDS = 150;
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
 function useRemoteAudioActivity(
@@ -185,6 +184,8 @@ export function TrainingExperience() {
     if (mode === "overview") {
       setDetailMode("story");
       setPlaying(true);
+    } else if (mode === "learn") {
+      setPlaying(true);
     } else {
       setPlaying(false);
     }
@@ -297,6 +298,7 @@ export function TrainingExperience() {
           modeChanged ||
           (command.mode === "overview" &&
             (detailMode !== "story" || !playing)) ||
+          (command.mode === "learn" && !playing) ||
           (command.mode === "explore" && playing);
         changeRideMode(command.mode);
         return {
@@ -548,8 +550,10 @@ export function TrainingExperience() {
 
     let frame = 0;
     let last = performance.now();
-    // Only the guided "overview" ride auto-advances ("explore" returned above).
-    const duration = OVERVIEW_DURATION_SECONDS;
+    const duration =
+      rideMode === "overview"
+        ? OVERVIEW_DURATION_SECONDS
+        : LEARN_DURATION_SECONDS;
 
     const tick = (now: number) => {
       const delta = Math.min(0.05, (now - last) / 1000);
