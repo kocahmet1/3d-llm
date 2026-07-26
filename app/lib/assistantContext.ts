@@ -2230,6 +2230,13 @@ export const ASSISTANT_TARGET_CONTEXTS: Readonly<
   ),
 );
 
+/**
+ * Every chamber is laid out as a walkable avenue, and every exhibit in one is
+ * already turned to face the runway the visitor walks down — lane boards are
+ * yawed inward, and anything spanning the walkway faces back up it. So the
+ * place to present a board from is always in front of it; standing off to one
+ * side would put the presenter in a lane plinth or a wall.
+ */
 function anchor(
   preferredSide: AssistantAnchorSide,
   standOffDistance = 2.2,
@@ -2284,28 +2291,31 @@ const STATION_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] =
  */
 const ATTENTION_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] = [
   worldMetadata("attention:qkv-overview", "one-head-qkv", "assistant-target-qkv-overview", ["qkv-lanes"], [["qkv", "overview"]], anchor("player-right", 2.8, 0.7)),
-  worldMetadata("attention:query", "one-head-qkv", "assistant-target-qkv-query", ["query", "query-lane", "q-lane"], [["query", "lane"]], anchor("target-right")),
-  worldMetadata("attention:keys", "one-head-qkv", "assistant-target-qkv-keys", ["key", "keys", "key-lane", "k-lane"], [["key", "lane"]], anchor("target-right")),
-  worldMetadata("attention:values", "one-head-qkv", "assistant-target-qkv-values", ["value", "values", "value-lane", "v-lane"], [["value", "lane"]], anchor("target-left")),
-  worldMetadata("attention:score-matrix", "attention-scores", "assistant-target-attention-score-matrix", ["attention-score-grid", "score-matrix"], [["score", "matrix"]], anchor("target-right", 2.8, 1.0)),
-  worldMetadata("attention:selected-score-row", "attention-scores", "assistant-target-attention-score-row-2", ["selected-score-row", "score-row-2"], [["score", "row", "2"]], anchor("target-right", 2.2, 0.3)),
-  worldMetadata("attention:selected-score-cell", "attention-scores", "assistant-target-attention-score-cell-q2-k0", ["selected-score-cell", "score-cell-q2-k0"], [["score", "cell", "q2", "k0"]], anchor("target-right", 1.8, 0.25)),
-  worldMetadata("attention:causal-mask", "causal-mask", "assistant-target-causal-mask-matrix", ["causal-mask-matrix", "triangular-mask"], [["causal", "mask", "matrix"]], anchor("target-right", 2.8, 1.0)),
-  worldMetadata("attention:allowed-mask-region", "causal-mask", "assistant-target-causal-mask-allowed", ["allowed-mask-region", "mask-lower-triangle"], [["mask", "allowed"]], anchor("target-right", 2.2, 0.45)),
-  worldMetadata("attention:future-mask-region", "causal-mask", "assistant-target-causal-mask-future", ["future-mask-region", "mask-upper-triangle"], [["mask", "future"]], anchor("target-left", 2.2, 0.45)),
-  worldMetadata("attention:softmax-row", "softmax-weighted-v", "assistant-target-softmax-row", ["selected-softmax-row", "softmax-row"], [["softmax", "row"]], anchor("target-right", 2.3, 0.7)),
-  worldMetadata("attention:attention-weights", "softmax-weighted-v", "assistant-target-attention-weight-bars", ["attention-weight-bars", "weight-valves"], [["attention", "weight"], ["weight", "valve"]], anchor("target-right", 2.4, 0.7)),
-  worldMetadata("attention:value-vectors", "softmax-weighted-v", "assistant-target-weighted-value-streams", ["weighted-value-streams", "value-streams"], [["value", "stream"]], anchor("target-left", 2.3, 0.4)),
-  worldMetadata("attention:weighted-value-output", "softmax-weighted-v", "assistant-target-weighted-value-output", ["weighted-head-output", "head-output"], [["weighted", "output"], ["head", "output"]], anchor("target-right", 2.0, 0.4)),
+  worldMetadata("attention:query", "one-head-qkv", "assistant-target-qkv-query", ["query", "query-lane", "q-lane"], [["query", "lane"]], anchor("target-front")),
+  worldMetadata("attention:keys", "one-head-qkv", "assistant-target-qkv-keys", ["key", "keys", "key-lane", "k-lane"], [["key", "lane"]], anchor("target-front")),
+  worldMetadata("attention:values", "one-head-qkv", "assistant-target-qkv-values", ["value", "values", "value-lane", "v-lane"], [["value", "lane"]], anchor("target-front")),
+  worldMetadata("attention:score-matrix", "attention-scores", "assistant-target-attention-score-matrix", ["attention-score-grid", "score-matrix"], [["score", "matrix"]], anchor("target-front", 2.8, 1.0)),
+  worldMetadata("attention:selected-score-row", "attention-scores", "assistant-target-attention-score-row-2", ["selected-score-row", "score-row-2"], [["score", "row", "2"]], anchor("target-front", 2.2, 0.3)),
+  worldMetadata("attention:selected-score-cell", "attention-scores", "assistant-target-attention-score-cell-q2-k0", ["selected-score-cell", "score-cell-q2-k0"], [["score", "cell", "q2", "k0"]], anchor("target-front", 1.8, 0.25)),
+  worldMetadata("attention:causal-mask", "causal-mask", "assistant-target-causal-mask-matrix", ["causal-mask-matrix", "triangular-mask"], [["causal", "mask", "matrix"]], anchor("target-front", 2.8, 1.0)),
+  worldMetadata("attention:allowed-mask-region", "causal-mask", "assistant-target-causal-mask-allowed", ["allowed-mask-region", "mask-lower-triangle"], [["mask", "allowed"]], anchor("target-front", 2.2, 0.45)),
+  worldMetadata("attention:future-mask-region", "causal-mask", "assistant-target-causal-mask-future", ["future-mask-region", "mask-upper-triangle"], [["mask", "future"]], anchor("target-front", 2.2, 0.45)),
+  worldMetadata("attention:softmax-row", "softmax-weighted-v", "assistant-target-softmax-row", ["selected-softmax-row", "softmax-row"], [["softmax", "row"]], anchor("target-front", 2.3, 0.7)),
+  worldMetadata("attention:attention-weights", "softmax-weighted-v", "assistant-target-attention-weight-bars", ["attention-weight-bars", "weight-valves"], [["attention", "weight"], ["weight", "valve"]], anchor("target-front", 2.4, 0.7)),
+  worldMetadata("attention:value-vectors", "softmax-weighted-v", "assistant-target-weighted-value-streams", ["weighted-value-streams", "value-streams"], [["value", "stream"]], anchor("target-front", 2.3, 0.4)),
+  worldMetadata("attention:weighted-value-output", "softmax-weighted-v", "assistant-target-weighted-value-output", ["weighted-head-output", "head-output"], [["weighted", "output"], ["head", "output"]], anchor("target-front", 2.0, 0.4)),
 ];
 
+// In the Embedding Hall everything about the token lookup lines the left lane
+// and everything about position lines the right, all read from the runway
+// between them.
 const EMBEDDING_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] = [
-  worldMetadata("embedding:token-table", "embedding", "assistant-target-embedding-token-table", ["token-table", "E-table"], [["token", "table"]], anchor("target-left", 2.6, 0.8)),
-  worldMetadata("embedding:position-table", "embedding", "assistant-target-embedding-position-table", ["position-table", "P-table"], [["position", "table"]], anchor("target-right", 2.6, 0.8)),
-  worldMetadata("embedding:token-address", "embedding", "assistant-target-embedding-token-address", ["token-address", "token-id-ticket"], [["token", "address"]], anchor("target-left", 2.0, 0.3)),
-  worldMetadata("embedding:position-address", "embedding", "assistant-target-embedding-position-address", ["position-address", "position-ticket"], [["position", "address"]], anchor("target-right", 2.0, 0.3)),
-  worldMetadata("embedding:selected-token-row", "embedding", "assistant-target-embedding-selected-token-row", ["token-row", "E-row"], [["token", "row"]], anchor("target-left", 2.2, 0.4)),
-  worldMetadata("embedding:selected-position-row", "embedding", "assistant-target-embedding-selected-position-row", ["position-row", "P-row"], [["position", "row"]], anchor("target-right", 2.2, 0.4)),
+  worldMetadata("embedding:token-table", "embedding", "assistant-target-embedding-token-table", ["token-table", "E-table"], [["token", "table"]], anchor("target-front", 2.6, 0.8)),
+  worldMetadata("embedding:position-table", "embedding", "assistant-target-embedding-position-table", ["position-table", "P-table"], [["position", "table"]], anchor("target-front", 2.6, 0.8)),
+  worldMetadata("embedding:token-address", "embedding", "assistant-target-embedding-token-address", ["token-address", "token-id-ticket"], [["token", "address"]], anchor("target-front", 2.0, 0.3)),
+  worldMetadata("embedding:position-address", "embedding", "assistant-target-embedding-position-address", ["position-address", "position-ticket"], [["position", "address"]], anchor("target-front", 2.0, 0.3)),
+  worldMetadata("embedding:selected-token-row", "embedding", "assistant-target-embedding-selected-token-row", ["token-row", "E-row"], [["token", "row"]], anchor("target-front", 2.2, 0.4)),
+  worldMetadata("embedding:selected-position-row", "embedding", "assistant-target-embedding-selected-position-row", ["position-row", "P-row"], [["position", "row"]], anchor("target-front", 2.2, 0.4)),
   worldMetadata("embedding:sum-result", "embedding", "assistant-target-embedding-sum-result", ["sum-result", "H0-selected-row"], [["sum", "result"]], anchor("target-front", 2.4, 0.5)),
   worldMetadata("embedding:hidden-state-output", "embedding", "assistant-target-embedding-hidden-state-output", ["hidden-state-output", "H0-output"], [["hidden", "state", "output"]], anchor("target-front", 2.8, 0.9)),
 ];
@@ -2318,47 +2328,49 @@ const MLP_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] = [
   worldMetadata("mlp:up-projection", "mlp", "assistant-target-mlp-up-projection", ["w-up", "up-projection-wall", "up-bias"], [["up", "projection"]], anchor("target-front", 2.8, 0.6)),
   worldMetadata("mlp:gelu-activation", "mlp", "assistant-target-mlp-gelu-activation", ["gelu-units", "gelu"], [["gelu"]], anchor("target-front", 2.6, 0.6)),
   worldMetadata("mlp:down-projection", "mlp", "assistant-target-mlp-down-projection", ["w-down", "down-projection-wall", "down-bias"], [["down", "projection"]], anchor("target-front", 2.8, 0.6)),
-  worldMetadata("mlp:output", "mlp", "assistant-target-mlp-output", ["mlp-output", "f-vector"], [["mlp", "output"]], anchor("target-right", 2.2, 0.4)),
-  worldMetadata("mlp:residual-bypass", "mlp", "assistant-target-mlp-residual-bypass", ["residual-bypass", "bypass-u"], [["residual", "bypass"]], anchor("target-left", 2.2, 0.4)),
+  worldMetadata("mlp:output", "mlp", "assistant-target-mlp-output", ["mlp-output", "f-vector"], [["mlp", "output"]], anchor("target-front", 2.2, 0.4)),
+  worldMetadata("mlp:residual-bypass", "mlp", "assistant-target-mlp-residual-bypass", ["residual-bypass", "bypass-u"], [["residual", "bypass"]], anchor("target-front", 2.2, 0.4)),
   worldMetadata("mlp:block-output", "mlp", "assistant-target-mlp-block-output", ["block-output", "h-prime"], [["block", "output"]], anchor("target-front", 2.4, 0.5)),
 ];
 
 const LOSS_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] = [
-  worldMetadata("loss:correct-probabilities", "loss", "assistant-target-loss-correct-probabilities", ["p-correct-board", "correct-probabilities"], [["correct", "probabilities"]], anchor("target-left", 2.6, 0.7)),
-  worldMetadata("loss:token-penalties", "loss", "assistant-target-loss-token-penalties", ["token-penalties", "negative-log-loss-board"], [["token", "penalties"]], anchor("target-right", 2.6, 0.7)),
+  worldMetadata("loss:correct-probabilities", "loss", "assistant-target-loss-correct-probabilities", ["p-correct-board", "correct-probabilities"], [["correct", "probabilities"]], anchor("target-front", 2.6, 0.7)),
+  worldMetadata("loss:token-penalties", "loss", "assistant-target-loss-token-penalties", ["token-penalties", "negative-log-loss-board"], [["token", "penalties"]], anchor("target-front", 2.6, 0.7)),
   worldMetadata("loss:selected-lane", "loss", "assistant-target-loss-selected-lane", ["selected-lane", "worked-example"], [["selected", "lane"]], anchor("target-front", 2.2, 0.5)),
   worldMetadata("loss:cross-entropy-gates", "loss", "assistant-target-loss-cross-entropy-gates", ["ln-gates", "penalty-hoops"], [["ln", "gates"]], anchor("target-front", 2.4, 0.3)),
   worldMetadata("loss:averaging", "loss", "assistant-target-loss-averaging", ["averaging-funnel", "sum-and-divide"], [["averaging"]], anchor("target-front", 2.6, 0.6)),
-  worldMetadata("loss:scalar-loss", "loss", "assistant-target-loss-scalar-loss", ["scalar-loss", "l-value"], [["scalar", "loss"]], anchor("target-right", 2.0, 0.5)),
+  worldMetadata("loss:scalar-loss", "loss", "assistant-target-loss-scalar-loss", ["scalar-loss", "l-value"], [["scalar", "loss"]], anchor("target-front", 2.0, 0.5)),
 ];
 
 const MHA_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] = [
   worldMetadata("mha:normalized-input", "multi-head-attention", "assistant-target-mha-normalized-input", ["n-board"], [["normalized", "input"]], anchor("target-front", 2.6, 0.6)),
-  worldMetadata("mha:query-projection", "multi-head-attention", "assistant-target-mha-query-projection", ["wq-wall"], [["query", "projection"]], anchor("target-left", 2.4, 0.5)),
+  // The Q, K and V bays are three identical stops down the avenue, mirrored
+  // alternately so three matching walls never queue up on one sightline.
+  worldMetadata("mha:query-projection", "multi-head-attention", "assistant-target-mha-query-projection", ["wq-wall"], [["query", "projection"]], anchor("target-front", 2.4, 0.5)),
   worldMetadata("mha:key-projection", "multi-head-attention", "assistant-target-mha-key-projection", ["wk-wall"], [["key", "projection"]], anchor("target-front", 2.4, 0.5)),
-  worldMetadata("mha:value-projection", "multi-head-attention", "assistant-target-mha-value-projection", ["wv-wall"], [["value", "projection"]], anchor("target-right", 2.4, 0.5)),
-  worldMetadata("mha:projected-query", "multi-head-attention", "assistant-target-mha-projected-query", ["q2-projected"], [["q2", "projected"]], anchor("target-left", 2.0, 0.4)),
+  worldMetadata("mha:value-projection", "multi-head-attention", "assistant-target-mha-value-projection", ["wv-wall"], [["value", "projection"]], anchor("target-front", 2.4, 0.5)),
+  worldMetadata("mha:projected-query", "multi-head-attention", "assistant-target-mha-projected-query", ["q2-projected"], [["q2", "projected"]], anchor("target-front", 2.0, 0.4)),
   worldMetadata("mha:projected-key", "multi-head-attention", "assistant-target-mha-projected-key", ["k2-projected"], [["k2", "projected"]], anchor("target-front", 2.0, 0.4)),
-  worldMetadata("mha:projected-value", "multi-head-attention", "assistant-target-mha-projected-value", ["v2-projected"], [["v2", "projected"]], anchor("target-right", 2.0, 0.4)),
+  worldMetadata("mha:projected-value", "multi-head-attention", "assistant-target-mha-projected-value", ["v2-projected"], [["v2", "projected"]], anchor("target-front", 2.0, 0.4)),
   worldMetadata("mha:head-split", "multi-head-attention", "assistant-target-mha-head-split", ["reshape-unzip"], [["reshape"], ["unzip"]], anchor("target-front", 2.4, 0.5)),
-  worldMetadata("mha:head-0", "multi-head-attention", "assistant-target-mha-head-0", ["head-0-board"], [["head", "0"]], anchor("target-left", 2.4, 0.5)),
-  worldMetadata("mha:head-1", "multi-head-attention", "assistant-target-mha-head-1", ["head-1-board"], [["head", "1"]], anchor("target-right", 2.4, 0.5)),
+  worldMetadata("mha:head-0", "multi-head-attention", "assistant-target-mha-head-0", ["head-0-board"], [["head", "0"]], anchor("target-front", 2.4, 0.5)),
+  worldMetadata("mha:head-1", "multi-head-attention", "assistant-target-mha-head-1", ["head-1-board"], [["head", "1"]], anchor("target-front", 2.4, 0.5)),
 ];
 
 const HEAD_RECOMBINATION_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] = [
-  worldMetadata("recombine:head-zero-output", "head-recombination", "assistant-target-recombine-head-zero-output", ["head-0-output"], [["head", "0", "output"]], anchor("target-left", 2.2, 0.5)),
-  worldMetadata("recombine:head-one-output", "head-recombination", "assistant-target-recombine-head-one-output", ["head-1-output"], [["head", "1", "output"]], anchor("target-right", 2.2, 0.5)),
+  worldMetadata("recombine:head-zero-output", "head-recombination", "assistant-target-recombine-head-zero-output", ["head-0-output"], [["head", "0", "output"]], anchor("target-front", 2.2, 0.5)),
+  worldMetadata("recombine:head-one-output", "head-recombination", "assistant-target-recombine-head-one-output", ["head-1-output"], [["head", "1", "output"]], anchor("target-front", 2.2, 0.5)),
   worldMetadata("recombine:concatenation", "head-recombination", "assistant-target-recombine-concatenation", ["concat-board"], [["concat"]], anchor("target-front", 2.4, 0.5)),
   worldMetadata("recombine:output-projection", "head-recombination", "assistant-target-recombine-output-projection", ["wo-wall"], [["output", "projection"]], anchor("target-front", 2.6, 0.6)),
   worldMetadata("recombine:projected-output", "head-recombination", "assistant-target-recombine-projected-output", ["attention-output"], [["attention", "output"]], anchor("target-front", 2.2, 0.5)),
-  worldMetadata("recombine:residual-bypass", "head-recombination", "assistant-target-recombine-residual-bypass", ["untouched-h"], [["residual", "bypass"]], anchor("target-left", 2.2, 0.4)),
-  worldMetadata("recombine:block-output", "head-recombination", "assistant-target-recombine-block-output", ["u-result"], [["block", "output"]], anchor("target-right", 2.2, 0.5)),
+  worldMetadata("recombine:residual-bypass", "head-recombination", "assistant-target-recombine-residual-bypass", ["untouched-h"], [["residual", "bypass"]], anchor("target-front", 2.2, 0.4)),
+  worldMetadata("recombine:block-output", "head-recombination", "assistant-target-recombine-block-output", ["u-result"], [["block", "output"]], anchor("target-front", 2.2, 0.5)),
 ];
 
 const LOGITS_WORLD_METADATA: readonly AssistantTargetWorldMetadata[] = [
-  worldMetadata("logits:raw-logits", "logits", "assistant-target-logits-raw-logits", ["raw-logits-board"], [["raw", "logits"]], anchor("target-left", 2.6, 0.7)),
+  worldMetadata("logits:raw-logits", "logits", "assistant-target-logits-raw-logits", ["raw-logits-board"], [["raw", "logits"]], anchor("target-front", 2.6, 0.7)),
   worldMetadata("logits:softmax-operation", "logits", "assistant-target-logits-softmax-operation", ["exp-ring", "softmax-gate"], [["softmax", "operation"]], anchor("target-front", 2.4, 0.5)),
-  worldMetadata("logits:probabilities", "logits", "assistant-target-logits-probabilities", ["probability-board"], [["probabilities"]], anchor("target-right", 2.6, 0.7)),
+  worldMetadata("logits:probabilities", "logits", "assistant-target-logits-probabilities", ["probability-board"], [["probabilities"]], anchor("target-front", 2.6, 0.7)),
   worldMetadata("logits:distribution-bars", "logits", "assistant-target-logits-distribution-bars", ["logit-bars", "vocabulary-ring"], [["distribution", "bars"]], anchor("target-front", 3.2, 0.9)),
 ];
 

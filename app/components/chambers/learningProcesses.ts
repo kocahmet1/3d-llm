@@ -2,6 +2,15 @@ import * as THREE from "three";
 
 import { SELECTED_TRACE } from "../../lib/trainingTrace";
 import {
+  AVENUE,
+  type AvenuePlacement,
+  avenueAnchor,
+  avenueLaneX,
+  avenueRoute,
+  avenueZ,
+  placeOnAvenue,
+} from "./avenue";
+import {
   type ChamberProcessContext,
   type ChamberProcessUpdater,
   createGlyph,
@@ -35,21 +44,32 @@ function addAt<T extends THREE.Object3D>(
   return object;
 }
 
+/** Places an exhibit in the avenue and threads it into the chamber group. */
+function place<T extends THREE.Object3D>(
+  context: ChamberProcessContext,
+  object: T,
+  placement: AvenuePlacement,
+) {
+  placeOnAvenue(object, placement);
+  context.group.add(object);
+  return object;
+}
+
 function addHeader(
   context: ChamberProcessContext,
   lines: readonly string[],
   color: THREE.ColorRepresentation,
 ) {
-  return addAt(
+  return place(
     context,
     createPanel(lines, {
-      width: 8.4,
-      height: 1.08,
+      width: 13.2,
+      height: 1.7,
       color,
       borderColor: color,
       fontScale: 0.72,
     }),
-    vector(0, 4.42, -0.35),
+    { stop: 0, slot: "banner" },
   );
 }
 
@@ -89,6 +109,15 @@ function stringValues(values: readonly number[], digits: number) {
   return values.map((value) => value.toFixed(digits));
 }
 
+/**
+ * Softmax Observatory, laid out as a walkable avenue.
+ *
+ * The raw scores are read at the entrance, then the visitor walks under the
+ * exponential arch and past the panel that states the shared denominator. The
+ * sixteen bars line both lanes for the next two stops, so the distribution is
+ * seen from inside it rather than across a table, and the normalised row hangs
+ * over the exit.
+ */
 function buildLogitsProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
@@ -96,55 +125,59 @@ function buildLogitsProcess(
   const gold = "#ffd166";
   addHeader(context, ["SOFTMAX OBSERVATORY", "16 LOGITS NORMALIZE TOGETHER"], cyan);
 
-  const rawBoard = addAt(
+  const rawBoard = place(
     context,
     createValueBoard(SELECTED_TRACE.output.selectedLogits, 4, 4, {
-      width: 5.15,
-      cellHeight: 0.48,
+      width: 6.8,
+      cellHeight: 0.65,
       title: "RAW LOGITS g[16]",
       subtitle: "signed scores - any real value",
       color: "#ff765f",
       accent: gold,
       highlightedIndices: [TARGET_INDEX],
     }),
-    vector(-5.75, 1.48, 1.75),
+    { stop: 0, slot: "left", xShift: 0.6 },
   );
   rawBoard.name = "assistant-target-logits-raw-logits";
-  const probabilityBoard = addAt(
+
+  // Every logit is exponentiated by the same operation, so the operation spans
+  // the runway: the visitor passes through it instead of watching it from one
+  // side.
+  const archCentre = avenueAnchor({ stop: 1, slot: "centre" });
+  const expRing = addAt(context, makeRing(cyan, 2.1, 0.16), archCentre.clone());
+  expRing.rotation.x = Math.PI / 2;
+  expRing.name = "assistant-target-logits-softmax-operation";
+  const expGlyph = place(context, createGlyph("exp", cyan, 2.1), {
+    stop: 1,
+    slot: "centre",
+  });
+  expGlyph.name = "assistant-target-logits-softmax-operation";
+  const sumPanel = place(
+    context,
+    createPanel(["SUM exp(g_k) = 10.000 for this row", "p_k = exp(g_k) / SUM"], {
+      width: 6.6,
+      height: 1.75,
+      color: "#f4fbff",
+      borderColor: cyan,
+      fontScale: 0.68,
+    }),
+    { stop: 2, slot: "right" },
+  );
+  sumPanel.name = "assistant-target-logits-softmax-operation";
+  const probabilityBoard = place(
     context,
     createValueBoard(SELECTED_TRACE.output.selectedProbabilities, 4, 4, {
-      width: 5.15,
-      cellHeight: 0.48,
+      width: 8.0,
+      cellHeight: 0.68,
       title: "PROBABILITIES p[16]",
       subtitle: "sat .28 | on .16 | sum 1.00",
       color: cyan,
       accent: gold,
       highlightedIndices: [TARGET_INDEX],
     }),
-    vector(5.75, 1.48, -3.25),
+    { stop: 5, slot: "centre" },
   );
   probabilityBoard.name = "assistant-target-logits-probabilities";
-
-  const center = vector(0, 0.35, -0.85);
-  const outerRing = addAt(context, makeRing(cyan, 5.25), vector(0, -2.48, -0.85));
-  outerRing.rotation.x = Math.PI / 2;
-  const expRing = addAt(context, makeRing(cyan, 1.2, 0.13), center.clone());
-  expRing.rotation.x = Math.PI / 2;
-  expRing.name = "assistant-target-logits-softmax-operation";
-  const expGlyph = addAt(context, createGlyph("exp", cyan, 1.5), center.clone().add(vector(0, 0.2, 0.15)));
-  expGlyph.name = "assistant-target-logits-softmax-operation";
-  const sumPanel = addAt(
-    context,
-    createPanel(["SUM exp(g_k) = 10.000 for this row", "p_k = exp(g_k) / SUM"], {
-      width: 4.4,
-      height: 1.2,
-      color: "#f4fbff",
-      borderColor: cyan,
-      fontScale: 0.68,
-    }),
-    vector(0, 2.15, -0.85),
-  );
-  sumPanel.name = "assistant-target-logits-softmax-operation";
 
   const bars: Array<{
     mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
@@ -155,48 +188,59 @@ function buildLogitsProcess(
     z: number;
   }> = [];
   const packets: THREE.Object3D[] = [];
-  const packetStarts: THREE.Vector3[] = [];
-  const packetEnds: THREE.Vector3[] = [];
+  const riseRoutes: THREE.Vector3[][] = [];
+  const fallRoutes: THREE.Vector3[][] = [];
+  const barBase = -4.3;
 
   SELECTED_TRACE.output.selectedLogits.forEach((logit, index) => {
-    const angle = (index / 16) * Math.PI * 2 - Math.PI / 2;
-    const x = Math.cos(angle) * 5.25;
-    const z = -0.85 + Math.sin(angle) * 5.25;
+    // Eight bars per lane, four across and two deep, so the whole vocabulary
+    // stands on the plinths the visitor walks between.
+    const side = index < 8 ? -1 : 1;
+    const column = index % 4;
+    const gridRow = Math.floor((index % 8) / 4);
+    const stop = 3 + gridRow;
+    const x = side * (5.2 + column * 2.4);
+    const z = avenueZ(stop);
     const rawHeight = 0.38 + (Math.abs(logit) / MAX_LOGIT_MAGNITUDE) * 1.85;
     const probabilityHeight = 0.28 + SELECTED_TRACE.output.selectedProbabilities[index] * 9.5;
     const material = createProcessMaterial(
       index === TARGET_INDEX ? gold : "#ff765f",
       index === TARGET_INDEX ? 1.5 : 0.85,
     );
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1, 0.34), material);
-    mesh.position.set(x, 0.18 - rawHeight / 2, z);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.46, 1, 0.46), material);
+    mesh.position.set(x, barBase + rawHeight / 2, z);
     mesh.scale.y = rawHeight;
     mesh.name = "assistant-target-logits-distribution-bars";
     context.group.add(mesh);
     bars.push({ mesh, material, rawHeight, probabilityHeight, x, z });
 
-    const packet = createPacket(index === TARGET_INDEX ? gold : cyan, 0.11);
-    packetStarts.push(vector(x, 0.72, z));
-    packetEnds.push(vector(x, -2.48 + probabilityHeight, z));
+    const packet = createPacket(index === TARGET_INDEX ? gold : cyan, 0.15);
+    const rise = avenueRoute(vector(x, barBase + rawHeight + 0.6, z), archCentre, 1.1);
+    const fall = avenueRoute(archCentre, vector(x, barBase + probabilityHeight + 0.6, z), 1.1);
+    riseRoutes.push(rise);
+    fallRoutes.push(fall);
     context.group.add(packet);
     packets.push(packet);
 
     if (index % 2 === 0 || index === TARGET_INDEX) {
-      addAt(
+      // The near rank labels sit below eye level and the far rank above it, so
+      // one row of tokens never queues up behind the other.
+      const label = addAt(
         context,
         createPanel([`${index} ${SELECTED_TRACE.vocabulary[index]}`], {
-          width: 1.25,
-          height: 0.42,
+          width: 2.1,
+          height: 1.0,
           color: index === TARGET_INDEX ? gold : "#dceaff",
           borderColor: index === TARGET_INDEX ? gold : cyan,
           fontScale: 0.62,
           background: "rgba(3,8,16,0.82)",
         }),
-        vector(x, 1.05, z + 0.18),
+        vector(x, gridRow === 0 ? -0.7 : 2.8, z + 0.5),
       );
+      label.rotation.y = -side * AVENUE.laneYaw;
     }
     context.group.add(
-      createPath([packetStarts[index], center, packetEnds[index]], cyan, 0.018, 0.1),
+      createPath([...rise, ...fall.slice(1)], cyan, 0.022, 0.1),
     );
   });
 
@@ -211,8 +255,7 @@ function buildLogitsProcess(
 
     bars.forEach((bar, index) => {
       const height = THREE.MathUtils.lerp(bar.rawHeight, bar.probabilityHeight, morph);
-      const y = THREE.MathUtils.lerp(0.18 - height / 2, -2.48 + height / 2, morph);
-      bar.mesh.position.set(bar.x, y, bar.z);
+      bar.mesh.position.set(bar.x, barBase + height / 2, bar.z);
       bar.mesh.scale.set(1, height, 1);
       const from = new THREE.Color(index === TARGET_INDEX ? gold : "#ff765f");
       const to = new THREE.Color(index === TARGET_INDEX ? gold : cyan);
@@ -220,12 +263,10 @@ function buildLogitsProcess(
       bar.material.emissive.copy(bar.material.color);
 
       const packet = packets[index];
-      const inward = smoothStep(p, 0.16, 0.4);
-      const outward = smoothStep(p, 0.54, 0.78);
       if (p < 0.52) {
-        moveObject(packet, packetStarts[index], center, inward, 0.35);
+        samplePath(packet, riseRoutes[index], smoothStep(p, 0.16, 0.4), 0.2);
       } else {
-        moveObject(packet, center, packetEnds[index], outward, 0.35);
+        samplePath(packet, fallRoutes[index], smoothStep(p, 0.54, 0.78), 0.2);
       }
       setObjectOpacity(packet, windowPulse(p, 0.12, 0.5, 0.86));
       packet.rotation.y = motionEnabled ? elapsed * (0.5 + index * 0.015) : 0;
@@ -234,6 +275,15 @@ function buildLogitsProcess(
   return finishBuilder(updater);
 }
 
+/**
+ * Target Gather Gantry, laid out as a walkable avenue.
+ *
+ * The plaque over the threshold says the prediction is already finished, then
+ * the prediction row and the answer tray face each other across the runway —
+ * the answer literally arrives from the other side of the walk. It crosses
+ * overhead, the gathered probability is called out one stop later, and the
+ * gathered column closes the walk above the exit.
+ */
 function buildTargetComparisonProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
@@ -241,109 +291,141 @@ function buildTargetComparisonProcess(
   const gold = "#ffd166";
   addHeader(context, ["TARGET GATHER GANTRY", "THE ANSWER ARRIVES AFTER PREDICTION"], gold);
 
-  const predictionBoard = addAt(
+  const lateAnswerPanel = place(
+    context,
+    createPanel(["PREDICTIONS COMPLETE", "ANSWERS REMAIN OUTSIDE THE MODEL"], {
+      width: 7.4,
+      height: 1.55,
+      color: "#dceaff",
+      borderColor: cyan,
+      fontScale: 0.68,
+    }),
+    { stop: 0, slot: "centre" },
+  );
+
+  const predictionBoardWidth = 6.8;
+  const predictionCellHeight = 0.7;
+  const predictionBoard = place(
     context,
     createValueBoard(SELECTED_TRACE.output.selectedProbabilities, 4, 4, {
-      width: 5.8,
-      cellHeight: 0.52,
+      width: predictionBoardWidth,
+      cellHeight: predictionCellHeight,
       title: "PREDICTION ROW p[16]",
       subtitle: "batch 0 | position 2 | cat predicts next",
       color: cyan,
       accent: gold,
       highlightedIndices: [TARGET_INDEX],
     }),
-    vector(-4.9, 1.32, 1.7),
+    { stop: 1, slot: "left" },
   );
-  const targetStart = vector(7.4, 2.75, 6.25);
-  const selectedCell = vector(-5.62, 1.62, 1.95);
-  const targetTile = addAt(
-    context,
-    createPanel(["TARGET TRAY", "sat | ID 5"], {
-      width: 2.45,
-      height: 1.2,
-      color: gold,
-      borderColor: gold,
-      fontScale: 0.78,
-    }),
-    targetStart,
-  );
-  context.group.add(
-    createPath(
-      [targetStart, vector(5, 3.25, 3.5), vector(0, 3, 2.2), selectedCell],
-      gold,
-      0.055,
-      0.42,
+  // The lit cell is derived from the board's own grid so it keeps tracking the
+  // highlighted target after the board is moved or resized.
+  const predictionHeight = 4 * predictionCellHeight + 0.72 + 0.5 + 0.34;
+  const selectedCell = predictionBoard.localToWorld(
+    vector(
+      -predictionBoardWidth / 2 + 1.5 * (predictionBoardWidth / 4),
+      predictionHeight / 2 - 0.72 - 1.5 * predictionCellHeight,
+      0.34,
     ),
   );
-  const locator = addAt(context, makeRing(gold, 0.62, 0.075), selectedCell.clone());
-  const gatheredPacket = addAt(context, createPacket(gold, 0.24), selectedCell.clone());
-  const gatherDock = vector(0, 0.55, -1.25);
-  const resultPosition = vector(4.8, 1.15, -4.65);
-  context.group.add(
-    createPath([selectedCell, gatherDock, resultPosition], gold, 0.07, 0.45),
-  );
-  const gatherPanel = addAt(
+
+  const targetTile = place(
     context,
-    createPanel(["GATHER ID 5", "p[sat] = 0.28"], {
-      width: 3.2,
-      height: 1.25,
+    createPanel(["TARGET TRAY", "sat | ID 5"], {
+      width: 3.7,
+      height: 1.7,
       color: gold,
       borderColor: gold,
       fontScale: 0.78,
     }),
-    vector(0, 1.9, -1.25),
+    { stop: 1, slot: "right", zShift: 1.4 },
   );
-  const correctBoard = addAt(
+  const targetStart = targetTile.position.clone();
+  const targetYaw = targetTile.rotation.y;
+  // The answer vaults the runway rather than crossing it, so the visitor
+  // watches it pass overhead on the way to the prediction row.
+  const targetPath = [
+    targetStart,
+    vector(4.6, 5.2, targetStart.z - 0.7),
+    vector(0, 6.4, targetStart.z - 1.4),
+    vector(-4.6, 5.0, targetStart.z - 2.1),
+    selectedCell.clone(),
+  ];
+  context.group.add(createPath(targetPath, gold, 0.055, 0.42));
+
+  const locator = addAt(context, makeRing(gold, 0.78, 0.085), selectedCell.clone());
+  locator.rotation.y = predictionBoard.rotation.y;
+  const gatheredPacket = addAt(context, createPacket(gold, 0.26), selectedCell.clone());
+
+  const gatherPanel = place(
+    context,
+    createPanel(["GATHER ID 5", "p[sat] = 0.28"], {
+      width: 4.8,
+      height: 1.75,
+      color: gold,
+      borderColor: gold,
+      fontScale: 0.78,
+    }),
+    { stop: 2, slot: "right", row: 1 },
+  );
+
+  const correctBoard = place(
     context,
     createValueBoard(SELECTED_TRACE.output.correctTokenProbabilities.flat(), 2, 6, {
-      width: 6.2,
-      cellHeight: 0.62,
+      width: 8.4,
+      cellHeight: 0.84,
       title: "P_CORRECT [2 x 6]",
       subtitle: "one gathered candidate per target",
       color: gold,
       accent: gold,
       highlightedIndices: [2],
     }),
+    { stop: 3, slot: "centre" },
+  );
+  const resultPosition = correctBoard.position.clone();
+  const gatherPath = [
+    selectedCell.clone(),
+    vector(-6.4, 4.6, (selectedCell.z + resultPosition.z) / 2 + 2.2),
+    vector(-2.6, 6.2, (selectedCell.z + resultPosition.z) / 2),
+    resultPosition.clone().add(vector(0, -0.4, 2.4)),
     resultPosition,
-  );
-  const lateAnswerPanel = addAt(
-    context,
-    createPanel(["PREDICTIONS COMPLETE", "ANSWERS REMAIN OUTSIDE THE MODEL"], {
-      width: 5.2,
-      height: 1.1,
-      color: "#dceaff",
-      borderColor: cyan,
-      fontScale: 0.68,
-    }),
-    vector(3.6, -1.85, 3.3),
-  );
+  ];
+  context.group.add(createPath(gatherPath, gold, 0.07, 0.45));
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
     setObjectOpacity(predictionBoard, 0.52 + smoothStep(p, 0, 0.18) * 0.48);
     setObjectOpacity(lateAnswerPanel, 1 - smoothStep(p, 0.22, 0.42) * 0.68);
-    samplePath(
-      targetTile,
-      [targetStart, vector(5, 3.25, 3.5), vector(0, 3, 2.2), selectedCell],
-      smoothStep(p, 0.2, 0.48),
-      0.18,
+    const arrival = smoothStep(p, 0.2, 0.48);
+    samplePath(targetTile, targetPath, arrival, 0.18);
+    // The tray leaves the right lane angled inward and squares up as it lands
+    // on the prediction row it belongs to.
+    targetTile.rotation.y = THREE.MathUtils.lerp(
+      targetYaw,
+      predictionBoard.rotation.y,
+      arrival,
     );
     setObjectOpacity(targetTile, smoothStep(p, 0.16, 0.26));
     setObjectOpacity(locator, windowPulse(p, 0.4, 0.56, 0.82));
     locator.rotation.z = motionEnabled ? elapsed * 0.8 : 0;
     setObjectOpacity(gatherPanel, smoothStep(p, 0.5, 0.68));
-    samplePath(
-      gatheredPacket,
-      [selectedCell, gatherDock, resultPosition],
-      smoothStep(p, 0.56, 0.8),
-      0.45,
-    );
+    samplePath(gatheredPacket, gatherPath, smoothStep(p, 0.56, 0.8), 0.45);
     setObjectOpacity(gatheredPacket, windowPulse(p, 0.52, 0.7, 0.86));
     setObjectOpacity(correctBoard, smoothStep(p, 0.72, 0.9));
   };
   return finishBuilder(updater);
 }
 
+/**
+ * Cross-Entropy Foundry, laid out as a walkable avenue.
+ *
+ * The twelve supervised probabilities are read on the left, then rise into a
+ * bank of -ln gates suspended over the runway: the visitor walks through the
+ * twelve independent penalties instead of watching them from outside. The
+ * penalties board and the worked single lane face each other at the next stop,
+ * the twelve streams pour into the averaging funnel overhead, and the scalar
+ * stands alone at the end of the walk.
+ */
 function buildLossProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
@@ -351,44 +433,44 @@ function buildLossProcess(
   const cyan = context.palette.phaseBase;
   addHeader(context, ["CROSS-ENTROPY FOUNDRY", "12 PROBABILITIES -> -ln -> MEAN"], gold);
 
-  const probabilityBoard = addAt(
+  const probabilityBoard = place(
     context,
     createValueBoard(SELECTED_TRACE.output.correctTokenProbabilities.flat(), 2, 6, {
-      width: 5.8,
-      cellHeight: 0.58,
+      width: 7.2,
+      cellHeight: 0.78,
       title: "P_CORRECT [2 x 6]",
       subtitle: "one probability per supervised position",
       color: cyan,
       accent: gold,
       highlightedIndices: [2],
     }),
-    vector(-5.15, 2.35, 3.25),
+    { stop: 0, slot: "left", xShift: 0.6 },
   );
   probabilityBoard.name = "assistant-target-loss-correct-probabilities";
-  const lossBoard = addAt(
+  const lossBoard = place(
     context,
     createValueBoard(SELECTED_TRACE.output.perTokenLosses.flat(), 2, 6, {
-      width: 5.8,
-      cellHeight: 0.58,
+      width: 7.2,
+      cellHeight: 0.78,
       title: "TOKEN PENALTIES [2 x 6]",
       subtitle: "exact -ln(p_correct) values",
       color: gold,
       accent: gold,
       highlightedIndices: [2],
     }),
-    vector(5.15, 2.35, -1.35),
+    { stop: 2, slot: "right" },
   );
   lossBoard.name = "assistant-target-loss-token-penalties";
-  const selectedEquation = addAt(
+  const selectedEquation = place(
     context,
     createPanel(["SELECTED LANE", "0.28 -> -ln -> 1.272965676"], {
-      width: 4.8,
-      height: 1.15,
+      width: 6.4,
+      height: 1.55,
       color: gold,
       borderColor: gold,
       fontScale: 0.72,
     }),
-    vector(0, 2.8, 1.1),
+    { stop: 2, slot: "left" },
   );
   selectedEquation.name = "assistant-target-loss-selected-lane";
 
@@ -397,87 +479,91 @@ function buildLossProcess(
   const laneStarts: THREE.Vector3[] = [];
   const gatePositions: THREE.Vector3[] = [];
   const lossPositions: THREE.Vector3[] = [];
-  const funnelPosition = vector(0, -0.9, -5.55);
+  const funnelPosition = vector(0, AVENUE.archY + 0.9, avenueZ(3));
   const gateMaterial = createProcessMaterial(gold, 0.75, 0.65);
   for (let index = 0; index < 12; index += 1) {
     const row = Math.floor(index / 6);
     const column = index % 6;
-    const x = (column - 2.5) * 1.35;
-    const y = -1.65 + row * 0.72;
-    const start = vector(x, y, 4.85);
-    const gate = vector(x, y + 0.1, 1.0);
-    const output = vector(x, y, -2.35);
+    const gateX = (column - 2.5) * 1.35;
+    const gateY = AVENUE.archY - 0.8 + row * 1.6;
+    const start = vector(-(5.6 + column * 1.05), 3.7 + row * 1.0, avenueZ(0) - 1.2);
+    const gate = vector(gateX, gateY, avenueZ(1));
+    const output = vector(gateX, gateY, avenueZ(2));
     laneStarts.push(start);
     gatePositions.push(gate);
     lossPositions.push(output);
-    const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.055, 8, 28), gateMaterial);
+    const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.07, 8, 28), gateMaterial);
     hoop.position.copy(gate);
     hoop.name = "assistant-target-loss-cross-entropy-gates";
     context.group.add(hoop);
-    const inputPacket = createPacket(index === 2 ? gold : cyan, 0.14);
+    const inputPacket = createPacket(index === 2 ? gold : cyan, 0.16);
     inputPacket.position.copy(start);
     context.group.add(inputPacket);
     probabilityPackets.push(inputPacket);
-    const lossPacket = createPacket(gold, 0.18);
+    const lossPacket = createPacket(gold, 0.2);
     lossPacket.position.copy(gate);
     context.group.add(lossPacket);
     lossPackets.push(lossPacket);
     context.group.add(createPath([start, gate, output, funnelPosition], gold, 0.024, 0.17));
   }
-  const minusLogLabel = addAt(
+  const minusLogLabel = place(
     context,
     createPanel(["12 INDEPENDENT -ln GATES"], {
-      width: 4.2,
-      height: 0.72,
+      width: 5.8,
+      height: 1.15,
       color: gold,
       borderColor: gold,
       fontScale: 0.7,
     }),
-    vector(0, 0.15, 1.0),
+    { stop: 1, slot: "right", row: 1 },
   );
   minusLogLabel.name = "assistant-target-loss-cross-entropy-gates";
   const funnel = addAt(
     context,
     new THREE.Mesh(
-      new THREE.CylinderGeometry(2.0, 0.68, 1.45, 24, 1, true),
+      new THREE.CylinderGeometry(2.6, 0.9, 1.9, 24, 1, true),
       createProcessMaterial(gold, 0.85, 0.5),
     ),
     funnelPosition,
   );
   funnel.name = "assistant-target-loss-averaging";
-  const divideGlyph = addAt(context, createGlyph("/ 12", gold, 1.5), vector(0, 1.05, -5.55));
+  // The divisor hangs in the funnel's throat, high enough that the walkway
+  // underneath stays clear.
+  const divideGlyph = place(context, createGlyph("/ 12", gold, 2.1), {
+    stop: 3,
+    slot: "centre",
+    row: -0.34,
+  });
   divideGlyph.name = "assistant-target-loss-averaging";
-  const sumPanel = addAt(
+  const sumPanel = place(
     context,
     createPanel(["SUM 12 LOSSES ~= 17.131643", "MEAN = SUM / 12"], {
-      width: 4.7,
-      height: 1.15,
+      width: 6.4,
+      height: 1.55,
       color: gold,
       borderColor: gold,
       fontScale: 0.68,
     }),
-    vector(0, 2.55, -5.55),
+    { stop: 4, slot: "left" },
   );
   sumPanel.name = "assistant-target-loss-averaging";
-  // The scalar result sits on the right flank instead of dead-center behind
-  // the funnel and the /12 glyph, so it reads from the chamber entrance
-  // without stepping to the side.
+  const scalarAnchor = avenueAnchor({ stop: 4, slot: "right" });
   const scalar = addAt(
     context,
-    new THREE.Mesh(new THREE.IcosahedronGeometry(0.78, 2), createProcessMaterial(gold, 1.7)),
-    vector(4.35, -0.35, -6.9),
+    new THREE.Mesh(new THREE.IcosahedronGeometry(1.0, 2), createProcessMaterial(gold, 1.7)),
+    scalarAnchor.clone().add(vector(0, -2.3, 0.9)),
   );
   scalar.name = "assistant-target-loss-scalar-loss";
-  const scalarPanel = addAt(
+  const scalarPanel = place(
     context,
     createPanel(["SCALAR LOSS", "L = 1.427636920"], {
-      width: 3.7,
-      height: 1.2,
+      width: 5.2,
+      height: 1.7,
       color: gold,
       borderColor: gold,
       fontScale: 0.78,
     }),
-    vector(4.35, 1.1, -6.9),
+    { stop: 4, slot: "right" },
   );
   scalarPanel.name = "assistant-target-loss-scalar-loss";
 
@@ -516,6 +602,15 @@ function buildLossProcess(
   return finishBuilder(updater);
 }
 
+/**
+ * Output Derivative Forge, laid out as a walkable avenue.
+ *
+ * The prediction and the answer are genuinely parallel operands, so they open
+ * the walk facing each other and rise together into the minus arch. The
+ * difference and the divisor share the next bay, the averaged gradient hangs
+ * over the runway, and the copy fork sends one gradient into each lane at the
+ * last stop — the split is seen as two boards on opposite sides of the walk.
+ */
 function buildOutputBackpropProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
@@ -527,99 +622,134 @@ function buildOutputBackpropProcess(
   const dG = difference.map((value) => value / 12);
   addHeader(context, ["OUTPUT DERIVATIVE FORGE", "p - one_hot -> /12 -> COPY FORK"], warm);
 
-  const pStart = vector(-5.2, 2.15, 4.65);
-  const yStart = vector(5.2, 2.15, 4.65);
-  const pBoard = addAt(
+  const pBoard = place(
     context,
     createValueBoard(probabilities, 4, 4, {
-      width: 5.2,
-      cellHeight: 0.44,
+      width: 6.8,
+      cellHeight: 0.6,
       title: "p[16]",
       subtitle: "selected position",
       color: context.palette.phaseBase,
       accent: amber,
       highlightedIndices: [TARGET_INDEX],
     }),
-    pStart,
+    { stop: 0, slot: "left", xShift: 0.6 },
   );
-  const yBoard = addAt(
+  const yBoard = place(
     context,
     createValueBoard(oneHot, 4, 4, {
-      width: 5.2,
-      cellHeight: 0.44,
+      width: 6.8,
+      cellHeight: 0.6,
       title: "one_hot(target=5)",
       subtitle: "1 only at sat",
       color: amber,
       accent: amber,
       highlightedIndices: [TARGET_INDEX],
     }),
-    yStart,
+    { stop: 0, slot: "right", xShift: 0.6 },
   );
-  const subtract = addAt(context, createGlyph("-", warm, 1.45), vector(0, 1.05, 2.55));
-  const differenceBoard = addAt(
+  const pStart = pBoard.position.clone();
+  const yStart = yBoard.position.clone();
+  const pYaw = pBoard.rotation.y;
+  const yYaw = yBoard.rotation.y;
+  const subtract = place(context, createGlyph("-", warm, 2.0), {
+    stop: 1,
+    slot: "centre",
+  });
+  const differenceBoard = place(
     context,
     createValueBoard(stringValues(difference, 3), 4, 4, {
-      width: 5.8,
-      cellHeight: 0.44,
+      width: 7.4,
+      cellHeight: 0.6,
       title: "p - one_hot(y)",
       subtitle: "sat becomes -0.720",
       color: warm,
       accent: amber,
       highlightedIndices: [TARGET_INDEX],
     }),
-    vector(0, 1.55, 0.55),
+    { stop: 2, slot: "left" },
   );
-  const divide = addAt(context, createGlyph("/ 12", warm, 1.5), vector(0, -0.45, -1.25));
-  const dGBoard = addAt(
+  // Operator glyphs stand at the runway edge of the bay they belong to rather
+  // than over the centre line, where each would hide the next.
+  const divide = place(context, createGlyph("/ 12", warm, 2.1), {
+    stop: 2,
+    slot: "left",
+    row: 0.5,
+    xShift: -2.8,
+    zShift: -2.8,
+  });
+  const dGBoard = place(
     context,
     createValueBoard(stringValues(dG, 9), 4, 4, {
-      width: 5.8,
-      cellHeight: 0.44,
+      width: 8.0,
+      cellHeight: 0.62,
       title: "dG SELECTED SLICE",
       subtitle: "sat -.060000000 | on +.013333333 | sum 0",
       color: warm,
       accent: amber,
       highlightedIndices: [TARGET_INDEX, 6],
     }),
-    vector(0, 1.15, -2.75),
+    { stop: 3, slot: "centre" },
   );
-  const fork = vector(0, -1.25, -4.15);
-  const leftResult = vector(-5.1, 0.55, -6.3);
-  const rightResult = vector(5.1, 0.55, -6.3);
-  const forkGlyph = addAt(context, createGlyph("COPY", warm, 1.45), fork.clone().add(vector(0, 1.15, 0)));
-  const activationPacket = addAt(context, createPacket(warm, 0.22), fork.clone());
-  const parameterPacket = addAt(context, createPacket(amber, 0.22), fork.clone());
-  context.group.add(createPath([fork, vector(-2.2, -0.4, -5.1), leftResult], warm, 0.07, 0.48));
-  context.group.add(createPath([fork, vector(2.2, -0.4, -5.1), rightResult], amber, 0.07, 0.48));
-  const dHBoard = addAt(
+  const forkGlyph = place(context, createGlyph("COPY", warm, 2.0), {
+    stop: 3,
+    slot: "right",
+    row: 0.5,
+    xShift: -2.8,
+    zShift: -2.4,
+  });
+  const dHBoard = place(
     context,
     createValueBoard(Array.from({ length: 8 }, () => "."), 1, 8, {
-      width: 5.0,
-      cellHeight: 0.62,
+      width: 6.8,
+      cellHeight: 0.85,
       title: "dH = dG x W_vocab^T",
       subtitle: "dH [2 x 6 x 8] | values unknown",
       color: warm,
       unknownIndices: Array.from({ length: 8 }, (_, index) => index),
     }),
-    leftResult,
+    { stop: 4, slot: "left" },
   );
-  const dWBoard = addAt(
+  const dWBoard = place(
     context,
     createValueBoard(Array.from({ length: 16 }, () => "."), 4, 4, {
-      width: 5.0,
-      cellHeight: 0.48,
+      width: 6.8,
+      cellHeight: 0.65,
       title: "dW = H^T x dG | 4 x 4 SLICE",
       subtitle: "rows 0:4, cols 0:4 of full dW_vocab [8 x 16]",
       color: amber,
       unknownIndices: Array.from({ length: 16 }, (_, index) => index),
     }),
-    rightResult,
+    { stop: 4, slot: "right" },
   );
+  const fork = forkGlyph.position.clone();
+  const leftResult = dHBoard.position.clone();
+  const rightResult = dWBoard.position.clone();
+  // The activation branch has to change sides, so it vaults the runway well
+  // above head height instead of cutting across it.
+  const activationRoute = [
+    fork,
+    vector(2.8, AVENUE.archY + 0.4, fork.z - 1.4),
+    vector(-2.8, AVENUE.archY + 0.4, fork.z - 2.8),
+    leftResult.clone().add(vector(0.6, 2.4, 2.2)),
+    leftResult,
+  ];
+  const parameterRoute = avenueRoute(fork, rightResult, 0.8);
+  const activationPacket = addAt(context, createPacket(warm, 0.24), fork.clone());
+  const parameterPacket = addAt(context, createPacket(amber, 0.24), fork.clone());
+  context.group.add(createPath(activationRoute, warm, 0.07, 0.48));
+  context.group.add(createPath(parameterRoute, amber, 0.07, 0.48));
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
-    moveObject(pBoard, pStart, vector(-2.9, 2.15, 2.75), smoothStep(p, 0.1, 0.3), 0);
-    moveObject(yBoard, yStart, vector(2.9, 2.15, 2.75), smoothStep(p, 0.1, 0.3), 0);
+    // Both operands climb out of their lanes to meet under the minus sign, and
+    // square up to the walkway as they converge.
+    const converge = smoothStep(p, 0.1, 0.3);
+    const meet = subtract.position;
+    moveObject(pBoard, pStart, meet.clone().add(vector(-4.8, -0.3, 1.8)), converge, 0);
+    moveObject(yBoard, yStart, meet.clone().add(vector(4.8, -0.3, 1.8)), converge, 0);
+    pBoard.rotation.y = pYaw * (1 - converge);
+    yBoard.rotation.y = yYaw * (1 - converge);
     const operandsFade = 1 - smoothStep(p, 0.3, 0.44);
     setObjectOpacity(pBoard, operandsFade);
     setObjectOpacity(yBoard, operandsFade);
@@ -629,8 +759,8 @@ function buildOutputBackpropProcess(
     setObjectOpacity(dGBoard, smoothStep(p, 0.52, 0.7));
     setObjectOpacity(forkGlyph, smoothStep(p, 0.64, 0.76));
     const forkTravel = smoothStep(p, 0.68, 0.88);
-    samplePath(activationPacket, [fork, vector(-2.2, -0.4, -5.1), leftResult], forkTravel, 0.2);
-    samplePath(parameterPacket, [fork, vector(2.2, -0.4, -5.1), rightResult], forkTravel, 0.2);
+    samplePath(activationPacket, activationRoute, forkTravel, 0.2);
+    samplePath(parameterPacket, parameterRoute, forkTravel, 0.2);
     setObjectOpacity(activationPacket, windowPulse(p, 0.64, 0.78, 0.94));
     setObjectOpacity(parameterPacket, windowPulse(p, 0.64, 0.78, 0.94));
     setObjectOpacity(dHBoard, smoothStep(p, 0.82, 0.96));
@@ -643,6 +773,17 @@ function buildOutputBackpropProcess(
   return finishBuilder(updater);
 }
 
+/**
+ * Two-Block Reverse Circuit, laid out as a walkable avenue.
+ *
+ * The gradient enters over the threshold, the final norm is undone in the right
+ * bay, and then the four residual-add branches take one stop each, mirroring
+ * left and right so four identically built bays never queue up on one
+ * sightline. Each bay is a single column: the copy at the top, the Jacobian and
+ * its merge in the middle, and the parameter-gradient rack low down, which is
+ * the order the gradient actually passes through them. The exhausted gradient
+ * leaves over the exit.
+ */
 function buildBackpropTowerProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
@@ -650,40 +791,31 @@ function buildBackpropTowerProcess(
   const amber = "#ffd166";
   addHeader(context, ["TWO-BLOCK REVERSE CIRCUIT", "ADD COPIES dL | MATRIX OPS COLLECT dW"], warm);
 
-  const blockOneDeck = addAt(context, makeDeck(vector(8.6, 0.2, 4.2), "#5d1f2b", 0.38), vector(0, 2.35, 0.9));
-  const blockZeroDeck = addAt(context, makeDeck(vector(8.6, 0.2, 4.2), "#5d1f2b", 0.38), vector(0, -0.95, -1.75));
-  void blockOneDeck;
-  void blockZeroDeck;
-  addAt(
+  // The two block plaques stand in the outer lanes, level with the first bay of
+  // the block they name, where nothing else competes for the sightline.
+  place(
     context,
     createPanel(["BLOCK 1 BACKWARD", "MLP ADD -> ATTENTION ADD"], {
-      width: 3.8,
-      height: 1.0,
+      width: 5.4,
+      height: 1.5,
       color: warm,
       borderColor: warm,
       fontScale: 0.65,
     }),
-    vector(-6.4, 3.55, 0.9),
+    { stop: 2, slot: "outer-right" },
   );
-  addAt(
+  place(
     context,
     createPanel(["BLOCK 0 BACKWARD", "MLP ADD -> ATTENTION ADD"], {
-      width: 3.8,
-      height: 1.0,
+      width: 5.4,
+      height: 1.5,
       color: warm,
       borderColor: warm,
       fontScale: 0.65,
     }),
-    vector(-6.4, 0.2, -1.75),
+    { stop: 4, slot: "outer-left" },
   );
 
-  const centers = [
-    vector(0, 3.55, 2.7),
-    vector(0, 2.05, 1.35),
-    vector(0, 0.55, 0),
-    vector(0, -1.0, -1.45),
-    vector(0, -2.65, -3.05),
-  ];
   const branchPackets: Array<{
     identity: THREE.Object3D;
     transformed: THREE.Object3D;
@@ -709,47 +841,121 @@ function buildBackpropTowerProcess(
     ["ATTENTION 0 + LN1 BACKWARD", "J^T x g"],
   ] as const;
 
-  centers.slice(0, 4).forEach((start, index) => {
-    const end = centers[index + 1];
-    const middleY = (start.y + end.y) / 2;
-    const middleZ = (start.z + end.z) / 2;
-    const identityMidpoint = vector(-3.0, middleY, middleZ);
-    const jacobianPosition = vector(3.0, middleY, middleZ);
-    const mergePoint = vector(0, end.y + 0.32, end.z + 0.28);
+  const inputBoard = place(
+    context,
+    createValueBoard(Array.from({ length: 8 }, () => "."), 1, 8, {
+      width: 7.4,
+      cellHeight: 0.82,
+      title: "dH_final [2 x 6 x 8]",
+      subtitle: "values not present in trace",
+      color: warm,
+      unknownIndices: Array.from({ length: 8 }, (_, index) => index),
+    }),
+    { stop: 0, slot: "left", xShift: 0.9 },
+  );
+  const finalNormBackward = place(
+    context,
+    createPanel(["LN_f BACKWARD FIRST", "dH2 = J_LNf^T x dH_final", "collects dgamma_f + dbeta_f"], {
+      width: 5.6,
+      height: 1.9,
+      color: warm,
+      borderColor: warm,
+      fontScale: 0.62,
+    }),
+    { stop: 1, slot: "right" },
+  );
+  const finalNormRack = place(
+    context,
+    createPanel(["dLN_f", "parameter gradient"], {
+      width: 4.8,
+      height: 1.25,
+      color: amber,
+      borderColor: amber,
+      fontScale: 0.62,
+    }),
+    { stop: 1, slot: "right", row: 1 },
+  );
+
+  // The gradient hands itself from bay to bay across the avenue, so each leg
+  // vaults the runway at arch height instead of sweeping through it.
+  const handoff = (from: THREE.Vector3, to: THREE.Vector3) => {
+    const midZ = (from.z + to.z) / 2;
+    return [
+      from.clone(),
+      vector(from.x * 0.6, AVENUE.archY - 0.5, midZ + 1.6),
+      vector(0, AVENUE.archY + 0.4, midZ),
+      vector(to.x * 0.6, AVENUE.archY - 0.5, midZ - 1.6),
+      to.clone(),
+    ];
+  };
+
+  const branchStops = [2, 3, 4, 5] as const;
+  const branchSides = ["left", "right", "left", "right"] as const;
+  const branchStarts = branchStops.map((stop, index) =>
+    avenueAnchor({ stop, slot: branchSides[index], row: 1, zShift: 1.4 }).setY(5.0),
+  );
+
+  branchStops.forEach((stop, index) => {
+    const side = branchSides[index];
+    const sign = side === "left" ? -1 : 1;
+    const laneX = avenueLaneX(stop);
+    const z = avenueZ(stop);
+    const start = branchStarts[index];
+    // The skip copy bows out to the chamber wall while the transformed copy
+    // goes through the Jacobian, so the two halves of the residual add are
+    // told apart by which way they leave the bay.
+    const identityMidpoint = vector(sign * (laneX + 3.8), 4.9, z - 1.4);
+    const jacobianPosition = vector(sign * laneX, 4.2, z + 0.7);
+    const mergePoint = vector(sign * (laneX - 3.2), 4.2, z - 3.2);
+    const rackPosition = avenueAnchor({ stop, slot: side, row: -1 });
     const identityPath = [start, identityMidpoint, mergePoint];
     const transformedPath = [start, jacobianPosition, mergePoint];
-    const mergedPath = [mergePoint, end];
-    const rackPosition = vector(7.0, middleY, middleZ - 0.55);
-    const depositPath = [jacobianPosition, vector(5.0, middleY + 0.15, middleZ), rackPosition];
+    const depositPath = [
+      jacobianPosition,
+      vector(sign * (laneX + 1.4), 0.9, z - 0.4),
+      rackPosition,
+    ];
+    const mergedPath =
+      index === 3
+        ? handoff(mergePoint, avenueAnchor({ stop: 6, slot: "centre", zShift: 2.6 }))
+        : handoff(mergePoint, branchStarts[index + 1]);
     context.group.add(createPath(identityPath, warm, 0.045, 0.5));
     context.group.add(createPath(transformedPath, "#ff9b87", 0.045, 0.5));
     context.group.add(createPath(depositPath, amber, 0.038, 0.5));
     context.group.add(createPath(mergedPath, warm, 0.06, 0.58));
-    const copyGlyph = createPanel(["RESIDUAL ADD BACKWARD", "copy g -> skip | transform"], {
-      width: 3.1,
-      height: 0.86,
-      color: warm,
-      borderColor: warm,
-      fontScale: 0.62,
+    const copyGlyph = place(
+      context,
+      createPanel(["RESIDUAL ADD BACKWARD", "copy g -> skip | transform"], {
+        width: 4.5,
+        height: 1.3,
+        color: warm,
+        borderColor: warm,
+        fontScale: 0.62,
+      }),
+      { stop, slot: side, row: 1 },
+    );
+    const jacobian = place(
+      context,
+      createPanel(jacobianNames[index], {
+        width: 4.6,
+        height: 1.3,
+        color: "#ffd4ca",
+        borderColor: warm,
+        fontScale: 0.6,
+      }),
+      { stop, slot: side, row: 0.5, zShift: 0.7 },
+    );
+    const plusGlyph = place(context, createGlyph("+", warm, 1.5), {
+      stop,
+      slot: side,
+      row: 0.5,
+      xShift: -3.2,
+      zShift: -3.2,
     });
-    copyGlyph.position.copy(start).add(vector(0, 0.45, 0));
-    context.group.add(copyGlyph);
-    const jacobian = createPanel(jacobianNames[index], {
-      width: 3.15,
-      height: 0.88,
-      color: "#ffd4ca",
-      borderColor: warm,
-      fontScale: 0.6,
-    });
-    jacobian.position.copy(jacobianPosition).add(vector(0, 0.52, 0));
-    context.group.add(jacobian);
-    const plusGlyph = createGlyph("+", warm, 0.86);
-    plusGlyph.position.copy(mergePoint);
-    context.group.add(plusGlyph);
-    const identity = createPacket(warm, 0.18);
-    const transformed = createPacket("#ff9b87", 0.18);
-    const deposit = createPacket(amber, 0.14);
-    const merged = createPacket(warm, 0.2);
+    const identity = createPacket(warm, 0.2);
+    const transformed = createPacket("#ff9b87", 0.2);
+    const deposit = createPacket(amber, 0.16);
+    const merged = createPacket(warm, 0.22);
     context.group.add(identity, transformed, deposit, merged);
     branchPackets.push({ identity, transformed, deposit, merged });
     branchPaths.push({
@@ -759,74 +965,49 @@ function buildBackpropTowerProcess(
       merged: mergedPath,
     });
     branchStageObjects.push({ copy: copyGlyph, jacobian, plus: plusGlyph });
-    addAt(
+    place(
       context,
       createPanel([rackNames[index], "parameter gradient"], {
-        width: 3.3,
-        height: 0.82,
+        width: 4.8,
+        height: 1.25,
         color: amber,
         borderColor: amber,
         fontScale: 0.62,
       }),
-      rackPosition,
+      { stop, slot: side, row: -1 },
     );
   });
-  const inputBoard = addAt(
+  context.group.add(
+    createPath(
+      handoff(finalNormBackward.position.clone(), branchStarts[0]),
+      warm,
+      0.05,
+      0.5,
+    ),
+  );
+
+  const outputBoard = place(
     context,
     createValueBoard(Array.from({ length: 8 }, () => "."), 1, 8, {
-      width: 4.8,
-      cellHeight: 0.56,
-      title: "dH_final [2 x 6 x 8]",
-      subtitle: "values not present in trace",
-      color: warm,
-      unknownIndices: Array.from({ length: 8 }, (_, index) => index),
-    }),
-    vector(0, 3.5, 5.25),
-  );
-  const finalNormBackward = addAt(
-    context,
-    createPanel(["LN_f BACKWARD FIRST", "dH2 = J_LNf^T x dH_final", "collects dgamma_f + dbeta_f"], {
-      width: 4.1,
-      height: 1.35,
-      color: warm,
-      borderColor: warm,
-      fontScale: 0.62,
-    }),
-    vector(-5.35, 3.3, 4.1),
-  );
-  const finalNormRack = addAt(
-    context,
-    createPanel(["dLN_f", "parameter gradient"], {
-      width: 3.3,
-      height: 0.82,
-      color: amber,
-      borderColor: amber,
-      fontScale: 0.62,
-    }),
-    vector(7.0, 4.2, 3.4),
-  );
-  const outputBoard = addAt(
-    context,
-    createValueBoard(Array.from({ length: 8 }, () => "."), 1, 8, {
-      width: 4.8,
-      cellHeight: 0.56,
+      width: 7.4,
+      cellHeight: 0.82,
       title: "dH0 EXITS TO EMBEDDINGS",
       subtitle: "all dW racks have accumulated",
       color: warm,
       unknownIndices: Array.from({ length: 8 }, (_, index) => index),
     }),
-    vector(0, -2.25, -5.8),
+    { stop: 6, slot: "centre" },
   );
-  const noUpdatePanel = addAt(
+  const noUpdatePanel = place(
     context,
     createPanel(["GRADIENTS COLLECTED", "NO WEIGHTS MOVED"], {
-      width: 4.3,
-      height: 1.05,
+      width: 5.8,
+      height: 1.45,
       color: amber,
       borderColor: amber,
       fontScale: 0.72,
     }),
-    vector(4.7, 3.65, -3.4),
+    { stop: 6, slot: "left" },
   );
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
@@ -872,27 +1053,30 @@ function buildBackpropTowerProcess(
   return finishBuilder(updater);
 }
 
+/**
+ * WQ Matrix Microscope, laid out as a walkable avenue.
+ *
+ * The twelve position contributions stream in under the entrance arch, the
+ * addressed matrix stands alone in the left bay so the lit cell can be found
+ * from the runway, and the two registers face it from the right. The gradient
+ * register is shown twice — accumulating, then settled — at different stops, so
+ * the change of state is a step along the walk rather than a swap in place.
+ */
 function buildParameterMatrixProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
   const warm = "#ff765f";
   const amber = "#ffd166";
-  const matrixWidth = 7.0;
-  const matrixCellHeight = 0.43;
-  const matrixPosition = vector(-2.0, 1.05, -2.65);
+  const matrixWidth = 8.6;
+  const matrixCellHeight = 0.56;
   const matrixHeight = 0.72 + 8 * matrixCellHeight + 0.5 + 0.34;
-  const selectedPosition = vector(
-    matrixPosition.x - matrixWidth / 2 + (6 + 0.5) * (matrixWidth / 8),
-    matrixPosition.y + matrixHeight / 2 - 0.72 - (3 + 0.5) * matrixCellHeight,
-    matrixPosition.z + 0.27,
-  );
   addHeader(context, ["WQ MATRIX MICROSCOPE", "ADDRESS [3,6] | ACCUMULATE 12 CONTRIBUTIONS"], amber);
   const values = Array.from({ length: 64 }, () => "." as string);
   values[SELECTED_CELL_INDEX] = "0.0174";
   const unknown = Array.from({ length: 64 }, (_, index) => index).filter(
     (index) => index !== SELECTED_CELL_INDEX,
   );
-  const matrixBoard = addAt(
+  const matrixBoard = place(
     context,
     createValueBoard(values, 8, 8, {
       width: matrixWidth,
@@ -905,88 +1089,103 @@ function buildParameterMatrixProcess(
       unknownIndices: unknown,
       fontScale: 0.92,
     }),
-    matrixPosition,
+    { stop: 1, slot: "left", xShift: 1.0 },
   );
-  const rowLaser = addAt(
-    context,
-    new THREE.Mesh(new THREE.BoxGeometry(matrixWidth, 0.055, 0.055), createProcessMaterial(amber, 1.2, 0.8)),
-    vector(matrixPosition.x, selectedPosition.y, selectedPosition.z),
+  // The sighting rig rides on the board itself, so it keeps pointing at cell
+  // [3,6] whatever angle the bay is hung at.
+  const cellX = -matrixWidth / 2 + 6.5 * (matrixWidth / 8);
+  const cellY = matrixHeight / 2 - 0.72 - 3.5 * matrixCellHeight;
+  const rowLaser = new THREE.Mesh(
+    new THREE.BoxGeometry(matrixWidth, 0.07, 0.07),
+    createProcessMaterial(amber, 1.2, 0.8),
   );
-  const columnLaser = addAt(
-    context,
-    new THREE.Mesh(new THREE.BoxGeometry(0.055, 3.6, 0.055), createProcessMaterial(amber, 1.2, 0.8)),
-    selectedPosition,
+  rowLaser.position.set(0, cellY, 0.3);
+  const columnLaser = new THREE.Mesh(
+    new THREE.BoxGeometry(0.07, matrixHeight - 1.0, 0.07),
+    createProcessMaterial(amber, 1.2, 0.8),
   );
-  const selector = addAt(context, makeRing(amber, 0.52, 0.065), selectedPosition.clone());
-  const weightPanel = addAt(
+  columnLaser.position.set(cellX, cellY, 0.3);
+  const selector = makeRing(amber, 0.62, 0.08);
+  selector.position.set(cellX, cellY, 0.36);
+  matrixBoard.add(rowLaser, columnLaser, selector);
+
+  const weightPanel = place(
     context,
     createPanel(["WEIGHT REGISTER", "w = +0.017400"], {
-      width: 3.5,
-      height: 1.1,
+      width: 4.9,
+      height: 1.55,
       color: amber,
       borderColor: amber,
       fontScale: 0.72,
     }),
-    vector(5.55, 2.55, -2.8),
+    { stop: 2, slot: "right" },
   );
-  const accumulatingPanel = addAt(
+  const accumulatingPanel = place(
     context,
     createPanel(["GRADIENT REGISTER", "SUM 12 CONTRIBUTIONS"], {
-      width: 3.8,
-      height: 1.1,
+      width: 5.3,
+      height: 1.55,
       color: warm,
       borderColor: warm,
       fontScale: 0.68,
     }),
-    vector(5.55, 0.55, -2.8),
+    { stop: 3, slot: "left" },
   );
-  const finalGradientPanel = addAt(
+  const finalGradientPanel = place(
     context,
     createPanel(["GRADIENT REGISTER", "g = -0.003100"], {
-      width: 3.8,
-      height: 1.1,
+      width: 5.3,
+      height: 1.55,
       color: warm,
       borderColor: warm,
       fontScale: 0.72,
     }),
-    vector(5.55, 0.55, -2.75),
+    { stop: 4, slot: "right" },
   );
-  const lockPanel = addAt(
+  const lockPanel = place(
     context,
     createPanel(["LOCKED", "NO UPDATE YET"], {
-      width: 3.2,
-      height: 1.0,
+      width: 4.6,
+      height: 1.45,
       color: "#dceaff",
       borderColor: amber,
       fontScale: 0.74,
     }),
-    vector(5.55, -1.35, -2.8),
+    { stop: 4, slot: "centre" },
   );
-  const contributionPackets: THREE.Object3D[] = [];
-  const contributionStarts: THREE.Vector3[] = [];
-  const contributionEnd = vector(5.55, -0.55, -2.55);
-  for (let index = 0; index < 12; index += 1) {
-    const row = Math.floor(index / 6);
-    const column = index % 6;
-    const start = vector((column - 2.5) * 1.25, -1.8 + row * 0.72, 5.7);
-    contributionStarts.push(start);
-    const packet = createPacket(warm, 0.13);
-    packet.position.copy(start);
-    context.group.add(packet);
-    contributionPackets.push(packet);
-    context.group.add(createPath([start, vector(2.8, -0.6 + row * 0.3, 1.2), contributionEnd], warm, 0.025, 0.18));
-  }
-  addAt(
+  place(
     context,
     createPanel(["(b,t) CONTRIBUTIONS", "INDIVIDUAL VALUES UNKNOWN"], {
-      width: 4.6,
-      height: 1.0,
+      width: 6.4,
+      height: 1.4,
       color: warm,
       borderColor: warm,
       fontScale: 0.66,
     }),
-    vector(0, -0.55, 4.8),
+    { stop: 0, slot: "centre" },
   );
+  const contributionPackets: THREE.Object3D[] = [];
+  const contributionRoutes: THREE.Vector3[][] = [];
+  const contributionEnd = accumulatingPanel.position
+    .clone()
+    .add(vector(0.9, -1.1, 0.7));
+  for (let index = 0; index < 12; index += 1) {
+    const row = Math.floor(index / 6);
+    const column = index % 6;
+    // The twelve contributions arrive overhead and only drop into the lane once
+    // they are past the walkway.
+    const route = [
+      vector((column - 2.5) * 1.5, 4.7 + row * 0.9, avenueZ(0) - 1.4),
+      vector(-6.2, 4.5 + row * 0.3, avenueZ(1) - 1.0),
+      contributionEnd,
+    ];
+    contributionRoutes.push(route);
+    const packet = createPacket(warm, 0.16);
+    packet.position.copy(route[0]);
+    context.group.add(packet);
+    contributionPackets.push(packet);
+    context.group.add(createPath(route, warm, 0.025, 0.18));
+  }
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
@@ -998,7 +1197,7 @@ function buildParameterMatrixProcess(
     contributionPackets.forEach((packet, index) => {
       const start = 0.18 + index * 0.025;
       const end = start + 0.25;
-      moveObject(packet, contributionStarts[index], contributionEnd, smoothStep(p, start, end), 0.45);
+      samplePath(packet, contributionRoutes[index], smoothStep(p, start, end), 0.3);
       setObjectOpacity(packet, windowPulse(p, start - 0.03, start + 0.1, end + 0.05));
     });
     setObjectOpacity(accumulatingPanel, 1 - smoothStep(p, 0.62, 0.76));
@@ -1009,6 +1208,15 @@ function buildParameterMatrixProcess(
   return finishBuilder(updater);
 }
 
+/**
+ * AdamW Assembly Line, laid out as a walkable avenue.
+ *
+ * The optimiser's inputs hang over the threshold, the clip check stands aside
+ * from the line proper, and then the two moments run down opposite lanes in
+ * step — first raw, then bias-corrected — because they are computed from the
+ * same gradient at the same instant. They combine into the normalised step, the
+ * Adam and decay terms take one lane each, and their sum closes the walk.
+ */
 function buildAdamWProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
@@ -1017,130 +1225,169 @@ function buildAdamWProcess(
   const amber = "#ffd166";
   addHeader(context, ["ADAMW ASSEMBLY LINE", "MOMENTS -> BIAS CORRECTION -> STEP + DECAY"], green);
 
-  const input = addAt(
+  const input = place(
     context,
     createPanel([
       "g=-0.0031 | m0=0 | v0=0",
       "beta1=.9 | beta2=.999 | eps=1e-8",
       "eta=.001 | lambda=.01 | w=.0174",
     ], {
-      width: 7.6,
-      height: 1.45,
+      width: 7.4,
+      height: 2.3,
       color: "#f4fbff",
       borderColor: green,
       fontScale: 0.65,
     }),
-    vector(0, 3.35, 5.25),
+    { stop: 0, slot: "left", xShift: 0.6 },
   );
-  const clipCheck = addAt(
+  const clipCheck = place(
     context,
     createPanel(["GLOBAL-NORM CLIP CHECK", "|g| under threshold -> unchanged", "(real runs clip before Adam)"], {
-      width: 4.35,
-      height: 1.4,
+      width: 5.9,
+      height: 1.9,
       color: "#f4fbff",
       borderColor: warm,
       fontScale: 0.6,
     }),
-    vector(-6.6, 3.35, 4.15),
+    { stop: 1, slot: "left", row: 1 },
   );
-  const moment = addAt(
+  // The first and second moments are computed from the same gradient at the
+  // same instant, so they face each other across the runway and stay abreast
+  // through the bias correction one stop later.
+  const moment = place(
     context,
     createPanel(["m1=.9m0+.1g", "m1=-0.00031"], {
-      width: 3.8,
-      height: 1.2,
+      width: 5.2,
+      height: 1.6,
       color: warm,
       borderColor: warm,
       fontScale: 0.72,
     }),
-    vector(-4.45, 1.75, 2.3),
+    { stop: 2, slot: "left" },
   );
-  const variance = addAt(
+  const variance = place(
     context,
     createPanel(["v1=.999v0+.001g^2", "v1=9.61e-9"], {
-      width: 3.8,
-      height: 1.2,
+      width: 5.2,
+      height: 1.6,
       color: amber,
       borderColor: amber,
       fontScale: 0.68,
     }),
-    vector(4.45, 1.75, 2.3),
+    { stop: 2, slot: "right" },
   );
-  const correctedMoment = addAt(
+  const correctedMoment = place(
     context,
     createPanel(["m_hat=m1/(1-beta1)", "m_hat=-0.0031"], {
-      width: 3.8,
-      height: 1.15,
+      width: 5.2,
+      height: 1.55,
       color: warm,
       borderColor: warm,
       fontScale: 0.68,
     }),
-    vector(-4.45, 0.05, -0.1),
+    { stop: 3, slot: "left", row: 1 },
   );
-  const correctedVariance = addAt(
+  const correctedVariance = place(
     context,
     createPanel(["v_hat=v1/(1-beta2)", "v_hat=9.61e-6"], {
-      width: 3.8,
-      height: 1.15,
+      width: 5.2,
+      height: 1.55,
       color: amber,
       borderColor: amber,
       fontScale: 0.68,
     }),
-    vector(4.45, 0.05, -0.1),
+    { stop: 3, slot: "right", row: 1 },
   );
-  const normalized = addAt(
+  const normalized = place(
     context,
     createPanel(["m_hat/(sqrt(v_hat)+eps)", "= -0.999996774"], {
-      width: 4.6,
-      height: 1.2,
+      width: 6.2,
+      height: 1.6,
       color: "#f4fbff",
       borderColor: green,
       fontScale: 0.68,
     }),
-    vector(0, -0.45, -2.55),
+    { stop: 4, slot: "left" },
   );
-  const adamComponent = addAt(
+  const adamComponent = place(
     context,
     createPanel(["-eta x normalized", "+0.000999996774"], {
-      width: 4.0,
-      height: 1.15,
+      width: 5.4,
+      height: 1.55,
       color: green,
       borderColor: green,
       fontScale: 0.7,
     }),
-    vector(-4.0, -1.75, -4.75),
+    { stop: 5, slot: "left", row: 1 },
   );
-  const decayComponent = addAt(
+  const decayComponent = place(
     context,
     createPanel(["-eta x lambda x w", "-0.000000174"], {
-      width: 4.0,
-      height: 1.15,
+      width: 5.4,
+      height: 1.55,
       color: amber,
       borderColor: amber,
       fontScale: 0.7,
     }),
-    vector(4.0, -1.75, -4.75),
+    { stop: 5, slot: "right", row: 1 },
   );
-  // The junction glyph dips below the sightline to the DELTA panel, and the
-  // panel itself sits low so the "normalized" panel never covers it.
-  const plus = addAt(context, createGlyph("+", green, 1.35), vector(0, -2.3, -5.85));
-  const delta = addAt(
+  // The junction stands at the runway edge, clear of the DELTA arch it feeds,
+  // so neither hides the other on the way out.
+  const plus = place(context, createGlyph("+", green, 1.9), {
+    stop: 5,
+    slot: "left",
+    row: 0.5,
+    xShift: -3.6,
+  });
+  const delta = place(
     context,
     createPanel(["DELTA w", "+0.000999822774"], {
-      width: 4.1,
-      height: 1.25,
+      width: 5.6,
+      height: 1.7,
       color: green,
       borderColor: green,
       fontScale: 0.78,
     }),
-    vector(0, -1.5, -7.25),
+    { stop: 5, slot: "centre", zShift: -3.4 },
   );
+  // The second-moment stream has to change sides twice; both crossings happen
+  // at arch height so the walkway underneath stays clear.
+  const varianceFeed = [
+    input.position.clone(),
+    vector(-4.6, 5.4, avenueZ(0.6)),
+    vector(0, AVENUE.archY, avenueZ(1.0)),
+    vector(4.6, 5.4, avenueZ(1.4)),
+    variance.position.clone(),
+  ];
+  const varianceReturn = [
+    variance.position.clone(),
+    correctedVariance.position.clone(),
+    vector(4.6, AVENUE.archY, avenueZ(3.7)),
+    vector(-4.6, AVENUE.archY, avenueZ(3.95)),
+    normalized.position.clone(),
+  ];
   const paths = [
-    createPath([input.position, moment.position], warm, 0.045, 0.35),
-    createPath([input.position, variance.position], amber, 0.045, 0.35),
+    createPath(avenueRoute(input.position, moment.position, 1.0), warm, 0.045, 0.35),
+    createPath(varianceFeed, amber, 0.045, 0.35),
     createPath([moment.position, correctedMoment.position, normalized.position], warm, 0.045, 0.35),
-    createPath([variance.position, correctedVariance.position, normalized.position], amber, 0.045, 0.35),
+    createPath(varianceReturn, amber, 0.045, 0.35),
     createPath([normalized.position, adamComponent.position, plus.position, delta.position], green, 0.05, 0.4),
-    createPath([input.position, decayComponent.position, plus.position, delta.position], amber, 0.035, 0.28),
+    // Weight decay reads the same register but skips the moment machinery, so
+    // it crosses to the far lane at the same arch and runs the length of it.
+    createPath(
+      [
+        input.position,
+        vector(-4.8, 4.9, avenueZ(0.5)),
+        vector(0, AVENUE.archY + 0.8, avenueZ(0.9)),
+        vector(5.2, 5.8, avenueZ(1.3)),
+        decayComponent.position,
+        plus.position,
+        delta.position,
+      ],
+      amber,
+      0.035,
+      0.28,
+    ),
   ];
   context.group.add(...paths);
   const packets = [createPacket(warm, 0.15), createPacket(amber, 0.15), createPacket(green, 0.17)];
@@ -1160,7 +1407,12 @@ function buildAdamWProcess(
     setObjectOpacity(plus, smoothStep(p, 0.72, 0.86));
     setObjectOpacity(delta, smoothStep(p, 0.82, 0.96));
     samplePath(packets[0], [input.position, moment.position, correctedMoment.position, normalized.position], smoothStep(p, 0.08, 0.64), 0.28);
-    samplePath(packets[1], [input.position, variance.position, correctedVariance.position, normalized.position], smoothStep(p, 0.08, 0.64), 0.28);
+    samplePath(
+      packets[1],
+      [...varianceFeed, ...varianceReturn.slice(1)],
+      smoothStep(p, 0.08, 0.64),
+      0.28,
+    );
     samplePath(packets[2], [normalized.position, adamComponent.position, plus.position, delta.position], smoothStep(p, 0.62, 0.94), 0.24);
     packets.forEach((packet, index) => {
       setObjectOpacity(packet, windowPulse(p, 0.05 + index * 0.26, 0.3 + index * 0.28, 0.72 + index * 0.13));
@@ -1172,51 +1424,73 @@ function buildAdamWProcess(
   return finishBuilder(updater);
 }
 
+/**
+ * Precision Update Bench, laid out as a walkable avenue.
+ *
+ * The stored weight and the computed step are two independent quantities, so
+ * they open the walk facing each other and rise together into the plus arch.
+ * The updated value stands on the right, the plaque that insists nothing moved
+ * until now hangs above the left lane, and the matrix before and after the
+ * write face each other at the last stop — the change is read by turning the
+ * head, not by watching one board swap for another in place.
+ */
 function buildWeightUpdateProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
   const green = "#b8ff75";
   const amber = "#ffd166";
   addHeader(context, ["PRECISION UPDATE BENCH", "w + DELTA w = w'"], green);
-  const oldStart = vector(-5.95, 1.55, 3.85);
-  const deltaStart = vector(5.95, 1.55, 3.85);
-  const oldTile = addAt(
+  const oldTile = place(
     context,
     createPanel(["w", "0.017400000000"], {
-      width: 3.65,
-      height: 1.3,
+      width: 5.0,
+      height: 1.75,
       color: amber,
       borderColor: amber,
       fontScale: 0.78,
     }),
-    oldStart,
+    { stop: 0, slot: "left" },
   );
-  const deltaTile = addAt(
+  const deltaTile = place(
     context,
     createPanel(["DELTA w", "+0.000999822774"], {
-      width: 3.65,
-      height: 1.3,
+      width: 5.0,
+      height: 1.75,
       color: green,
       borderColor: green,
       fontScale: 0.75,
     }),
-    deltaStart,
+    { stop: 0, slot: "right" },
   );
-  const plus = addAt(context, createGlyph("+", green, 1.45), vector(0, 1.55, 1.8));
-  const equals = addAt(context, createGlyph("=", green, 1.45), vector(0, 1.55, -0.55));
-  const resultTile = addAt(
+  const oldStart = oldTile.position.clone();
+  const deltaStart = deltaTile.position.clone();
+  const oldYaw = oldTile.rotation.y;
+  const deltaYaw = deltaTile.rotation.y;
+  const plus = place(context, createGlyph("+", green, 2.0), {
+    stop: 1,
+    slot: "centre",
+  });
+  const oldMeet = plus.position.clone().add(vector(-3.6, -0.5, 1.8));
+  const deltaMeet = plus.position.clone().add(vector(3.6, -0.5, 1.8));
+  const resultTile = place(
     context,
     createPanel(["w'", "0.018399822774"], {
-      width: 3.75,
-      height: 1.3,
+      width: 5.1,
+      height: 1.75,
       color: green,
       borderColor: green,
       fontScale: 0.78,
     }),
-    vector(0, 1.55, -2.75),
+    { stop: 2, slot: "right" },
   );
-  context.group.add(createPath([oldStart, vector(-1.25, 1.55, 1.8)], amber, 0.045, 0.34));
-  context.group.add(createPath([deltaStart, vector(1.25, 1.55, 1.8)], green, 0.045, 0.34));
+  const equals = place(context, createGlyph("=", green, 2.0), {
+    stop: 2,
+    slot: "right",
+    xShift: -3.0,
+    zShift: 2.6,
+  });
+  context.group.add(createPath(avenueRoute(oldStart, oldMeet, 0.8), amber, 0.045, 0.34));
+  context.group.add(createPath(avenueRoute(deltaStart, deltaMeet, 0.8), green, 0.045, 0.34));
 
   const matrixValuesBefore = Array.from({ length: 64 }, () => "." as string);
   const matrixValuesAfter = [...matrixValuesBefore];
@@ -1225,25 +1499,9 @@ function buildWeightUpdateProcess(
   const unknown = Array.from({ length: 64 }, (_, index) => index).filter(
     (index) => index !== SELECTED_CELL_INDEX,
   );
-  const updateBoardWidth = 6.2;
-  const updateBoardCellHeight = 0.34;
-  // Low enough that the w' tile and the equation glyphs in front never
-  // cover the matrix title or its top rows from the entrance sightline.
-  const updateBoardPosition = vector(0, -0.55, -6.2);
+  const updateBoardWidth = 7.6;
+  const updateBoardCellHeight = 0.46;
   const updateBoardHeight = 0.72 + 8 * updateBoardCellHeight + 0.5 + 0.34;
-  const selectedCellPosition = vector(
-    updateBoardPosition.x - updateBoardWidth / 2 + (6 + 0.5) * (updateBoardWidth / 8),
-    updateBoardPosition.y + updateBoardHeight / 2 - 0.72 - (3 + 0.5) * updateBoardCellHeight,
-    -6.0,
-  );
-  context.group.add(
-    createPath(
-      [equals.position, resultTile.position, selectedCellPosition],
-      green,
-      0.055,
-      0.38,
-    ),
-  );
   const boardOptions = {
     width: updateBoardWidth,
     cellHeight: updateBoardCellHeight,
@@ -1255,33 +1513,64 @@ function buildWeightUpdateProcess(
     unknownIndices: unknown,
     fontScale: 0.82,
   };
-  const beforeBoard = addAt(context, createValueBoard(matrixValuesBefore, 8, 8, boardOptions), vector(0, -0.55, -6.25));
-  const afterBoard = addAt(context, createValueBoard(matrixValuesAfter, 8, 8, boardOptions), updateBoardPosition);
-  const insertionPacket = addAt(context, createPacket(green, 0.2), resultTile.position.clone());
-  const updateRing = addAt(context, makeRing(green, 0.62, 0.065), selectedCellPosition);
-  const onlyNow = addAt(
+  const beforeBoard = place(
+    context,
+    createValueBoard(matrixValuesBefore, 8, 8, boardOptions),
+    { stop: 4, slot: "left" },
+  );
+  const afterBoard = place(
+    context,
+    createValueBoard(matrixValuesAfter, 8, 8, boardOptions),
+    { stop: 4, slot: "right" },
+  );
+  const selectedCellPosition = afterBoard.localToWorld(
+    vector(
+      -updateBoardWidth / 2 + 6.5 * (updateBoardWidth / 8),
+      updateBoardHeight / 2 - 0.72 - 3.5 * updateBoardCellHeight,
+      0.36,
+    ),
+  );
+  // The write travels down the right lane it was computed in, so nothing about
+  // the update crosses the walkway.
+  const insertionRoute = [
+    resultTile.position.clone(),
+    resultTile.position.clone().lerp(selectedCellPosition, 0.5).add(vector(1.6, 1.2, 0)),
+    selectedCellPosition.clone(),
+  ];
+  context.group.add(
+    createPath([equals.position, ...insertionRoute], green, 0.055, 0.38),
+  );
+  const insertionPacket = addAt(context, createPacket(green, 0.22), resultTile.position.clone());
+  const updateRing = addAt(context, makeRing(green, 0.72, 0.075), selectedCellPosition.clone());
+  updateRing.rotation.y = afterBoard.rotation.y;
+  const onlyNow = place(
     context,
     createPanel(["ONLY NOW", "THE STORED PARAMETER CHANGES"], {
-      width: 4.7,
-      height: 1.05,
+      width: 6.2,
+      height: 1.5,
       color: green,
       borderColor: green,
       fontScale: 0.7,
     }),
-    vector(5.5, -1.45, -4.2),
+    { stop: 3, slot: "left", row: 1 },
   );
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
-    moveObject(oldTile, oldStart, vector(-1.25, 1.55, 1.8), smoothStep(p, 0.16, 0.48), 0.18);
-    moveObject(deltaTile, deltaStart, vector(1.25, 1.55, 1.8), smoothStep(p, 0.16, 0.48), 0.18);
+    const converge = smoothStep(p, 0.16, 0.48);
+    moveObject(oldTile, oldStart, oldMeet, converge, 0.18);
+    moveObject(deltaTile, deltaStart, deltaMeet, converge, 0.18);
+    // Both operands square up to the runway as they rise, so the addition is
+    // read face-on from underneath.
+    oldTile.rotation.y = oldYaw * (1 - converge);
+    deltaTile.rotation.y = deltaYaw * (1 - converge);
     const operandOpacity = 1 - smoothStep(p, 0.48, 0.62);
     setObjectOpacity(oldTile, operandOpacity);
     setObjectOpacity(deltaTile, operandOpacity);
     setObjectOpacity(plus, windowPulse(p, 0.12, 0.46, 0.68));
     setObjectOpacity(equals, smoothStep(p, 0.48, 0.64));
     setObjectOpacity(resultTile, smoothStep(p, 0.56, 0.7));
-    samplePath(insertionPacket, [resultTile.position, vector(0, 0.3, -4.5), selectedCellPosition], smoothStep(p, 0.68, 0.88), 0.28);
+    samplePath(insertionPacket, insertionRoute, smoothStep(p, 0.68, 0.88), 0.28);
     setObjectOpacity(insertionPacket, windowPulse(p, 0.64, 0.78, 0.94));
     const boardChange = smoothStep(p, 0.82, 0.92);
     setObjectOpacity(beforeBoard, 1 - boardChange);
@@ -1295,6 +1584,15 @@ function buildWeightUpdateProcess(
   return finishBuilder(updater);
 }
 
+/**
+ * Model Version Handoff, laid out as a walkable avenue.
+ *
+ * The old reading of the cell is taken at the entrance and the new one one stop
+ * later on the far side, so the version change happens across the walk rather
+ * than as a swap in place. The four-storey model stands in the left bay, the
+ * draining gradient buffer and the surviving Adam state face each other over
+ * the next two stops, and the gate onto the following step opens at the end.
+ */
 function buildNextStepProcess(
   context: ChamberProcessContext,
 ): ChamberProcessUpdater {
@@ -1302,8 +1600,32 @@ function buildNextStepProcess(
   const warm = "#ff765f";
   addHeader(context, ["MODEL VERSION HANDOFF", "SAME ARCHITECTURE | NEW PARAMETER STATE"], green);
 
-  const model = new THREE.Group();
-  model.position.set(0, 0, -1.4);
+  const beforeReadout = place(
+    context,
+    createPanel(["theta0 SELECTED CELL", "WQ[3,6] = 0.0174"], {
+      width: 5.6,
+      height: 1.5,
+      color: "#dceaff",
+      borderColor: "#7f98aa",
+      fontScale: 0.68,
+    }),
+    { stop: 0, slot: "left" },
+  );
+  const afterReadout = place(
+    context,
+    createPanel(["theta1 SELECTED CELL", "WQ[3,6] = 0.018399822774"], {
+      width: 5.6,
+      height: 1.5,
+      color: green,
+      borderColor: green,
+      fontScale: 0.65,
+    }),
+    { stop: 1, slot: "right" },
+  );
+
+  // The model itself is a bay, not an obstacle: the four storeys stack up one
+  // lane so the visitor reads them from the runway on the way past.
+  const model = placeOnAvenue(new THREE.Group(), { stop: 2, slot: "left" });
   context.group.add(model);
   const thetaZero = new THREE.Group();
   const thetaOne = new THREE.Group();
@@ -1318,25 +1640,23 @@ function buildNextStepProcess(
   const newMaterial = createProcessMaterial(green, 0.65, 0.58);
   const floorNames = ["EMBED", "BLOCK 0", "BLOCK 1", "OUTPUT"];
   floorNames.forEach((name, index) => {
-    const y = -2.25 + index * 1.45;
+    const y = -3.45 + index * 2.3;
     const oldFloor = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.28, 3.2), oldMaterial);
     const newFloor = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.28, 3.2), newMaterial);
     oldFloor.position.y = y;
     newFloor.position.y = y;
     thetaZero.add(oldFloor);
     thetaOne.add(newFloor);
-    addAt(
-      context,
-      createPanel([name], {
-        width: 2.2,
-        height: 0.52,
-        color: "#f4fbff",
-        borderColor: green,
-        fontScale: 0.62,
-        background: "rgba(3,8,16,0.76)",
-      }),
-      vector(0, y + 0.42, 0.3),
-    );
+    const label = createPanel([name], {
+      width: 3.4,
+      height: 0.85,
+      color: "#f4fbff",
+      borderColor: green,
+      fontScale: 0.62,
+      background: "rgba(3,8,16,0.76)",
+    });
+    label.position.set(0, y + 0.72, 1.75);
+    model.add(label);
   });
   const parameterLights: THREE.Mesh[] = [];
   for (let index = 0; index < 16; index += 1) {
@@ -1344,35 +1664,19 @@ function buildNextStepProcess(
       new THREE.BoxGeometry(0.32, 0.32, 0.15),
       createProcessMaterial(green, 1.4),
     );
-    light.position.set((index % 4 - 1.5) * 0.72, (Math.floor(index / 4) - 1.5) * 0.72, 1.75);
+    light.position.set(
+      -3.6 + (index % 4 - 1.5) * 0.72,
+      (Math.floor(index / 4) - 1.5) * 0.72,
+      1.6,
+    );
     model.add(light);
     parameterLights.push(light);
   }
-  const beforeReadout = addAt(
-    context,
-    createPanel(["theta0 SELECTED CELL", "WQ[3,6] = 0.0174"], {
-      width: 4.2,
-      height: 1.05,
-      color: "#dceaff",
-      borderColor: "#7f98aa",
-      fontScale: 0.68,
-    }),
-    vector(-6.25, 3.2, -2.8),
-  );
-  const afterReadout = addAt(
-    context,
-    createPanel(["theta1 SELECTED CELL", "WQ[3,6] = 0.018399822774"], {
-      width: 4.2,
-      height: 1.05,
-      color: green,
-      borderColor: green,
-      fontScale: 0.65,
-    }),
-    vector(-6.25, 3.2, -2.75),
-  );
 
   const gradientBuffers = new THREE.Group();
-  gradientBuffers.position.set(-6.0, -0.9, -4.4);
+  gradientBuffers.position.copy(
+    avenueAnchor({ stop: 3, slot: "right" }).add(vector(0, -2.8, 0.9)),
+  );
   context.group.add(gradientBuffers);
   for (let index = 0; index < 12; index += 1) {
     const box = new THREE.Mesh(
@@ -1382,70 +1686,73 @@ function buildNextStepProcess(
     box.position.set((index % 4 - 1.5) * 0.55, Math.floor(index / 4) * 0.55, 0);
     gradientBuffers.add(box);
   }
-  addAt(
+  place(
     context,
     createPanel(["GRAD BUFFER", "clears -> 0"], {
-      width: 3.4,
-      height: 1.0,
+      width: 4.8,
+      height: 1.4,
       color: warm,
       borderColor: warm,
       fontScale: 0.7,
     }),
-    vector(-6.0, 1.2, -4.4),
+    { stop: 3, slot: "right" },
   );
-  const memoryPanel = addAt(
+  const memoryPanel = place(
     context,
     createPanel(["ADAM STATE PERSISTS", "m1=-0.00031", "v1=9.61e-9"], {
-      width: 3.8,
-      height: 1.45,
+      width: 5.2,
+      height: 1.95,
       color: green,
       borderColor: green,
       fontScale: 0.68,
     }),
-    vector(6.1, 0.35, -4.35),
+    { stop: 4, slot: "left" },
   );
-  const batchStart = vector(0, -1.05, 6.3);
-  const batchEnd = vector(0, -1.05, 1.45);
-  const nextBatch = addAt(
-    context,
-    createValueBoard(Array.from({ length: 12 }, () => "."), 2, 6, {
-      width: 5.4,
-      cellHeight: 0.5,
-      title: "NEXT BATCH [2 x 6]",
-      subtitle: "IDs not specified in this trace",
-      color: context.palette.phaseBase,
-      unknownIndices: Array.from({ length: 12 }, (_, index) => index),
-    }),
-    batchStart,
-  );
-  const leftDoor = addAt(context, makeDeck(vector(1.8, 3.4, 0.25), green, 0.46), vector(-1.05, -0.65, 0.8));
-  const rightDoor = addAt(context, makeDeck(vector(1.8, 3.4, 0.25), green, 0.46), vector(1.05, -0.65, 0.8));
-  const routePanel = addAt(
-    context,
-    createPanel(["batch1 -> forward -> loss", "-> backward -> update"], {
-      width: 5.5,
-      height: 1.05,
-      color: context.palette.phaseBase,
-      borderColor: green,
-      fontScale: 0.67,
-    }),
-    vector(0, 3.25, -5.9),
-  );
-  const postTrainingPlaque = addAt(
+  const postTrainingPlaque = place(
     context,
     createPanel([
       "THIS WORLD = ONE PRETRAINING STEP",
       "repeat a very large number of times,",
       "then: evaluation -> SFT -> RLHF post-training",
     ], {
-      width: 6.3,
-      height: 1.55,
+      width: 8.2,
+      height: 2.1,
       color: "#dceaff",
       borderColor: green,
       fontScale: 0.6,
     }),
-    vector(6.5, 2.85, -5.5),
+    { stop: 4, slot: "right", row: 1 },
   );
+  const nextBatch = place(
+    context,
+    createValueBoard(Array.from({ length: 12 }, () => "."), 2, 6, {
+      width: 7.2,
+      cellHeight: 0.68,
+      title: "NEXT BATCH [2 x 6]",
+      subtitle: "IDs not specified in this trace",
+      color: context.palette.phaseBase,
+      unknownIndices: Array.from({ length: 12 }, (_, index) => index),
+    }),
+    { stop: 5, slot: "right" },
+  );
+  const batchStart = nextBatch.position.clone();
+  const batchEnd = avenueAnchor({ stop: 5, slot: "right", zShift: -4.6 });
+  const routePanel = place(
+    context,
+    createPanel(["batch1 -> forward -> loss", "-> backward -> update"], {
+      width: 7.4,
+      height: 1.45,
+      color: context.palette.phaseBase,
+      borderColor: green,
+      fontScale: 0.67,
+    }),
+    { stop: 5, slot: "centre" },
+  );
+  // The gate leaves stand at the runway edge and slide outward, so the visitor
+  // walks between them rather than around them.
+  const gateZ = avenueZ(5.4);
+  const leftDoor = addAt(context, makeDeck(vector(1.4, 3.4, 0.25), green, 0.46), vector(-4.5, -0.65, gateZ));
+  const rightDoor = addAt(context, makeDeck(vector(1.4, 3.4, 0.25), green, 0.46), vector(4.5, -0.65, gateZ));
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
@@ -1472,8 +1779,8 @@ function buildNextStepProcess(
     moveObject(nextBatch, batchStart, batchEnd, batchTravel, 0.25);
     setObjectOpacity(nextBatch, smoothStep(p, 0.52, 0.64));
     const gateOpen = smoothStep(p, 0.7, 0.86);
-    leftDoor.position.x = THREE.MathUtils.lerp(-1.05, -2.45, gateOpen);
-    rightDoor.position.x = THREE.MathUtils.lerp(1.05, 2.45, gateOpen);
+    leftDoor.position.x = THREE.MathUtils.lerp(-4.5, -7.6, gateOpen);
+    rightDoor.position.x = THREE.MathUtils.lerp(4.5, 7.6, gateOpen);
     setObjectOpacity(routePanel, smoothStep(p, 0.82, 0.96));
     setObjectOpacity(postTrainingPlaque, smoothStep(p, 0.86, 0.97));
   };

@@ -557,6 +557,11 @@ export function createValueBoard(
   const edgeColor = new THREE.Color(options.accent ?? options.color ?? "#6fe9ff");
   const frame = createNeonFrame(width, height, edgeColor, 0.2);
   group.add(frame);
+  // Builders rename boards for the assistant's targeting system, so the layout
+  // audit identifies readable surfaces by this tag rather than by name.
+  group.userData.processSurface = "board";
+  group.userData.processLabel = options.title ?? "values";
+  group.userData.processSurfaceSize = { width, height };
   return group;
 }
 
@@ -648,6 +653,16 @@ export function createPanel(
   });
   const panel = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
   panel.renderOrder = 13;
+  // Naming every caption after its first line lets the layout audit report
+  // collisions in the words the author actually sees on the board.
+  panel.name = `process-panel-${(lines[0] ?? "panel")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40)}`;
+  panel.userData.processSurface = "panel";
+  panel.userData.processLabel = lines[0] ?? "panel";
+  panel.userData.processSurfaceSize = { width, height };
   return panel;
 }
 

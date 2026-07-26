@@ -27,6 +27,7 @@ import type {
   TrainingStation,
 } from "../lib/worldTypes";
 import { buildDistinctChamberProcess } from "./chambers";
+import { AVENUE, avenueLaneX, avenueZ } from "./chambers/avenue";
 import {
   createNeonFrame,
   createPacket,
@@ -3592,139 +3593,303 @@ type DistinctChamberShellSpec = {
     focusY: number;
     fov: number;
   };
+  /**
+   * `dais` is the original single round plinth with the whole exhibit massed on
+   * top of it. `avenue` chambers instead lay their exhibits out as a
+   * processional walk (see `chambers/avenue.ts`): they get a long runway with
+   * lane plinths either side of a clear corridor, and their navigation blockers
+   * follow the lanes rather than ringing a central island.
+   */
+  layout?: "dais" | "avenue";
+  /** Number of avenue stops, used to size the runway. */
+  avenueStops?: number;
 };
 
 /**
- * The bespoke process builders own every non-Corpus chamber interior. These
- * specs give every process a large, volumetric room while preserving its own
- * spatial grammar. The process itself lives in a separately transformed group,
- * so shell and navigation geometry never inherit exhibit scaling.
+ * The bespoke process builders own every non-Corpus chamber interior.
+ *
+ * Every chamber is laid out as a walkable avenue (see `chambers/avenue.ts`):
+ * exhibits are authored directly in chamber world units at `exhibitScale: 1`
+ * with no offset, so a board's authored position is exactly where it stands.
+ * `avenueStops` is the number of steps the computation takes, and the room's
+ * depth is sized to that walk — halls with more steps are simply longer. Width
+ * and height only need to clear the lanes and the arch tier, so they stay
+ * roughly constant; the vertical chambers keep extra headroom for their
+ * stacked exhibits.
  */
 const DISTINCT_CHAMBER_SHELL_SPECS = {
   "training-complex": {
-    size: [58, 56, 60], position: [0, 0, 0], spatialStyle: "panorama",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.2, -2.5],
-    guidedView: { distance: 24, focusY: 5, fov: 62 },
+    size: [52, 60, 72], position: [0, 0, 0], spatialStyle: "panorama",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "token-stream-context": {
-    size: [52, 50, 62], position: [0, 0, 0], spatialStyle: "rail-gantry",
-    exhibitScale: 1.22, exhibitPosition: [0, 1.1, -2.5],
-    guidedView: { distance: 23, focusY: 2.5, fov: 58 },
+    size: [48, 52, 60], position: [0, 0, 0], spatialStyle: "rail-gantry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 4,
+    guidedView: { distance: 24, focusY: 3.2, fov: 60 },
   },
   "batch-shifted-targets": {
-    size: [52, 50, 58], position: [0, 0, 0], spatialStyle: "rail-gantry",
-    exhibitScale: 1.22, exhibitPosition: [0, 1.1, -2],
-    guidedView: { distance: 23, focusY: 2.5, fov: 58 },
+    size: [48, 52, 66], position: [0, 0, 0], spatialStyle: "rail-gantry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "embedding": {
-    size: [56, 54, 60], position: [0, 0, 0], spatialStyle: "rail-gantry",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.2, -2.4],
-    guidedView: { distance: 24, focusY: 3, fov: 59 },
+    size: [46, 54, 62], position: [0, 0, 0], spatialStyle: "rail-gantry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "transformer-tower": {
-    size: [50, 68, 58], position: [0, 0, 0], spatialStyle: "vertical-foundry",
-    exhibitScale: 1.2, exhibitPosition: [0, 3, -2],
-    guidedView: { distance: 24, focusY: 7, fov: 62 },
+    size: [48, 66, 66], position: [0, 0, 0], spatialStyle: "vertical-foundry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 4.4, fov: 62 },
   },
   "transformer-block": {
-    size: [58, 56, 60], position: [0, 0, 0], spatialStyle: "split-wing",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.5, -2.4],
-    guidedView: { distance: 24, focusY: 3.5, fov: 60 },
+    size: [50, 58, 72], position: [0, 0, 0], spatialStyle: "split-wing",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "multi-head-attention": {
-    size: [60, 56, 60], position: [0, 0, 0], spatialStyle: "split-wing",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.5, -2.4],
-    guidedView: { distance: 24, focusY: 3.5, fov: 60 },
+    size: [52, 58, 70], position: [0, 0, 0], spatialStyle: "split-wing",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.8, fov: 62 },
   },
   "one-head-qkv": {
-    size: [52, 52, 58], position: [0, 0, 0], spatialStyle: "observatory",
-    exhibitScale: 1.22, exhibitPosition: [0, 1.2, -2],
-    guidedView: { distance: 23, focusY: 3, fov: 58 },
+    size: [52, 58, 78], position: [0, 0, 0], spatialStyle: "observatory",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 7,
+    guidedView: { distance: 29, focusY: 3.8, fov: 64 },
   },
   "attention-scores": {
-    size: [50, 52, 58], position: [0, 0, 0], spatialStyle: "microscope",
-    exhibitScale: 1.24, exhibitPosition: [0, 1.2, -2],
-    guidedView: { distance: 22, focusY: 2, fov: 54 },
+    size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "causal-mask": {
-    size: [50, 52, 58], position: [0, 0, 0], spatialStyle: "microscope",
-    exhibitScale: 1.24, exhibitPosition: [0, 1.2, -2],
-    guidedView: { distance: 22, focusY: 2, fov: 54 },
+    size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "softmax-weighted-v": {
-    size: [54, 54, 60], position: [0, 0, 0], spatialStyle: "observatory",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.3, -2.2],
-    guidedView: { distance: 23, focusY: 3, fov: 58 },
+    size: [48, 56, 70], position: [0, 0, 0], spatialStyle: "observatory",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "head-recombination": {
-    size: [56, 56, 60], position: [0, 0, 0], spatialStyle: "split-wing",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.5, -2.3],
-    guidedView: { distance: 24, focusY: 3.5, fov: 60 },
+    size: [50, 56, 66], position: [0, 0, 0], spatialStyle: "split-wing",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "mlp": {
-    size: [54, 54, 64], position: [0, 0, 0], spatialStyle: "rail-gantry",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.2, -3],
-    guidedView: { distance: 24, focusY: 3, fov: 58 },
+    size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "rail-gantry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "final-hidden-state": {
-    size: [52, 52, 58], position: [0, 0, 0], spatialStyle: "observatory",
-    exhibitScale: 1.22, exhibitPosition: [0, 1.2, -2],
-    guidedView: { distance: 23, focusY: 3, fov: 58 },
+    size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "observatory",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "vocabulary-projection": {
-    size: [56, 56, 60], position: [0, 0, 0], spatialStyle: "observatory",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.5, -2.4],
-    guidedView: { distance: 24, focusY: 3.5, fov: 59 },
+    size: [48, 56, 66], position: [0, 0, 0], spatialStyle: "observatory",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.6, fov: 62 },
   },
   "logits": {
-    size: [56, 56, 58], position: [0, 0, 0], spatialStyle: "observatory",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.4, -2],
-    guidedView: { distance: 23, focusY: 3.2, fov: 59 },
+    size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "observatory",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "target-comparison": {
-    size: [52, 54, 60], position: [0, 0, 0], spatialStyle: "observatory",
-    exhibitScale: 1.22, exhibitPosition: [0, 1.4, -2.4],
-    guidedView: { distance: 23, focusY: 3.2, fov: 58 },
+    size: [48, 54, 60], position: [0, 0, 0], spatialStyle: "observatory",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 4,
+    guidedView: { distance: 24, focusY: 3.2, fov: 60 },
   },
   "loss": {
-    size: [54, 66, 60], position: [0, 0, 0], spatialStyle: "vertical-foundry",
-    exhibitScale: 1.2, exhibitPosition: [0, 2.2, -2.4],
-    guidedView: { distance: 24, focusY: 6, fov: 62 },
+    size: [48, 62, 66], position: [0, 0, 0], spatialStyle: "vertical-foundry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.8, fov: 62 },
   },
   "output-backprop": {
-    size: [56, 58, 60], position: [0, 0, 0], spatialStyle: "split-wing",
-    exhibitScale: 1.2, exhibitPosition: [0, 1.7, -2.4],
-    guidedView: { distance: 24, focusY: 4, fov: 60 },
+    size: [50, 56, 66], position: [0, 0, 0], spatialStyle: "split-wing",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "backprop-through-tower": {
-    size: [52, 70, 58], position: [0, 0, 0], spatialStyle: "vertical-foundry",
-    exhibitScale: 1.18, exhibitPosition: [0, 3.2, -2],
-    guidedView: { distance: 24, focusY: 7.5, fov: 62 },
+    size: [50, 66, 78], position: [0, 0, 0], spatialStyle: "vertical-foundry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 7,
+    guidedView: { distance: 29, focusY: 4.4, fov: 64 },
   },
   "parameter-matrix": {
-    size: [50, 52, 56], position: [0, 0, 0], spatialStyle: "microscope",
-    exhibitScale: 1.26, exhibitPosition: [0, 1.2, -1.8],
-    guidedView: { distance: 22, focusY: 2.2, fov: 54 },
+    size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "adamw-state": {
-    size: [52, 56, 62], position: [0, 0, 0], spatialStyle: "rail-gantry",
-    exhibitScale: 1.22, exhibitPosition: [0, 1.5, -2.8],
-    guidedView: { distance: 23, focusY: 3.5, fov: 58 },
+    size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "rail-gantry",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "weight-update": {
-    size: [50, 52, 56], position: [0, 0, 0], spatialStyle: "microscope",
-    exhibitScale: 1.26, exhibitPosition: [0, 1.2, -1.8],
-    guidedView: { distance: 22, focusY: 2.2, fov: 54 },
+    size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 5,
+    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "model-changed-next-step": {
-    size: [58, 66, 60], position: [0, 0, 0], spatialStyle: "panorama",
-    exhibitScale: 1.2, exhibitPosition: [0, 2.5, -2.5],
-    guidedView: { distance: 24, focusY: 6, fov: 62 },
+    size: [52, 60, 72], position: [0, 0, 0], spatialStyle: "panorama",
+    exhibitScale: 1, exhibitPosition: [0, 0, 0],
+    layout: "avenue", avenueStops: 6,
+    guidedView: { distance: 27, focusY: 3.8, fov: 62 },
   },
 } as const satisfies Readonly<Record<string, DistinctChamberShellSpec>>;
 
+/**
+ * Floor treatment for a chamber laid out as a walkable avenue.
+ *
+ * Instead of massing everything on one round dais, the exhibits stand on two
+ * lane plinths that run the length of the walk, separated by a polished
+ * runway. Lit thresholds mark each stop, so the visitor can see how many steps
+ * the computation takes before setting off, and the navigation blockers follow
+ * the plinths — leaving the whole runway free to walk down.
+ */
+function buildAvenueFloor(
+  context: BuildContext,
+  spec: DistinctChamberShellSpec,
+) {
+  const stops = spec.avenueStops ?? 5;
+  const firstZ = AVENUE.firstStopZ;
+  const lastZ = firstZ - (stops - 1) * AVENUE.stopSpacing;
+  const runwayNear = firstZ + 5.4;
+  const runwayFar = lastZ - 5.4;
+  const runwayDepth = runwayNear - runwayFar;
+  const runwayCenterZ = (runwayNear + runwayFar) / 2;
+  const laneInner = AVENUE.corridorHalfWidth + 0.35;
+  const laneOuter = avenueLaneX(stops - 1, true) + 3.4;
+  const laneWidth = laneOuter - laneInner;
+
+  const stoneMaterial = new THREE.MeshStandardMaterial({
+    color: new THREE.Color("#aab4c1").lerp(context.palette.phaseBase, 0.04),
+    map: getMarbleTexture(1.5, 1.5),
+    roughness: 0.3,
+    metalness: 0.1,
+    normalMap: getSurfaceReliefTexture("floor"),
+    normalScale: new THREE.Vector2(0.1, 0.1),
+    emissive: context.palette.dark,
+    emissiveIntensity: 0.07,
+  });
+
+  // The runway itself: a single polished strip the visitor walks along.
+  const runway = new THREE.Mesh(
+    new THREE.BoxGeometry(laneInner * 2, 0.16, runwayDepth),
+    stoneMaterial,
+  );
+  runway.position.set(0, -4.66, runwayCenterZ);
+  context.group.add(runway);
+
+  for (const side of [-1, 1]) {
+    const plinth = new THREE.Mesh(
+      new THREE.BoxGeometry(laneWidth, 0.3, runwayDepth),
+      stoneMaterial,
+    );
+    plinth.position.set(
+      side * (laneInner + laneWidth / 2),
+      -4.62,
+      runwayCenterZ,
+    );
+    context.group.add(plinth);
+
+    const rim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.1, runwayDepth),
+      new THREE.MeshBasicMaterial({
+        color: context.palette.bright,
+        transparent: true,
+        opacity: 0.55,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    rim.position.set(side * laneInner, -4.44, runwayCenterZ);
+    context.group.add(rim);
+  }
+
+  // A lit threshold across the runway at every stop, so the walk reads as a
+  // numbered sequence of steps rather than an undifferentiated hall.
+  for (let stop = 0; stop < stops; stop += 1) {
+    const marker = new THREE.Mesh(
+      new THREE.BoxGeometry(laneInner * 2, 0.06, 0.2),
+      new THREE.MeshBasicMaterial({
+        color: context.palette.phaseBase,
+        transparent: true,
+        opacity: 0.42,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    marker.position.set(0, -4.55, avenueZ(stop) + AVENUE.stopSpacing / 2);
+    context.group.add(marker);
+  }
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(laneOuter * 2.1, runwayDepth * 1.12),
+    new THREE.MeshBasicMaterial({
+      map: getContactShadowTexture(),
+      color: "#000000",
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+    }),
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.set(0, -4.674, runwayCenterZ);
+  shadow.renderOrder = 1;
+  context.group.add(shadow);
+
+  if (context.navigationBounds) {
+    // An avenue is authored around one walking eye height, so it overrides the
+    // per-station camera hint: boards sit level with the visitor's eye all the
+    // way down the runway regardless of how the station was originally framed.
+    context.navigationBounds.walkY = AVENUE.eyeY;
+    context.navigationBounds.spawn.y = AVENUE.eyeY;
+
+    // Blockers hug the lane plinths, so the runway between them is walkable end
+    // to end and the visitor never has to detour around the exhibit.
+    context.navigationBounds.blockers = [-1, 1].map((side) => ({
+      minX: side < 0 ? -laneOuter : laneInner,
+      maxX: side < 0 ? -laneInner : laneOuter,
+      minY: -4.7,
+      maxY: AVENUE.archY + 6,
+      minZ: runwayFar,
+      maxZ: runwayNear,
+    }));
+  }
+}
+
 function buildDistinctChamberShell(context: BuildContext) {
-  const spec =
+  // Widened to the interface: the const-asserted table gives each entry a
+  // literal type that omits the optional keys it does not set, so `layout`
+  // would not be readable off the union.
+  const spec: DistinctChamberShellSpec =
     DISTINCT_CHAMBER_SHELL_SPECS[
       context.station.id as keyof typeof DISTINCT_CHAMBER_SHELL_SPECS
     ];
@@ -3738,6 +3903,11 @@ function buildDistinctChamberShell(context: BuildContext) {
     new THREE.Euler(),
     spec.guidedView,
   );
+
+  if (spec.layout === "avenue") {
+    buildAvenueFloor(context, spec);
+    return spec;
+  }
 
   // Every exhibit stands on a museum dais: a low polished cylinder with a
   // bright neon rim, so components present like the pedestal displays in the
