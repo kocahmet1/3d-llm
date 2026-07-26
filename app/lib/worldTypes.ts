@@ -105,13 +105,14 @@ export interface TrainingHUDProps
   machineRoomCue: MachineRoomCue | null;
   movementDiscovered: boolean;
   introTour: IntroTourState;
+  /**
+   * Still read, though the corpus chamber no longer has a transport of its own:
+   * the journey button waits for data preparation to finish before it will
+   * carry the visitor onward. The dial drives that sequence now.
+   */
   dataPrepProgress: number;
-  dataPrepPlaying: boolean;
   onProgressChange: (progress: number) => void;
   onPlayingChange: (playing: boolean) => void;
-  onDataPrepProgressChange: (progress: number) => void;
-  onDataPrepPlayingChange: (playing: boolean) => void;
-  onDataPrepRestart: () => void;
   onRideModeChange: (mode: RideMode) => void;
   onDetailModeChange: (mode: DetailMode) => void;
   onBranchChange: (side: BranchSide) => void;

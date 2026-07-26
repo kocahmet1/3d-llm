@@ -19,10 +19,7 @@ import type {
   TrainingHUDProps,
   TrainingPhase,
 } from "../lib/worldTypes";
-import {
-  CHAMBER_PROCESS_DURATION_SECONDS,
-  DATA_PREP_STAGES,
-} from "../lib/trainingTrace";
+import { CHAMBER_PROCESS_DURATION_SECONDS } from "../lib/trainingTrace";
 import styles from "./TrainingHUD.module.css";
 
 const PHASES: ReadonlyArray<{
@@ -130,7 +127,6 @@ export function TrainingHUD({
   detailMode,
   branchSide,
   dataPrepProgress,
-  dataPrepPlaying,
   processProgress,
   processPlaying,
   processStops,
@@ -139,9 +135,6 @@ export function TrainingHUD({
   onPlayingChange,
   onProcessProgressChange,
   onProcessPlayingChange,
-  onDataPrepProgressChange,
-  onDataPrepPlayingChange,
-  onDataPrepRestart,
   onRideModeChange,
   onDetailModeChange,
   onBranchChange,
@@ -416,20 +409,12 @@ export function TrainingHUD({
       : detailCopy;
   const progressPercent = Math.round(safeProgress * 100);
   const safeDataPrepProgress = clamp01(dataPrepProgress);
-  const dataPrepPercent = Math.round(safeDataPrepProgress * 100);
-  const currentDataPrepStageIndex = DATA_PREP_STAGES.reduce(
-    (current, stage, index) =>
-      safeDataPrepProgress >= stage.start ? index : current,
-    0,
-  );
   const journeyHoldingForData =
     station.id === "corpus-data-preparation" && safeDataPrepProgress < 1;
   const processElapsedLabel = formatProcessClock(
     safeProcessProgress * CHAMBER_PROCESS_DURATION_SECONDS,
   );
   const processTotalLabel = formatProcessClock(CHAMBER_PROCESS_DURATION_SECONDS);
-  // The corpus chamber shows the stage strip as well, so the dial rides above it.
-  const dataPrepDockVisible = station.id === "corpus-data-preparation";
   const navigationStatus =
     navigationMode === "machine-room"
       ? {
@@ -971,96 +956,9 @@ export function TrainingHUD({
         </div>
       ) : null}
 
-      {station.id === "corpus-data-preparation" ? (
-        <section
-          className={`${styles.processDock} ${styles.interactive}`}
-          aria-labelledby="data-prep-stage-title"
-        >
-          <div className={styles.processHeader}>
-            <span className={styles.processKicker}>Inside this chamber</span>
-            <h2 id="data-prep-stage-title" aria-live="polite" aria-atomic="true">
-              {String(currentDataPrepStageIndex + 1).padStart(2, "0")} / {" "}
-              {DATA_PREP_STAGES[currentDataPrepStageIndex].label}
-            </h2>
-            <span className={styles.processPercent}>{dataPrepPercent}%</span>
-          </div>
-          <div className={styles.processControls}>
-            <button
-              type="button"
-              className={styles.processPlay}
-              data-testid="data-prep-play"
-              onClick={() => {
-                if (safeDataPrepProgress >= 0.999) {
-                  onDataPrepRestart();
-                } else {
-                  onDataPrepPlayingChange(!dataPrepPlaying);
-                }
-              }}
-              aria-label={
-                dataPrepPlaying
-                  ? "Pause data preparation animation"
-                  : "Play data preparation animation"
-              }
-            >
-              <span aria-hidden="true">{dataPrepPlaying ? "II" : "▶"}</span>
-            </button>
-            <button
-              type="button"
-              className={styles.processReplay}
-              onClick={onDataPrepRestart}
-              aria-label="Replay data preparation animation"
-            >
-              Replay
-            </button>
-            <div className={styles.processStages} role="group" aria-label="Process stages">
-              {DATA_PREP_STAGES.map((stage, index) => (
-                <button
-                  type="button"
-                  key={stage.id}
-                  className={
-                    index === currentDataPrepStageIndex
-                      ? styles.processStageCurrent
-                      : index < currentDataPrepStageIndex
-                        ? styles.processStageComplete
-                        : ""
-                  }
-                  onClick={() => {
-                    const nextStageStart = DATA_PREP_STAGES[index + 1]?.start ?? 1;
-                    const representativeProgress = Math.min(
-                      1,
-                      stage.start + Math.max(0.012, (nextStageStart - stage.start) * 0.16),
-                    );
-                    onDataPrepProgressChange(representativeProgress);
-                  }}
-                  aria-pressed={index === currentDataPrepStageIndex}
-                  aria-label={`Show stage ${index + 1}: ${stage.label}`}
-                >
-                  <span>{String(index + 1).padStart(2, "0")}</span>
-                  <small>{stage.label}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-          <input
-            className={styles.processRange}
-            type="range"
-            min="0"
-            max="1"
-            step="0.001"
-            value={safeDataPrepProgress}
-            onChange={(event) =>
-              onDataPrepProgressChange(Number(event.currentTarget.value))
-            }
-            aria-label={`Data preparation animation progress, ${dataPrepPercent} percent`}
-          />
-        </section>
-      ) : null}
-
       {processAvailable ? (
         <section
-          className={`${styles.processDock} ${styles.dialDock} ${
-            dataPrepDockVisible ? styles.dialDockStacked : ""
-          } ${styles.interactive}`}
+          className={`${styles.processDock} ${styles.dialDock} ${styles.interactive}`}
           aria-labelledby={processDialTitleId}
         >
           {/* The step and time readings are spoken but not shown. On screen the

@@ -848,7 +848,6 @@ export function TrainingExperience() {
         introTour={introTour}
         stations={TRAINING_STATIONS}
         dataPrepProgress={dataPrepProgress}
-        dataPrepPlaying={dataPrepPlaying}
         processProgress={dialProgress}
         processPlaying={dialPlaying}
         processStops={processStops}
@@ -860,15 +859,6 @@ export function TrainingExperience() {
           setProgress(value);
         }}
         onPlayingChange={setPlaying}
-        onDataPrepProgressChange={(value) => {
-          setDataPrepPlaying(false);
-          setDataPrepProgress(clamp01(value));
-        }}
-        onDataPrepPlayingChange={setDataPrepPlaying}
-        onDataPrepRestart={() => {
-          setDataPrepProgress(0);
-          setDataPrepPlaying(true);
-        }}
         onRideModeChange={changeRideMode}
         onDetailModeChange={setDetailMode}
         onBranchChange={setBranchSide}
