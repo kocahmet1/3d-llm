@@ -1521,7 +1521,8 @@
 }
 
 .processKicker,
-.processPercent {
+.processPercent,
+.dialHint {
   color: #7894bc;
   font-size: 7px;
   font-weight: 800;
@@ -1655,6 +1656,536 @@
   margin: 7px 0 0;
   accent-color: #a9c7ff;
   cursor: ew-resize;
+}
+
+/* Jog dial for the animation running in the chamber the visitor is standing in.
+ * It borrows the stage strip's dock so the two read as one family of chamber
+ * controls, and it is sized by its contents because a chamber has only four to
+ * seven stops to show. */
+/*
+ * Turned steel: a neutral gunmetal drum under a cold highlight, near enough to
+ * the HUD's blue to belong to it and desaturated enough to read as machined
+ * metal rather than as one more lit readout. Everything else on screen is
+ * information; this is the one thing meant to be taken hold of.
+ */
+.dialDock {
+  --dial-accent: #d6e4f2;
+  --dial-glow: 168, 196, 226;
+  --dial-metal-lit: #59636f;
+  --dial-metal: #333a43;
+  --dial-metal-dark: #15181d;
+  --dial-size: 108px;
+}
+
+/*
+ * No panel. The dial and its button are objects, not a readout, and boxing
+ * them in a card made them look like one more info card among several. They
+ * sit directly on the scene instead; the type around them gets a shadow to
+ * hold up against whatever chamber is behind it.
+ */
+.processDock.dialDock {
+  width: auto;
+  max-width: min(420px, calc(100vw - 40px));
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.dialDock .dialHint {
+  text-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 12px rgba(0, 0, 0, 0.7);
+}
+
+/* In the corpus chamber the stage strip is on screen too, so the dial sits
+ * above it rather than through it, and the status pill clears both. */
+.processDock.dialDockStacked {
+  bottom: 232px;
+}
+
+/* Inside a chamber the dial owns this part of the screen, and the roaming
+ * status pill sat right on top of it saying things the visitor has already
+ * read. The same keys stay listed in the keyboard sheet. */
+.root:has(.dialDock) .navigationStatus {
+  display: none;
+}
+
+/* The button sits just outside the sweep of the direction arcs, which reach
+ * about 0.69 of the dial's width from its centre. Any closer and the forward
+ * arc would run into it while the process is held. */
+.dialRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--dial-size) * 0.2);
+}
+
+/*
+ * A knob, not a disc. The visitor is being asked to grab this and turn it, so
+ * it is built like a machined control lit from above:
+ *
+ *   - a dark socket recessed into the panel, with the panel's own edge
+ *     catching light along the top of the opening,
+ *   - a chamfered rim carrying a bright bevel at 12 o'clock that dies out by
+ *     the equator, the way a turned metal edge does,
+ *   - a body that darkens toward the bottom, where its shadow pools,
+ *   - a shadow cast down onto the panel below it.
+ *
+ * `::before` is the specular sheen sliding across the upper face; `::after` is
+ * the contact shadow inside the bottom of the rim. Both sit outside the
+ * rotating face so they stay put while the wheel turns underneath — light does
+ * not spin with the object it falls on.
+ */
+.dial {
+  position: relative;
+  width: var(--dial-size);
+  height: var(--dial-size);
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 104%, rgba(0, 0, 0, 0.6), transparent 56%),
+    linear-gradient(
+      170deg,
+      #7d8896 0%,
+      var(--dial-metal-lit) 16%,
+      var(--dial-metal) 50%,
+      #1e2228 78%,
+      var(--dial-metal-dark) 100%
+    );
+  box-shadow:
+    /* chamfer: lit at the top, occluded at the bottom */
+    inset 0 3px 2px -1px rgba(233, 243, 255, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -5px 9px -3px rgba(0, 0, 0, 0.75),
+    inset 0 0 0 1px rgba(4, 14, 26, 0.9),
+    /* the socket it sits in */
+      0 0 0 3px rgba(4, 13, 24, 0.9),
+    0 0 0 4px rgba(168, 196, 226, 0.16),
+    0 -1px 0 4px rgba(0, 0, 0, 0.5),
+    0 2px 0 4px rgba(168, 196, 226, 0.12),
+    /* cast onto the panel */ 0 16px 26px -10px rgba(0, 0, 0, 0.8),
+    0 6px 12px -6px rgba(0, 0, 0, 0.7);
+  cursor: grab;
+  touch-action: none;
+  transition:
+    box-shadow 160ms ease,
+    transform 120ms ease;
+}
+
+.dial::before {
+  position: absolute;
+  z-index: 3;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      ellipse 62% 40% at 50% 6%,
+      rgba(236, 246, 255, 0.34),
+      rgba(180, 212, 255, 0.09) 46%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 46% 30% at 34% 18%,
+      rgba(255, 255, 255, 0.16),
+      transparent 70%
+    );
+  content: "";
+  inset: 2px;
+  pointer-events: none;
+}
+
+.dial::after {
+  position: absolute;
+  z-index: 3;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 -8px 14px -8px rgba(0, 0, 0, 0.9),
+    inset 0 2px 3px -2px rgba(255, 255, 255, 0.1);
+  content: "";
+  inset: 2px;
+  pointer-events: none;
+}
+
+.dial:hover {
+  box-shadow:
+    inset 0 3px 2px -1px rgba(238, 246, 255, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -5px 9px -3px rgba(0, 0, 0, 0.75),
+    inset 0 0 0 1px rgba(4, 14, 26, 0.9),
+    0 0 0 3px rgba(4, 13, 24, 0.9),
+    0 0 0 4px rgba(214, 228, 242, 0.32),
+    0 -1px 0 4px rgba(0, 0, 0, 0.5),
+    0 2px 0 4px rgba(168, 196, 226, 0.18),
+    0 16px 26px -10px rgba(0, 0, 0, 0.8),
+    0 6px 12px -6px rgba(0, 0, 0, 0.7);
+}
+
+.dial:focus-visible {
+  outline: 2px solid #f3fff9;
+  outline-offset: 8px;
+}
+
+/* Pressed into its socket: the cast shadow collapses, the chamfer highlight
+ * dulls, and the whole knob sinks a pixel. */
+.dialGrabbed {
+  box-shadow:
+    inset 0 2px 2px -1px rgba(233, 243, 255, 0.26),
+    inset 0 -3px 8px -3px rgba(0, 0, 0, 0.8),
+    inset 0 0 0 1px rgba(4, 14, 26, 0.9),
+    0 0 0 3px rgba(4, 13, 24, 0.92),
+    0 0 0 4px rgba(214, 228, 242, 0.42),
+    0 4px 9px -6px rgba(0, 0, 0, 0.75),
+    0 0 24px rgba(120, 158, 200, 0.34);
+  cursor: grabbing;
+  transform: translateY(2px) scale(0.982);
+}
+
+.dial[data-detent="true"] {
+  box-shadow:
+    inset 0 0 0 1px rgba(214, 228, 242, 0.42),
+    0 0 26px rgba(150, 186, 224, 0.4);
+}
+
+/* Knurled wheel face. It carries the stop marks, so the whole thing turns with
+ * the process and a mark passing the index means a threshold went by. */
+.dialFace {
+  position: absolute;
+  z-index: 1;
+  inset: 7px;
+  border-radius: 50%;
+  /* Knurling reads as flutes rather than stripes because each ridge carries a
+   * lit face and a shaded one, and the whole band darkens away from the light
+   * at the top. */
+  background:
+    radial-gradient(circle at 50% 92%, rgba(0, 0, 0, 0.5), transparent 52%),
+    repeating-conic-gradient(
+      from 0deg,
+      rgba(6, 8, 11, 0.62) 0deg,
+      rgba(226, 240, 255, 0.28) 2.4deg,
+      rgba(140, 168, 198, 0.13) 3.4deg,
+      rgba(6, 8, 11, 0.62) 6deg
+    ),
+    conic-gradient(from 0deg, #444d58, #16191e 48%, #444d58);
+  box-shadow: inset 0 0 10px 2px rgba(0, 0, 0, 0.55);
+  transform: rotate(var(--dial-angle, 0deg));
+}
+
+.dialTick {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--tick, 0deg));
+}
+
+.dialTick::before {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 2px;
+  height: 7px;
+  border-radius: 1px;
+  background: rgba(233, 243, 255, 0.52);
+  content: "";
+  transform: translateX(-50%);
+}
+
+.dialTick[data-detent="true"]::before {
+  background: #f4f9ff;
+  box-shadow: 0 0 10px rgba(214, 228, 242, 0.95);
+  animation: dialDetentTick 380ms ease-out;
+}
+
+.dialArc {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--dial-accent) var(--dial-sweep, 0%),
+    transparent 0
+  );
+  opacity: 0.85;
+  -webkit-mask: radial-gradient(closest-side, transparent 0 84%, #000 85%);
+  mask: radial-gradient(closest-side, transparent 0 84%, #000 85%);
+}
+
+.dialIndex {
+  position: absolute;
+  z-index: 5;
+  top: -3px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-right: 4px solid transparent;
+  border-bottom: 6px solid var(--dial-accent);
+  border-left: 4px solid transparent;
+  filter: drop-shadow(0 0 6px rgba(214, 228, 242, 0.75));
+  transform: translateX(-50%);
+}
+
+.dialRunning .dialIndex {
+  animation: dialIndexPulse 1.9s ease-in-out infinite;
+}
+
+/* The centre cap: a smaller disc proud of the knurled ring, so the wheel reads
+ * as a rim you turn around a face that stays still. */
+.dialReadout {
+  position: absolute;
+  z-index: 4;
+  inset: 26px;
+  display: grid;
+  grid-auto-flow: column;
+  gap: 1px;
+  place-content: center;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      ellipse 70% 44% at 50% 8%,
+      rgba(230, 242, 255, 0.17),
+      transparent 68%
+    ),
+    linear-gradient(172deg, #434c57 0%, #262b32 44%, #0f1216 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(240, 248, 255, 0.28),
+    inset 0 -3px 6px -2px rgba(0, 0, 0, 0.75),
+    inset 0 0 0 1px rgba(168, 196, 226, 0.24),
+    0 4px 9px -3px rgba(0, 0, 0, 0.72),
+    0 1px 0 rgba(0, 0, 0, 0.5);
+  color: #eef5fd;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.dialReadout small {
+  align-self: end;
+  padding-bottom: 2px;
+  color: #9db2c9;
+  font-size: 7px;
+  font-weight: 800;
+}
+
+/* The knob and the two arcs that ride around it. */
+.dialCluster {
+  position: relative;
+  display: grid;
+  justify-content: center;
+  padding: 26px 0 26px;
+  place-items: center;
+}
+
+.dialCurls {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--dial-size) * 1.45);
+  height: calc(var(--dial-size) * 1.45);
+  color: var(--dial-accent);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: opacity 240ms ease;
+  visibility: hidden;
+}
+
+/* Held: the two ways out of this frame are now worth showing. */
+.dialCurlsLive {
+  opacity: 1;
+  visibility: visible;
+}
+
+.dialCurlSvg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.dialCurlBack,
+.dialCurlForward {
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.6;
+  filter: drop-shadow(0 0 5px rgba(214, 228, 242, 0.42));
+}
+
+.dialCurlArc {
+  stroke-dasharray: 46;
+}
+
+.dialCurlForward {
+  --curl-delay: 1.5s;
+}
+
+/* The two arcs alternate rather than pulsing together, so the pair reads as
+ * one wheel that could go either way instead of as a two-lamp warning. */
+.dialCurlsLive .dialCurlBack,
+.dialCurlsLive .dialCurlForward {
+  animation: dialCurlBreathe 3s ease-in-out var(--curl-delay, 0s) infinite;
+}
+
+/* Each arc draws itself in the direction it points, which is what makes it
+ * read as travel rather than as a static bracket. */
+.dialCurlsLive .dialCurlArc {
+  animation: dialCurlDraw 3s ease-in-out var(--curl-delay, 0s) infinite;
+}
+
+@keyframes dialCurlBreathe {
+  0%,
+  100% {
+    opacity: 0.16;
+  }
+  38%,
+  62% {
+    opacity: 1;
+  }
+}
+
+@keyframes dialCurlDraw {
+  0% {
+    stroke-dashoffset: 46;
+  }
+  38%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The words ride with their own arrow, tucked under its head, so each names
+ * the direction it sits beside rather than the panel as a whole. */
+.dialCurlLabelBack,
+.dialCurlLabelForward {
+  position: absolute;
+  bottom: 16%;
+  color: var(--dial-accent);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  transform: translateY(6px);
+  transition: transform 240ms ease;
+}
+
+.dialCurlsLive .dialCurlLabelBack,
+.dialCurlsLive .dialCurlLabelForward {
+  transform: translateY(0);
+}
+
+.dialCurlLabelBack {
+  left: -6px;
+}
+
+.dialCurlLabelForward {
+  right: -6px;
+}
+
+/*
+ * The button is the knob's smaller sibling, machined from the same stock: same
+ * socket, same chamfer lit at 12 o'clock, same drum. It is round because the
+ * dial is, and it stands beside it rather than across a gap, so the two read
+ * as one instrument. The word still sits under it — a symbol alone is not
+ * enough on a control the visitor meets once.
+ */
+.dialPlay {
+  position: relative;
+  width: calc(var(--dial-size) * 0.5);
+  height: calc(var(--dial-size) * 0.5);
+  border: 0 !important;
+  border-radius: 50% !important;
+  background:
+    radial-gradient(circle at 50% 104%, rgba(0, 0, 0, 0.55), transparent 58%),
+    linear-gradient(
+      170deg,
+      #7d8896 0%,
+      var(--dial-metal-lit) 18%,
+      var(--dial-metal) 52%,
+      var(--dial-metal-dark) 100%
+    ) !important;
+  box-shadow:
+    inset 0 2px 2px -1px rgba(233, 243, 255, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -4px 7px -3px rgba(0, 0, 0, 0.75),
+    inset 0 0 0 1px rgba(6, 12, 20, 0.9),
+    0 0 0 3px rgba(6, 12, 20, 0.9),
+    0 0 0 4px rgba(168, 196, 226, 0.14),
+    0 12px 20px -9px rgba(0, 0, 0, 0.8),
+    0 4px 9px -5px rgba(0, 0, 0, 0.7);
+  color: var(--dial-accent) !important;
+  font-size: 13px;
+  place-items: center;
+  transition:
+    box-shadow 160ms ease,
+    transform 120ms ease;
+}
+
+.dialPlay:hover {
+  box-shadow:
+    inset 0 2px 2px -1px rgba(238, 246, 255, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -4px 7px -3px rgba(0, 0, 0, 0.75),
+    inset 0 0 0 1px rgba(6, 12, 20, 0.9),
+    0 0 0 3px rgba(6, 12, 20, 0.9),
+    0 0 0 4px rgba(214, 228, 242, 0.3),
+    0 12px 20px -9px rgba(0, 0, 0, 0.8),
+    0 4px 9px -5px rgba(0, 0, 0, 0.7);
+  transform: none;
+}
+
+.dialPlay:active {
+  box-shadow:
+    inset 0 1px 2px -1px rgba(233, 243, 255, 0.22),
+    inset 0 -2px 6px -2px rgba(0, 0, 0, 0.8),
+    inset 0 0 0 1px rgba(6, 12, 20, 0.9),
+    0 0 0 3px rgba(6, 12, 20, 0.92),
+    0 0 0 4px rgba(214, 228, 242, 0.34),
+    0 3px 7px -5px rgba(0, 0, 0, 0.75);
+  transform: translateY(2px) scale(0.98);
+}
+
+.dialPlay:focus-visible {
+  outline: 2px solid #f3fff9;
+  outline-offset: 6px;
+}
+
+/* Above the button, not across it: the face is small and curved and a word set
+ * on it would fight the bevel. It names the button loudly enough to be the
+ * first thing read, since pausing is what most visitors want first. */
+.dialPlayLabel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  color: #e4eefa;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 14px rgba(0, 0, 0, 0.6);
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+
+.dialHint {
+  margin: 0 0 9px;
+  color: #7f9ac2;
+  text-align: center;
+  transition:
+    color 240ms ease,
+    letter-spacing 240ms ease;
+}
+
+/* Held: the instruction is now the only thing left to do, so it steps forward
+ * to meet the direction arcs that just appeared around the dial. */
+.dialHintLive {
+  color: var(--dial-accent);
+  letter-spacing: 0.2em;
 }
 
 .transport {
@@ -2034,6 +2565,49 @@
   100% {
     opacity: 0;
     transform: translate(-50%, -5px);
+  }
+}
+
+@keyframes dialIndexPulse {
+  0%,
+  100% {
+    opacity: 0.68;
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 10px rgba(214, 228, 242, 0.95));
+  }
+}
+
+@keyframes dialDetentTick {
+  from {
+    height: 12px;
+  }
+  to {
+    height: 7px;
+  }
+}
+
+/* The detent still reads without the movement: the lit tick holds for its
+ * moment, it just stops springing. */
+@media (prefers-reduced-motion: reduce) {
+  .dialRunning .dialIndex,
+  .dialTick[data-detent="true"]::before {
+    animation: none;
+  }
+
+  /* The direction cues stop breathing but stay fully drawn and lit — they are
+   * the only thing saying which way the dial turns, so they must not fade out
+   * or be left half-drawn. */
+  .dialCurlBack,
+  .dialCurlForward {
+    animation: none;
+    opacity: 0.85;
+  }
+
+  .dialCurlArc {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }
 
@@ -2446,6 +3020,51 @@
 
   .processRange {
     margin-top: 5px;
+  }
+
+  .dialDock {
+    --dial-size: 84px;
+  }
+
+  .processDock.dialDock {
+    right: 50%;
+    left: auto;
+    max-width: calc(100vw - 16px);
+    transform: translateX(50%);
+  }
+
+  .processDock.dialDockStacked {
+    bottom: calc(198px + env(safe-area-inset-bottom));
+  }
+
+  .root:has(.dialDockStacked) .legend,
+  .root:has(.dialDockStacked) .keyHelp {
+    bottom: calc(320px + env(safe-area-inset-bottom));
+  }
+
+  .dialRow {
+    gap: calc(var(--dial-size) * 0.18);
+  }
+
+  .dialReadout {
+    inset: 15px;
+    font-size: 10px;
+  }
+
+  .dialReadout small {
+    display: none;
+  }
+
+  .dialPlay {
+    font-size: 11px;
+  }
+
+  .dialCluster {
+    gap: 8px;
+  }
+
+  .dialHint {
+    display: none;
   }
 
   .timelineHeader {

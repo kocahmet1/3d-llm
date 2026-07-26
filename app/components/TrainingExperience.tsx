@@ -5,7 +5,11 @@ import { TrainingHUD } from "./TrainingHUD";
 import { TrainingWorldCanvas } from "./TrainingWorldCanvas";
 import { AssistantDock, useRealtimeAssistant } from "./assistant";
 import {
+  CHAMBER_PROCESS_DURATION_SECONDS,
+  CHAMBER_PROCESS_STOPS,
   DATA_PREP_DURATION_SECONDS,
+  DATA_PREP_STAGES,
+  DEFAULT_CHAMBER_PROCESS_STOPS,
   TRAINING_STATIONS,
 } from "../lib/trainingTrace";
 import {
@@ -103,6 +107,11 @@ export function TrainingExperience() {
   const [reportedStation, setReportedStation] = useState(0);
   const [dataPrepProgress, setDataPrepProgress] = useState(0);
   const [dataPrepPlaying, setDataPrepPlaying] = useState(true);
+  // Transport for the animation inside whichever chamber the visitor is
+  // standing in. Held here rather than on the render loop's own clock so it can
+  // be paused and scrubbed; the canvas reads it and the HUD dial drives it.
+  const [processProgress, setProcessProgress] = useState(0);
+  const [processPlaying, setProcessPlaying] = useState(true);
   // The experience opens in the machine room (first-person free roam), so the
   // very first HUD frame reflects that rather than flashing the guided-ride cue.
   const [navigationMode, setNavigationMode] =
@@ -142,6 +151,41 @@ export function TrainingExperience() {
   const stationIndex =
     reportedStation === derivedStation ? reportedStation : derivedStation;
   const currentStation = TRAINING_STATIONS[stationIndex];
+
+  // The dial is on screen wherever there is an animation to hold: everywhere
+  // except the machine room, which has no chamber process.
+  const processAvailable = navigationMode !== "machine-room";
+  // The corpus chamber runs its own data-preparation sequence rather than a
+  // chamber process, so there the dial drives that instead. Both it and the
+  // stage strip are then views onto one value and cannot disagree.
+  const dataPrepChamber = stationIndex === 1;
+  const dialProgress = dataPrepChamber ? dataPrepProgress : processProgress;
+  const dialPlaying = dataPrepChamber ? dataPrepPlaying : processPlaying;
+  const processStops = dataPrepChamber
+    ? DATA_PREP_STAGES.length
+    : (CHAMBER_PROCESS_STOPS[currentStation?.id ?? ""] ??
+      DEFAULT_CHAMBER_PROCESS_STOPS);
+
+  const handleDialProgressChange = useCallback(
+    (value: number) => {
+      if (dataPrepChamber) setDataPrepProgress(clamp01(value));
+      else setProcessProgress(value);
+    },
+    [dataPrepChamber],
+  );
+
+  const handleDialPlayingChange = useCallback(
+    (next: boolean) => {
+      // Taking hold of the dial takes the process off whatever was driving it.
+      // On the guided ride the animation is paced by the camera's own position
+      // along the route, so the ride has to stop — otherwise the next frame
+      // would overwrite whatever the visitor just scrubbed to.
+      if (!next) setPlaying(false);
+      if (dataPrepChamber) setDataPrepPlaying(next);
+      else setProcessPlaying(next);
+    },
+    [dataPrepChamber],
+  );
 
   const clearAssistantSelection = useCallback(() => {
     setSpotlightTargetId(null);
@@ -510,8 +554,38 @@ export function TrainingExperience() {
       setDataPrepProgress(reduceMotion ? 1 : 0);
       setDataPrepPlaying(!reduceMotion);
     }
+    if (stationIndex !== previousStationIndex.current) {
+      // Each chamber tells its own story from the beginning, so walking into
+      // one rewinds its transport rather than dropping the visitor into the
+      // middle of a process they have not seen start.
+      const reduceMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      setProcessProgress(reduceMotion ? 1 : 0);
+      setProcessPlaying(!reduceMotion);
+    }
     previousStationIndex.current = stationIndex;
   }, [stationIndex]);
+
+  // The transport's clock. It loops, because a chamber process has no end
+  // state worth resting on — unlike data preparation, which finishes.
+  useEffect(() => {
+    if (!processPlaying) return undefined;
+
+    let frame = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const delta = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      setProcessProgress(
+        (value) => (value + delta / CHAMBER_PROCESS_DURATION_SECONDS) % 1,
+      );
+      frame = requestAnimationFrame(tick);
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [processPlaying]);
 
   useEffect(() => {
     if (stationIndex !== 1 || !dataPrepPlaying) return;
@@ -739,6 +813,10 @@ export function TrainingExperience() {
         stationIndex={stationIndex}
         playing={playing}
         dataPrepProgress={dataPrepProgress}
+        processProgress={processProgress}
+        processPlaying={processPlaying}
+        onProcessProgressChange={setProcessProgress}
+        onProcessPlayingChange={handleDialPlayingChange}
         branchSide={branchSide}
         detailMode={detailMode}
         rideMode={rideMode}
@@ -771,6 +849,12 @@ export function TrainingExperience() {
         stations={TRAINING_STATIONS}
         dataPrepProgress={dataPrepProgress}
         dataPrepPlaying={dataPrepPlaying}
+        processProgress={dialProgress}
+        processPlaying={dialPlaying}
+        processStops={processStops}
+        processAvailable={processAvailable}
+        onProcessProgressChange={handleDialProgressChange}
+        onProcessPlayingChange={handleDialPlayingChange}
         onProgressChange={(value) => {
           setPlaying(false);
           setProgress(value);

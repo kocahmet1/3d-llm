@@ -193,6 +193,53 @@ export const DATA_PREP_TRACE = {
   ),
 } as const;
 
+/**
+ * How many steps each chamber's walk is divided into.
+ *
+ * This is one number serving two jobs, deliberately. It sizes the avenue a
+ * chamber is laid out along — the stops the visitor walks between, and the lit
+ * thresholds marking them on the runway — and it is also the notch count on the
+ * HUD's process dial. Keeping a single source means the detents the visitor
+ * feels while scrubbing land on the same boundaries as the thresholds they
+ * walked over, instead of the two drifting apart.
+ */
+export const CHAMBER_PROCESS_STOPS: Readonly<Record<string, number>> = {
+  "training-complex": 6,
+  "token-stream-context": 4,
+  "batch-shifted-targets": 5,
+  embedding: 5,
+  "transformer-tower": 5,
+  "transformer-block": 6,
+  "multi-head-attention": 6,
+  "one-head-qkv": 7,
+  "attention-scores": 5,
+  "causal-mask": 5,
+  "softmax-weighted-v": 6,
+  "head-recombination": 5,
+  mlp: 6,
+  "final-hidden-state": 5,
+  "vocabulary-projection": 5,
+  logits: 6,
+  "target-comparison": 4,
+  loss: 5,
+  "output-backprop": 5,
+  "backprop-through-tower": 7,
+  "parameter-matrix": 5,
+  "adamw-state": 6,
+  "weight-update": 5,
+  "model-changed-next-step": 6,
+};
+
+/** Fallback notch count for chambers with no bespoke avenue, e.g. the corpus. */
+export const DEFAULT_CHAMBER_PROCESS_STOPS = 5;
+
+/**
+ * Seconds one pass of a chamber's process animation takes at normal speed.
+ * The transport advances against this, and the HUD dial reads its position out
+ * in the same units, so "0:07 / 0:12" means what it says.
+ */
+export const CHAMBER_PROCESS_DURATION_SECONDS = 12;
+
 export const TRAINING_STATIONS: TrainingStation[] = [
   {
     id: "training-complex",

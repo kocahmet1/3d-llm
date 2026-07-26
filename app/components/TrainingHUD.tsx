@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import type { CSSProperties, ChangeEvent } from "react";
+import type {
+  CSSProperties,
+  ChangeEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 
 import {
   FULL_TRAINING_LOOP,
@@ -14,7 +19,10 @@ import type {
   TrainingHUDProps,
   TrainingPhase,
 } from "../lib/worldTypes";
-import { DATA_PREP_STAGES } from "../lib/trainingTrace";
+import {
+  CHAMBER_PROCESS_DURATION_SECONDS,
+  DATA_PREP_STAGES,
+} from "../lib/trainingTrace";
 import styles from "./TrainingHUD.module.css";
 
 const PHASES: ReadonlyArray<{
@@ -75,8 +83,38 @@ const LEGEND = [
   { label: "Updates", className: styles.updateSwatch },
 ];
 
+/** One whole turn of the jog dial is one whole pass of the chamber animation. */
+const DIAL_TURN_RADIANS = Math.PI * 2;
+/** Below this radius the pointer angle is mostly noise, so it is ignored. */
+const DIAL_HUB_RADIUS_PX = 11;
+/** A wheel notch (~100px on most mice) moves the process about a tenth of a pass. */
+const WHEEL_PROGRESS_PER_PIXEL = 1 / 900;
+const DIAL_KEY_STEP = 0.02;
+const DETENT_FLASH_MS = 380;
+/**
+ * How long a scrub gesture keeps owning the position. Several pointer or wheel
+ * events can land before React commits `processProgress` back down, so within a
+ * gesture the deltas accumulate against the last value this component sent
+ * rather than against the prop — otherwise a fast spin silently drops moves.
+ */
+const SCRUB_GESTURE_MS = 260;
+
 function clamp01(value: number) {
   return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+}
+
+/**
+ * The chamber animation loops, so scrubbing off either end has to come back
+ * round rather than pile up against a clamp.
+ */
+function wrapProgress(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return ((value % 1) + 1) % 1;
+}
+
+function formatProcessClock(seconds: number) {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
 export function TrainingHUD({
@@ -93,8 +131,14 @@ export function TrainingHUD({
   branchSide,
   dataPrepProgress,
   dataPrepPlaying,
+  processProgress,
+  processPlaying,
+  processStops,
+  processAvailable,
   onProgressChange,
   onPlayingChange,
+  onProcessProgressChange,
+  onProcessPlayingChange,
   onDataPrepProgressChange,
   onDataPrepPlayingChange,
   onDataPrepRestart,
@@ -167,6 +211,180 @@ export function TrainingHUD({
     };
   }, [fullCodeVisible]);
 
+  const processDialTitleId = useId();
+  const dialRef = useRef<HTMLDivElement>(null);
+  const dialPointerRef = useRef<number | null>(null);
+  const dialAngleRef = useRef<number | null>(null);
+  const dialGestureRef = useRef<{ position: number; at: number } | null>(null);
+  const scrubByRef = useRef<(delta: number) => void>(() => {});
+  const [dialGrabbed, setDialGrabbed] = useState(false);
+  // Which dial tick is flashing after the process crossed a step boundary
+  // under the visitor's hand — the detent they would feel on a real wheel.
+  const [processDetent, setProcessDetent] = useState<{ tick: number } | null>(
+    null,
+  );
+
+  const safeProcessProgress = clamp01(processProgress);
+  const processStopCount = Math.max(1, Math.round(processStops));
+  const processPercent = Math.round(safeProcessProgress * 100);
+  // The epsilon absorbs the float error in `index / stops * stops`, so a
+  // position sitting exactly on a boundary reads as the step starting there.
+  const stopIndexAt = (value: number) =>
+    Math.min(
+      processStopCount - 1,
+      Math.max(0, Math.floor(clamp01(value) * processStopCount + 1e-6)),
+    );
+  const currentProcessStop = stopIndexAt(safeProcessProgress);
+
+  const readScrubBase = () => {
+    const gesture = dialGestureRef.current;
+    if (!gesture) return safeProcessProgress;
+    // A held drag owns the position for as long as the hand is down. A wheel
+    // has no release, so it lapses instead and hands the process back.
+    return dialPointerRef.current !== null ||
+      Date.now() - gesture.at < SCRUB_GESTURE_MS
+      ? gesture.position
+      : safeProcessProgress;
+  };
+
+  const commitScrub = (from: number, to: number, direction: number) => {
+    dialGestureRef.current = { position: to, at: Date.now() };
+    const fromStop = stopIndexAt(from);
+    const toStop = stopIndexAt(to);
+    if (fromStop !== toStop) {
+      // The boundary that just passed under the index mark: going forward it is
+      // the step being entered, going back it is the one being left. Wrapping
+      // falls out of this too — step 0's tick is the seam at the top of the loop.
+      setProcessDetent({ tick: direction >= 0 ? toStop : fromStop });
+    }
+    onProcessProgressChange(to);
+  };
+
+  const scrubProcessBy = (delta: number) => {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    // The running clock would otherwise fight the hand for the same value.
+    onProcessPlayingChange(false);
+    const base = readScrubBase();
+    commitScrub(base, wrapProgress(base + delta), delta);
+  };
+
+  const scrubProcessTo = (value: number) => {
+    onProcessPlayingChange(false);
+    const base = readScrubBase();
+    const next = clamp01(value);
+    commitScrub(base, next, next - base);
+  };
+
+  const dialPointFrom = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - (rect.left + rect.width / 2);
+    const y = event.clientY - (rect.top + rect.height / 2);
+    return { angle: Math.atan2(y, x), radius: Math.hypot(x, y) };
+  };
+
+  const handleDialPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    // Suppressing the default also suppresses the focus it would have given us.
+    event.preventDefault();
+    event.currentTarget.focus();
+    // Capture keeps the spin alive once the hand wanders off the dial face,
+    // which it always does on a circular drag.
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dialPointerRef.current = event.pointerId;
+    dialAngleRef.current = dialPointFrom(event).angle;
+    dialGestureRef.current = { position: safeProcessProgress, at: Date.now() };
+    setDialGrabbed(true);
+    onProcessPlayingChange(false);
+  };
+
+  const handleDialPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dialPointerRef.current !== event.pointerId) return;
+    const previous = dialAngleRef.current;
+    const { angle, radius } = dialPointFrom(event);
+    dialAngleRef.current = angle;
+    if (previous === null) return;
+    // atan2 flips sign across the ±π seam. Folding the raw difference back into
+    // a half turn keeps a continuous spin continuous, instead of hurling the
+    // process a whole pass backwards the moment the hand passes 9 o'clock.
+    let delta = angle - previous;
+    if (delta > Math.PI) delta -= DIAL_TURN_RADIANS;
+    else if (delta < -Math.PI) delta += DIAL_TURN_RADIANS;
+    if (radius < DIAL_HUB_RADIUS_PX) return;
+    scrubProcessBy(delta / DIAL_TURN_RADIANS);
+  };
+
+  const endDialDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dialPointerRef.current !== event.pointerId) return;
+    dialPointerRef.current = null;
+    dialAngleRef.current = null;
+    setDialGrabbed(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleDialKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowUp":
+        scrubProcessBy(DIAL_KEY_STEP);
+        break;
+      case "ArrowLeft":
+      case "ArrowDown":
+        scrubProcessBy(-DIAL_KEY_STEP);
+        break;
+      case "PageUp":
+        scrubProcessBy(1 / processStopCount);
+        break;
+      case "PageDown":
+        scrubProcessBy(-1 / processStopCount);
+        break;
+      case "Home":
+        scrubProcessTo(0);
+        break;
+      case "End":
+        scrubProcessTo(1);
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+  };
+
+  // The wheel listener is bound once per mount and reaches the live scrub
+  // through this, so a playing clock does not rebind it sixty times a second.
+  useEffect(() => {
+    scrubByRef.current = scrubProcessBy;
+  });
+
+  useEffect(() => {
+    if (!processDetent) return;
+    const timer = window.setTimeout(
+      () => setProcessDetent(null),
+      DETENT_FLASH_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [processDetent]);
+
+  useEffect(() => {
+    const dial = dialRef.current;
+    if (!dial) return;
+    // React's onWheel is passive, so the page and the scene would scroll along
+    // with the scrub unless the listener is bound by hand.
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const scale =
+        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+      const raw =
+        Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+          ? event.deltaY
+          : event.deltaX;
+      scrubByRef.current(raw * scale * WHEEL_PROGRESS_PER_PIXEL);
+    };
+    dial.addEventListener("wheel", handleWheel, { passive: false });
+    return () => dial.removeEventListener("wheel", handleWheel);
+  }, [processAvailable]);
+
   if (stations.length === 0) {
     return null;
   }
@@ -206,6 +424,12 @@ export function TrainingHUD({
   );
   const journeyHoldingForData =
     station.id === "corpus-data-preparation" && safeDataPrepProgress < 1;
+  const processElapsedLabel = formatProcessClock(
+    safeProcessProgress * CHAMBER_PROCESS_DURATION_SECONDS,
+  );
+  const processTotalLabel = formatProcessClock(CHAMBER_PROCESS_DURATION_SECONDS);
+  // The corpus chamber shows the stage strip as well, so the dial rides above it.
+  const dataPrepDockVisible = station.id === "corpus-data-preparation";
   const navigationStatus =
     navigationMode === "machine-room"
       ? {
@@ -215,7 +439,7 @@ export function TrainingHUD({
       : navigationMode === "free-roam"
         ? {
             label: "Free roam",
-            hint: "Click scene · WASD move · Wheel follows your view · M machine room · Esc releases mouse",
+            hint: "Click scene · WASD move · Wheel follows your view · Space holds the process · M machine room · Esc releases mouse",
           }
         : navigationMode === "tunnel"
           ? {
@@ -829,6 +1053,150 @@ export function TrainingHUD({
             }
             aria-label={`Data preparation animation progress, ${dataPrepPercent} percent`}
           />
+        </section>
+      ) : null}
+
+      {processAvailable ? (
+        <section
+          className={`${styles.processDock} ${styles.dialDock} ${
+            dataPrepDockVisible ? styles.dialDockStacked : ""
+          } ${styles.interactive}`}
+          aria-labelledby={processDialTitleId}
+        >
+          {/* The step and time readings are spoken but not shown. On screen the
+           * dial already carries its position, and the one line of type above
+           * it is better spent saying what to do with it. */}
+          <h2
+            id={processDialTitleId}
+            className={styles.visuallyHidden}
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            Chamber process, step {currentProcessStop + 1} of {processStopCount},{" "}
+            {processElapsedLabel} of {processTotalLabel},{" "}
+            {processPlaying ? "playing" : "held"}
+          </h2>
+          <p
+            className={`${styles.dialHint} ${
+              processPlaying ? "" : styles.dialHintLive
+            }`}
+          >
+            {processPlaying
+              ? "Space pauses · then turn the dial"
+              : "Turn the dial to move through the animation"}
+          </p>
+          <div className={styles.dialRow}>
+            {/* A dial reads as an ornament until something shows which way it
+             * turns, so it sits between two arrows that curl the way it goes.
+             * They are cues, not controls — the hand belongs on the dial. */}
+            <div className={styles.dialCluster}>
+              {/* Two arcs struck on the same centre as the knob, riding just
+               * outside its rim, so they read as the wheel's own travel rather
+               * than as glyphs parked beside it. They appear only once the
+               * process is held: while it is running there is nothing to scrub
+               * and the movement would just compete with the chamber. */}
+              <span
+                className={`${styles.dialCurls} ${
+                  processPlaying ? "" : styles.dialCurlsLive
+                }`}
+                aria-hidden="true"
+              >
+                <svg className={styles.dialCurlSvg} viewBox="0 0 100 100">
+                  <g className={styles.dialCurlBack}>
+                    <path
+                      className={styles.dialCurlArc}
+                      d="M32.7 12.8 A41 41 0 0 0 9.2 46.4"
+                    />
+                    <path d="M5.6 39.1 L9.2 46.4 L14 39.8" />
+                  </g>
+                  <g
+                    className={styles.dialCurlForward}
+                    transform="translate(100,0) scale(-1,1)"
+                  >
+                    <path
+                      className={styles.dialCurlArc}
+                      d="M32.7 12.8 A41 41 0 0 0 9.2 46.4"
+                    />
+                    <path d="M5.6 39.1 L9.2 46.4 L14 39.8" />
+                  </g>
+                </svg>
+                <small className={styles.dialCurlLabelBack}>Rewind</small>
+                <small className={styles.dialCurlLabelForward}>Forward</small>
+              </span>
+              <div
+                ref={dialRef}
+                className={`${styles.dial} ${dialGrabbed ? styles.dialGrabbed : ""} ${
+                  processPlaying ? styles.dialRunning : ""
+                }`}
+                style={
+                  {
+                    "--dial-angle": `${safeProcessProgress * 360}deg`,
+                    "--dial-sweep": `${processPercent}%`,
+                  } as CSSProperties
+                }
+                data-testid="chamber-process-dial"
+                data-detent={processDetent ? "true" : undefined}
+                role="slider"
+                tabIndex={0}
+                aria-label="Scrub the chamber process"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={processPercent}
+                aria-valuetext={`${processPercent} percent, step ${
+                  currentProcessStop + 1
+                } of ${processStopCount}, ${processElapsedLabel} of ${processTotalLabel}`}
+                aria-keyshortcuts="ArrowLeft ArrowRight PageUp PageDown Home End"
+                title="Drag or scroll the dial to scrub"
+                onPointerDown={handleDialPointerDown}
+                onPointerMove={handleDialPointerMove}
+                onPointerUp={endDialDrag}
+                onPointerCancel={endDialDrag}
+                onKeyDown={handleDialKeyDown}
+              >
+                <span className={styles.dialFace} aria-hidden="true">
+                  {Array.from({ length: processStopCount }, (_, index) => (
+                    <span
+                      key={index}
+                      className={styles.dialTick}
+                      data-detent={processDetent?.tick === index ? "true" : undefined}
+                      style={
+                        {
+                          // Marks on the wheel, not the bezel: they run backwards
+                          // so the one for a step arrives under the index mark as
+                          // the dial turns forward into it.
+                          "--tick": `${(-index / processStopCount) * 360}deg`,
+                        } as CSSProperties
+                      }
+                    />
+                  ))}
+                </span>
+                <span className={styles.dialArc} aria-hidden="true" />
+                <span className={styles.dialIndex} aria-hidden="true" />
+                <span className={styles.dialReadout} aria-hidden="true">
+                  {processPercent}
+                  <small>%</small>
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              className={`${styles.processPlay} ${styles.dialPlay}`}
+              data-testid="chamber-process-play"
+              onClick={() => onProcessPlayingChange(!processPlaying)}
+              aria-label={
+                processPlaying
+                  ? "Pause the chamber process"
+                  : "Play the chamber process"
+              }
+              aria-pressed={processPlaying}
+            >
+              <span aria-hidden="true">{processPlaying ? "Ⅱ" : "▶"}</span>
+              <span className={styles.dialPlayLabel}>
+                {processPlaying ? "Pause" : "Play"}
+              </span>
+            </button>
+          </div>
         </section>
       ) : null}
 

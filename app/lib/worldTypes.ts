@@ -68,8 +68,39 @@ export interface TrainingWorldState {
   branchSide: BranchSide;
 }
 
-export interface TrainingHUDProps extends TrainingWorldState {
+/**
+ * Transport for the animation playing inside the chamber the visitor is
+ * standing in — the matrices selecting rows, sliding together and summing.
+ *
+ * It used to run off the render loop's own wall clock, which meant it could
+ * only ever loop: there was no way to hold a step still or step back to the
+ * moment before two tensors merged. Owning the clock as state instead lets the
+ * HUD scrub it, and lets the canvas freeze ambient motion while paused.
+ */
+export interface ChamberProcessTransport {
+  /** Position through the current chamber's process animation, 0..1. */
+  processProgress: number;
+  processPlaying: boolean;
+  onProcessProgressChange: (progress: number) => void;
+  onProcessPlayingChange: (playing: boolean) => void;
+}
+
+export interface TrainingHUDProps
+  extends TrainingWorldState,
+    ChamberProcessTransport {
   stations: TrainingStation[];
+  /**
+   * Notches on the process dial: the number of steps the current chamber's
+   * walk is divided into. Also how many lit thresholds the visitor crosses on
+   * the runway, so the detents match the room.
+   */
+  processStops: number;
+  /**
+   * False where there is no chamber process to scrub — the machine room, the
+   * connecting tunnels, and the guided ride, which drives the animation from
+   * the camera's own position along the route.
+   */
+  processAvailable: boolean;
   navigationMode: NavigationMode;
   machineRoomCue: MachineRoomCue | null;
   movementDiscovered: boolean;
@@ -87,7 +118,7 @@ export interface TrainingHUDProps extends TrainingWorldState {
   onRestart: () => void;
 }
 
-export interface TrainingCanvasProps {
+export interface TrainingCanvasProps extends ChamberProcessTransport {
   progress: number;
   stationIndex: number;
   playing: boolean;

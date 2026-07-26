@@ -10,8 +10,10 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import {
+  CHAMBER_PROCESS_STOPS,
   DATA_PREP_STAGES,
   DATA_PREP_TRACE,
+  DEFAULT_CHAMBER_PROCESS_STOPS,
   PHASE_COLORS,
   SELECTED_TRACE,
   TRAINING_STATIONS,
@@ -54,7 +56,6 @@ import styles from "./TrainingWorldCanvas.module.css";
 const TAU = Math.PI * 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const STATION_SPACING = 100;
-const PROCESS_CHAMBER_CYCLE_SECONDS = 15;
 const CORRIDOR_WIDTH = 7.4;
 const CORRIDOR_WALKABLE_HALF_WIDTH = CORRIDOR_WIDTH / 2 - 0.65;
 const MIN_SPACIOUS_CHAMBER_SPAN = 48;
@@ -159,6 +160,10 @@ interface WorldRefs {
   stationIndex: number;
   playing: boolean;
   dataPrepProgress: number;
+  processProgress: number;
+  processPlaying: boolean;
+  onProcessProgressChange: TrainingCanvasProps["onProcessProgressChange"];
+  onProcessPlayingChange: TrainingCanvasProps["onProcessPlayingChange"];
   branchSide: BranchSide;
   detailMode: DetailMode;
   rideMode: TrainingCanvasProps["rideMode"];
@@ -3599,10 +3604,12 @@ type DistinctChamberShellSpec = {
    * processional walk (see `chambers/avenue.ts`): they get a long runway with
    * lane plinths either side of a clear corridor, and their navigation blockers
    * follow the lanes rather than ringing a central island.
+   *
+   * The stop count is not repeated here — it comes from `CHAMBER_PROCESS_STOPS`,
+   * so the thresholds lit on the runway and the detents on the HUD's process
+   * dial cannot drift apart.
    */
   layout?: "dais" | "avenue";
-  /** Number of avenue stops, used to size the runway. */
-  avenueStops?: number;
 };
 
 /**
@@ -3621,145 +3628,145 @@ const DISTINCT_CHAMBER_SHELL_SPECS = {
   "training-complex": {
     size: [52, 60, 72], position: [0, 0, 0], spatialStyle: "panorama",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "token-stream-context": {
     size: [48, 52, 60], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 4,
+    layout: "avenue",
     guidedView: { distance: 24, focusY: 3.2, fov: 60 },
   },
   "batch-shifted-targets": {
     size: [48, 52, 66], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "embedding": {
     size: [46, 54, 62], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "transformer-tower": {
     size: [48, 66, 66], position: [0, 0, 0], spatialStyle: "vertical-foundry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 4.4, fov: 62 },
   },
   "transformer-block": {
     size: [50, 58, 72], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "multi-head-attention": {
     size: [52, 58, 70], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.8, fov: 62 },
   },
   "one-head-qkv": {
     size: [52, 58, 78], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 7,
+    layout: "avenue",
     guidedView: { distance: 29, focusY: 3.8, fov: 64 },
   },
   "attention-scores": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "causal-mask": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "softmax-weighted-v": {
     size: [48, 56, 70], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "head-recombination": {
     size: [50, 56, 66], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "mlp": {
     size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "final-hidden-state": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "vocabulary-projection": {
     size: [48, 56, 66], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.6, fov: 62 },
   },
   "logits": {
     size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "target-comparison": {
     size: [48, 54, 60], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 4,
+    layout: "avenue",
     guidedView: { distance: 24, focusY: 3.2, fov: 60 },
   },
   "loss": {
     size: [48, 62, 66], position: [0, 0, 0], spatialStyle: "vertical-foundry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.8, fov: 62 },
   },
   "output-backprop": {
     size: [50, 56, 66], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "backprop-through-tower": {
     size: [50, 66, 78], position: [0, 0, 0], spatialStyle: "vertical-foundry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 7,
+    layout: "avenue",
     guidedView: { distance: 29, focusY: 4.4, fov: 64 },
   },
   "parameter-matrix": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "adamw-state": {
     size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.6, fov: 62 },
   },
   "weight-update": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 5,
+    layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "model-changed-next-step": {
     size: [52, 60, 72], position: [0, 0, 0], spatialStyle: "panorama",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue", avenueStops: 6,
+    layout: "avenue",
     guidedView: { distance: 27, focusY: 3.8, fov: 62 },
   },
 } as const satisfies Readonly<Record<string, DistinctChamberShellSpec>>;
@@ -3777,7 +3784,8 @@ function buildAvenueFloor(
   context: BuildContext,
   spec: DistinctChamberShellSpec,
 ) {
-  const stops = spec.avenueStops ?? 5;
+  const stops =
+    CHAMBER_PROCESS_STOPS[context.station.id] ?? DEFAULT_CHAMBER_PROCESS_STOPS;
   const firstZ = AVENUE.firstStopZ;
   const lastZ = firstZ - (stops - 1) * AVENUE.stopSpacing;
   const runwayNear = firstZ + 5.4;
@@ -4634,6 +4642,10 @@ export function TrainingWorldCanvas({
   stationIndex,
   playing,
   dataPrepProgress,
+  processProgress,
+  processPlaying,
+  onProcessProgressChange,
+  onProcessPlayingChange,
   branchSide,
   detailMode,
   rideMode,
@@ -4665,6 +4677,10 @@ export function TrainingWorldCanvas({
     stationIndex,
     playing,
     dataPrepProgress,
+    processProgress,
+    processPlaying,
+    onProcessProgressChange,
+    onProcessPlayingChange,
     branchSide,
     detailMode,
     rideMode,
@@ -4690,6 +4706,10 @@ export function TrainingWorldCanvas({
       stationIndex,
       playing,
       dataPrepProgress,
+      processProgress,
+      processPlaying,
+      onProcessProgressChange,
+      onProcessPlayingChange,
       branchSide,
       detailMode,
       rideMode,
@@ -4725,7 +4745,11 @@ export function TrainingWorldCanvas({
     onMachineRoomCueChange,
     onMovementDiscovered,
     onIntroTourChange,
+    onProcessProgressChange,
+    onProcessPlayingChange,
     playing,
+    processPlaying,
+    processProgress,
     progress,
     rideMode,
     stationIndex,
@@ -6368,6 +6392,15 @@ export function TrainingWorldCanvas({
         }
       } else if (["ShiftLeft", "ShiftRight"].includes(event.code)) {
         pressedKeys.add(event.code);
+      } else if (event.code === "Space" && !event.repeat) {
+        // Hold the chamber's animation where it is. Only meaningful inside a
+        // chamber under free roam — elsewhere the process is driven by the
+        // ride or the room, and swallowing Space there would be a lie.
+        if (navigationRegion.kind === "chamber") {
+          event.preventDefault();
+          cancelIntro();
+          latest.current.onProcessPlayingChange(!latest.current.processPlaying);
+        }
       } else if (event.code === "KeyM" && !event.repeat) {
         event.preventDefault();
         beginReturnToRoom();
@@ -6584,8 +6617,6 @@ export function TrainingWorldCanvas({
     let frameHandle = 0;
     let lastTime = performance.now();
     let elapsed = 0;
-    let processStationIndex = activeStationIndex;
-    let processStationStartedAt = 0;
     const reduceProcessMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
@@ -7513,20 +7544,16 @@ export function TrainingWorldCanvas({
       }
 
       const currentStationData = TRAINING_STATIONS[currentStation];
-      if (currentStation !== processStationIndex) {
-        processStationIndex = currentStation;
-        processStationStartedAt = elapsed;
-      }
-      const chamberProcessElapsed = positiveModulo(
-        elapsed - processStationStartedAt,
-        PROCESS_CHAMBER_CYCLE_SECONDS,
-      );
+      // The chamber process no longer runs off this render loop's clock: it is
+      // a transport the visitor can pause and scrub, owned as state so the HUD
+      // dial and the scene always agree on where in the process we are.
       const chamberProcessProgress = reduceProcessMotion
         ? 1
-        : Math.min(
-            1,
-            chamberProcessElapsed / (PROCESS_CHAMBER_CYCLE_SECONDS - 3),
-          );
+        : THREE.MathUtils.clamp(state.processProgress, 0, 1);
+      // Ambient wobble, spin and pulse are part of the animation, so they stop
+      // with it. Without this a paused chamber still shimmers, and a scrubbed
+      // frame never settles enough to study.
+      const chamberProcessMoving = !reduceProcessMotion && state.processPlaying;
       const guidedProcessProgress = reduceProcessMotion
         ? 1
         : THREE.MathUtils.clamp(
@@ -7536,6 +7563,19 @@ export function TrainingWorldCanvas({
             0,
             1,
           );
+      // On the guided ride the camera's own position along the route paces the
+      // animation, so the transport is a passenger and has to be told where the
+      // ride has got to — otherwise the dial would read one position while the
+      // chamber showed another. Reported on change only; at 60fps every frame
+      // would be a needless render.
+      if (
+        guidedRide &&
+        state.playing &&
+        currentStation !== 1 &&
+        Math.abs(guidedProcessProgress - state.processProgress) > 0.004
+      ) {
+        state.onProcessProgressChange(guidedProcessProgress);
+      }
       if (currentStation !== announcedStation) {
         announcedStation = currentStation;
         state.onStationChange(currentStation);
@@ -7592,6 +7632,14 @@ export function TrainingWorldCanvas({
             localPulse * (0.34 + Math.sin(motionTime * 0.8 + materialIndex) * 0.08);
         });
         const directorProcess = getDirectorProcessOverride();
+        // The guided ride and the director script drive the animation from
+        // outside, so the transport only owns the case that is actually the
+        // visitor's: standing in a chamber under their own steam.
+        const scrubbable =
+          index === currentStation &&
+          index !== 1 &&
+          directorProcess === null &&
+          !(guidedRide && state.playing);
         const runtimeProgress =
           index === 1
             ? state.dataPrepProgress
@@ -7603,7 +7651,11 @@ export function TrainingWorldCanvas({
                   : chamberProcessProgress
               : 0;
         if (index === currentStation && !roomVisible) {
-          runtime.update?.(runtimeProgress, elapsed, !reduceProcessMotion);
+          runtime.update?.(
+            runtimeProgress,
+            elapsed,
+            scrubbable ? chamberProcessMoving : !reduceProcessMotion,
+          );
         }
       });
 
@@ -7997,7 +8049,9 @@ export function TrainingWorldCanvas({
         step inside, or walk to the labeled console between the windows to train your own
         model. Press M to return to the room. Click to capture the mouse, use
         W A S D to move freely inside a chamber, use the wheel to move toward or away
-        along the current view, and press R to return to its overlook.
+        along the current view, press Space to pause the animation playing in the chamber
+        so you can study a step, or drag the process dial in the panel to scrub it back
+        and forward, and press R to return to its overlook.
       </div>
     </div>
   );
