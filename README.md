@@ -39,10 +39,9 @@ Nearly every major subsystem was developed through that collaboration:
   Structure / Math / Code layers, tensor-shape and formula displays, the six
   phase journey, and the accuracy corrections documented in
   [`ML-ACCURACY-REVIEW.md`](ML-ACCURACY-REVIEW.md).
-- **The grounded voice guide:** Realtime WebRTC integration, frozen
-  per-question context, detailed component targets, the in-world avatar, and
-  the tightly allowlisted tools that let the guide operate the lesson without
-  receiving arbitrary browser access.
+- **The grounded voice guide:** low-latency Realtime WebRTC integration, a
+  frozen spotlight context, detailed component targets, and the in-world avatar
+  for hands-free, interruptible explanations.
 - **The real training path:** the Python/PyTorch decoder-only Transformer,
   byte-level corpus preparation, validation, AdamW training, checkpoints,
   interruption recovery, local companion service, and checkpoint-backed text
@@ -87,7 +86,15 @@ built on the OpenAI **Realtime API** (a realtime speech model), documented under
 
 The authored route contains 25 stations across six phases:
 
-1. **Orient** — see the whole training loop.
+1. **Orient** — an exhibition hall rather than a walk through a computation.
+   Eight lit placards stand in bays down the gallery, and arriving starts a
+   guided walk that stops square-on in front of each in turn; moving or looking
+   around hands control straight back. They introduce the project and the
+   specimen: the two-sentence corpus, all 2,080 parameters drawn dot by dot,
+   and how this model compares to GPT-2 and GPT-3 in parameters, training text,
+   weight-matrix size, context window, and vocabulary. After the last placard
+   the walk turns to the doorway, where an invitation lights over the lintel,
+   and hands control back facing the way on.
 2. **Prepare** — turn source text into context windows, inputs, and separately
    shifted next-token targets.
 3. **Predict** — visit embeddings, the Transformer stack, one block, multi-head
@@ -145,21 +152,13 @@ Math / Code tabs provide pointer-accessible equivalents for the main lesson cont
 ## In-world voice guide
 
 The optional guide uses the OpenAI Realtime API to answer questions about the
-part of the lesson you are pointing at. Select **Meet your guide**, aim the
-center reticle at an exhibit, then hold `V` while speaking and release it to
-ask. The on-screen **Hold to ask** button provides the same interaction for
-pointer and keyboard users. You can interrupt an explanation with another turn
-or turn the guide off at any time.
-
-The guide can also operate the lesson through allowlisted Realtime function
-calls. For example, say "go to the next chamber", "take me to cross-entropy",
-"pause the journey", "show the math view", "switch to Explore mode", or
-"choose the right branch". It can navigate among the 25 stable chamber IDs,
-control journey and data-preparation playback, and change the ride, detail, or
-branch mode. The browser validates every request against those exact controls,
-updates React state, returns the real result to the model, and only then lets
-the guide confirm what happened. It is not given arbitrary clicks, DOM
-selectors, URLs, scripts, microphone controls, or credential access.
+part of the lesson you are pointing at. Select **Meet your guide**, then
+right-click a supported exhibit to spotlight it: the microphone opens hands-free
+and you can ask a question or interrupt an explanation with a follow-up. Outside
+a spotlight, hold `V` while speaking and release it to ask. The on-screen
+**Hold to ask** button provides the same fallback for pointer and keyboard users.
+The experience is audio-only: it does not display speech transcripts or issue
+voice commands that change the lesson.
 
 For an explicit selection, point at a component — with the cursor, or with the
 center crosshair while the mouse is captured — and right-click it. A brief
@@ -174,9 +173,23 @@ listening. Spotlighting works even while the voice guide is disconnected — it
 is also a hands-on magnifier — and hold-`V` push-to-talk still works whenever
 nothing is spotlighted.
 
-The selected exhibit is frozen when speech starts, so moving the camera during
-an answer does not silently change what words such as "this" and "that" mean.
-The guide travels beside that target, faces it, and points while it explains.
+For a component with rich process metadata, spotlighting also pauses the
+chamber's ordinary transport and starts an isolated replay. The replay reuses
+the relevant slice of the chamber's deterministic animation, stages the
+selected component with its curated same-beat causal partners, and loops while
+the guide explains what starts the interaction, why those parts meet, what
+operation occurs, and what continues downstream. Scene-only flow bindings can
+also bring moving packets and routes into the isolated view without exposing
+Three.js names to the voice model. Releasing the spotlight restores the exact
+chamber progress and resumes only if it was playing before.
+The registry now covers 148 rich components and 102 causal replay beats across
+every process chamber after the opening gallery. Chamber 1 intentionally keeps
+its station-level gallery explanation and safe magnified fallback.
+
+The selected exhibit is frozen when its spotlight opens, so moving the camera
+during an answer or follow-up does not silently change what words such as
+"this" and "that" mean. The guide travels beside that target, faces it, and
+points while it explains.
 
 ### Configure Realtime voice
 
@@ -248,12 +261,15 @@ entire world:
    active teaching branch.
 4. The raycast-selected component supplies its role, inputs, operation,
    outputs, exact trace values, and current visible animation state.
+5. When available, authored chamber beats supply the isolated replay's causal
+   sequence, same-chamber interaction partners, trigger, and result.
 
 `app/lib/assistantContext.ts` owns those model-facing facts. Three.js matching
 names and avatar presentation anchors live in a separate registry so scene
-coordinates are never mistaken for teaching content. The per-turn snapshot is
-deeply cloned and frozen before it is inserted as a text conversation item;
-the Realtime session retains the spoken conversation itself. See OpenAI's
+coordinates are never mistaken for teaching content. A spotlight snapshot is
+deeply cloned and frozen once, placed in the Realtime session instructions, and
+retained for its follow-up conversation until the spotlight changes or ends.
+Push-to-talk uses a one-turn snapshot when nothing is spotlighted. See OpenAI's
 [Realtime conversation guide](https://developers.openai.com/api/docs/guides/realtime-conversations)
 for the underlying conversation-item model.
 
@@ -296,6 +312,8 @@ selected embedding rows, not the integer IDs or tokenizer.
 - `app/components/TrainingWorldCanvas.tsx` builds and animates the Three.js
   world, camera route, semantic station geometry, opaque chambers, enclosed
   corridors, and guide line.
+- `app/lib/componentProcesses.ts` defines reusable causal beats and derives
+  component replay windows, participants, and voice context from them.
 - `app/components/TrainingHUD.tsx` renders the phase rail, breadcrumbs,
   explanation layers, formula/shape readouts, branches, legend, and timeline.
 - `app/page.tsx` and `app/layout.tsx` provide the route and site metadata.
@@ -384,6 +402,7 @@ Useful project commands:
 npm run build   # create the production bundle
 npm test        # build, server-render, and run the contract suite
 npm run lint    # run ESLint
+npm run audit:components # verify replay beats, bindings, and coverage
 npm run start   # serve an existing production build
 npm run dev:training # run the site and local trainer together
 ```

@@ -13,6 +13,7 @@ import {
 import {
   type ChamberProcessContext,
   type ChamberProcessUpdater,
+  bindComponentProcessActor,
   createGlyph,
   createPacket,
   createPanel,
@@ -318,6 +319,8 @@ function buildTargetComparisonProcess(
     }),
     { stop: 1, slot: "left" },
   );
+  predictionBoard.name =
+    "assistant-target-target-comparison-prediction-distribution";
   // The lit cell is derived from the board's own grid so it keeps tracking the
   // highlighted target after the board is moved or resized.
   const predictionHeight = 4 * predictionCellHeight + 0.72 + 0.5 + 0.34;
@@ -340,6 +343,7 @@ function buildTargetComparisonProcess(
     }),
     { stop: 1, slot: "right", zShift: 1.4 },
   );
+  targetTile.name = "assistant-target-target-comparison-answer-id";
   const targetStart = targetTile.position.clone();
   const targetYaw = targetTile.rotation.y;
   // The answer vaults the runway rather than crossing it, so the visitor
@@ -351,11 +355,30 @@ function buildTargetComparisonProcess(
     vector(-4.6, 5.0, targetStart.z - 2.1),
     selectedCell.clone(),
   ];
-  context.group.add(createPath(targetPath, gold, 0.055, 0.42));
+  context.group.add(
+    bindComponentProcessActor(
+      createPath(targetPath, gold, 0.055, 0.42),
+      "target-comparison-answer-flow",
+    ),
+  );
 
-  const locator = addAt(context, makeRing(gold, 0.78, 0.085), selectedCell.clone());
+  const locator = addAt(
+    context,
+    bindComponentProcessActor(
+      makeRing(gold, 0.78, 0.085),
+      "target-comparison-gather-flow",
+    ),
+    selectedCell.clone(),
+  );
   locator.rotation.y = predictionBoard.rotation.y;
-  const gatheredPacket = addAt(context, createPacket(gold, 0.26), selectedCell.clone());
+  const gatheredPacket = addAt(
+    context,
+    bindComponentProcessActor(
+      createPacket(gold, 0.26),
+      "target-comparison-gather-flow",
+    ),
+    selectedCell.clone(),
+  );
 
   const gatherPanel = place(
     context,
@@ -368,6 +391,8 @@ function buildTargetComparisonProcess(
     }),
     { stop: 2, slot: "right", row: 1 },
   );
+  gatherPanel.name =
+    "assistant-target-target-comparison-gather-operation";
 
   const correctBoard = place(
     context,
@@ -382,6 +407,8 @@ function buildTargetComparisonProcess(
     }),
     { stop: 3, slot: "centre" },
   );
+  correctBoard.name =
+    "assistant-target-target-comparison-correct-probabilities";
   const resultPosition = correctBoard.position.clone();
   const gatherPath = [
     selectedCell.clone(),
@@ -390,7 +417,12 @@ function buildTargetComparisonProcess(
     resultPosition.clone().add(vector(0, -0.4, 2.4)),
     resultPosition,
   ];
-  context.group.add(createPath(gatherPath, gold, 0.07, 0.45));
+  context.group.add(
+    bindComponentProcessActor(
+      createPath(gatherPath, gold, 0.07, 0.45),
+      "target-comparison-gather-flow",
+    ),
+  );
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
@@ -635,6 +667,7 @@ function buildOutputBackpropProcess(
     }),
     { stop: 0, slot: "left", xShift: 0.6 },
   );
+  pBoard.name = "assistant-target-output-backprop-probabilities";
   const yBoard = place(
     context,
     createValueBoard(oneHot, 4, 4, {
@@ -648,14 +681,22 @@ function buildOutputBackpropProcess(
     }),
     { stop: 0, slot: "right", xShift: 0.6 },
   );
+  yBoard.name = "assistant-target-output-backprop-one-hot-target";
   const pStart = pBoard.position.clone();
   const yStart = yBoard.position.clone();
   const pYaw = pBoard.rotation.y;
   const yYaw = yBoard.rotation.y;
-  const subtract = place(context, createGlyph("-", warm, 2.0), {
-    stop: 1,
-    slot: "centre",
-  });
+  const subtract = place(
+    context,
+    bindComponentProcessActor(
+      createGlyph("-", warm, 2.0),
+      "output-backprop-subtract-flow",
+    ),
+    {
+      stop: 1,
+      slot: "centre",
+    },
+  );
   const differenceBoard = place(
     context,
     createValueBoard(stringValues(difference, 3), 4, 4, {
@@ -669,15 +710,23 @@ function buildOutputBackpropProcess(
     }),
     { stop: 2, slot: "left" },
   );
+  differenceBoard.name = "assistant-target-output-backprop-difference";
   // Operator glyphs stand at the runway edge of the bay they belong to rather
   // than over the centre line, where each would hide the next.
-  const divide = place(context, createGlyph("/ 12", warm, 2.1), {
-    stop: 2,
-    slot: "left",
-    row: 0.5,
-    xShift: -2.8,
-    zShift: -2.8,
-  });
+  const divide = place(
+    context,
+    bindComponentProcessActor(
+      createGlyph("/ 12", warm, 2.1),
+      "output-backprop-mean-reduction",
+    ),
+    {
+      stop: 2,
+      slot: "left",
+      row: 0.5,
+      xShift: -2.8,
+      zShift: -2.8,
+    },
+  );
   const dGBoard = place(
     context,
     createValueBoard(stringValues(dG, 9), 4, 4, {
@@ -691,6 +740,7 @@ function buildOutputBackpropProcess(
     }),
     { stop: 3, slot: "centre" },
   );
+  dGBoard.name = "assistant-target-output-backprop-mean-logit-gradient";
   const forkGlyph = place(context, createGlyph("COPY", warm, 2.0), {
     stop: 3,
     slot: "right",
@@ -698,6 +748,7 @@ function buildOutputBackpropProcess(
     xShift: -2.8,
     zShift: -2.4,
   });
+  forkGlyph.name = "assistant-target-output-backprop-gradient-fork";
   const dHBoard = place(
     context,
     createValueBoard(Array.from({ length: 8 }, () => "."), 1, 8, {
@@ -710,6 +761,8 @@ function buildOutputBackpropProcess(
     }),
     { stop: 4, slot: "left" },
   );
+  dHBoard.name =
+    "assistant-target-output-backprop-hidden-state-gradient";
   const dWBoard = place(
     context,
     createValueBoard(Array.from({ length: 16 }, () => "."), 4, 4, {
@@ -722,9 +775,26 @@ function buildOutputBackpropProcess(
     }),
     { stop: 4, slot: "right" },
   );
+  dWBoard.name =
+    "assistant-target-output-backprop-vocabulary-weight-gradient";
+  const dbBoard = place(
+    context,
+    createValueBoard(Array.from({ length: 16 }, () => "."), 4, 4, {
+      width: 6.8,
+      cellHeight: 0.65,
+      title: "db_vocab = SUM_(b,t) dG",
+      subtitle: "full bias gradient [16] | values unknown",
+      color: amber,
+      unknownIndices: Array.from({ length: 16 }, (_, index) => index),
+    }),
+    { stop: 4, slot: "right", row: 1 },
+  );
+  dbBoard.name =
+    "assistant-target-output-backprop-vocabulary-bias-gradient";
   const fork = forkGlyph.position.clone();
   const leftResult = dHBoard.position.clone();
   const rightResult = dWBoard.position.clone();
+  const upperRightResult = dbBoard.position.clone();
   // The activation branch has to change sides, so it vaults the runway well
   // above head height instead of cutting across it.
   const activationRoute = [
@@ -735,10 +805,45 @@ function buildOutputBackpropProcess(
     leftResult,
   ];
   const parameterRoute = avenueRoute(fork, rightResult, 0.8);
-  const activationPacket = addAt(context, createPacket(warm, 0.24), fork.clone());
-  const parameterPacket = addAt(context, createPacket(amber, 0.24), fork.clone());
-  context.group.add(createPath(activationRoute, warm, 0.07, 0.48));
-  context.group.add(createPath(parameterRoute, amber, 0.07, 0.48));
+  const biasRoute = avenueRoute(fork, upperRightResult, 1.35);
+  const activationPacket = addAt(
+    context,
+    bindComponentProcessActor(
+      createPacket(warm, 0.24),
+      "output-backprop-fork-flow",
+    ),
+    fork.clone(),
+  );
+  const parameterPacket = addAt(
+    context,
+    bindComponentProcessActor(
+      createPacket(amber, 0.24),
+      "output-backprop-fork-flow",
+    ),
+    fork.clone(),
+  );
+  const biasPacket = addAt(
+    context,
+    bindComponentProcessActor(
+      createPacket(amber, 0.2),
+      "output-backprop-fork-flow",
+    ),
+    fork.clone(),
+  );
+  context.group.add(
+    bindComponentProcessActor(
+      createPath(activationRoute, warm, 0.07, 0.48),
+      "output-backprop-fork-flow",
+    ),
+    bindComponentProcessActor(
+      createPath(parameterRoute, amber, 0.07, 0.48),
+      "output-backprop-fork-flow",
+    ),
+    bindComponentProcessActor(
+      createPath(biasRoute, amber, 0.05, 0.38),
+      "output-backprop-fork-flow",
+    ),
+  );
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
@@ -761,13 +866,17 @@ function buildOutputBackpropProcess(
     const forkTravel = smoothStep(p, 0.68, 0.88);
     samplePath(activationPacket, activationRoute, forkTravel, 0.2);
     samplePath(parameterPacket, parameterRoute, forkTravel, 0.2);
+    samplePath(biasPacket, biasRoute, forkTravel, 0.2);
     setObjectOpacity(activationPacket, windowPulse(p, 0.64, 0.78, 0.94));
     setObjectOpacity(parameterPacket, windowPulse(p, 0.64, 0.78, 0.94));
+    setObjectOpacity(biasPacket, windowPulse(p, 0.64, 0.78, 0.94));
     setObjectOpacity(dHBoard, smoothStep(p, 0.82, 0.96));
     setObjectOpacity(dWBoard, smoothStep(p, 0.82, 0.96));
+    setObjectOpacity(dbBoard, smoothStep(p, 0.82, 0.96));
     if (motionEnabled) {
       activationPacket.rotation.y = elapsed;
       parameterPacket.rotation.y = -elapsed;
+      biasPacket.rotation.y = elapsed * 0.8;
     }
   };
   return finishBuilder(updater);
@@ -840,6 +949,18 @@ function buildBackpropTowerProcess(
     ["MLP 0 + LN2 BACKWARD", "J^T x g"],
     ["ATTENTION 0 + LN1 BACKWARD", "J^T x g"],
   ] as const;
+  const branchTargetNames = [
+    "assistant-target-backprop-through-tower-block-1-mlp-backward",
+    "assistant-target-backprop-through-tower-block-1-attention-backward",
+    "assistant-target-backprop-through-tower-block-0-mlp-backward",
+    "assistant-target-backprop-through-tower-block-0-attention-backward",
+  ] as const;
+  const branchSceneKeys = [
+    "backprop-block-1-mlp-flow",
+    "backprop-block-1-attention-flow",
+    "backprop-block-0-mlp-flow",
+    "backprop-block-0-attention-flow",
+  ] as const;
 
   const inputBoard = place(
     context,
@@ -853,6 +974,8 @@ function buildBackpropTowerProcess(
     }),
     { stop: 0, slot: "left", xShift: 0.9 },
   );
+  inputBoard.name =
+    "assistant-target-backprop-through-tower-incoming-gradient";
   const finalNormBackward = place(
     context,
     createPanel(["LN_f BACKWARD FIRST", "dH2 = J_LNf^T x dH_final", "collects dgamma_f + dbeta_f"], {
@@ -864,6 +987,8 @@ function buildBackpropTowerProcess(
     }),
     { stop: 1, slot: "right" },
   );
+  finalNormBackward.name =
+    "assistant-target-backprop-through-tower-final-norm-backward";
   const finalNormRack = place(
     context,
     createPanel(["dLN_f", "parameter gradient"], {
@@ -875,6 +1000,8 @@ function buildBackpropTowerProcess(
     }),
     { stop: 1, slot: "right", row: 1 },
   );
+  finalNormRack.name =
+    "assistant-target-backprop-through-tower-final-norm-backward";
 
   // The gradient hands itself from bay to bay across the avenue, so each leg
   // vaults the runway at arch height instead of sweeping through it.
@@ -919,10 +1046,24 @@ function buildBackpropTowerProcess(
       index === 3
         ? handoff(mergePoint, avenueAnchor({ stop: 6, slot: "centre", zShift: 2.6 }))
         : handoff(mergePoint, branchStarts[index + 1]);
-    context.group.add(createPath(identityPath, warm, 0.045, 0.5));
-    context.group.add(createPath(transformedPath, "#ff9b87", 0.045, 0.5));
-    context.group.add(createPath(depositPath, amber, 0.038, 0.5));
-    context.group.add(createPath(mergedPath, warm, 0.06, 0.58));
+    context.group.add(
+      bindComponentProcessActor(
+        createPath(identityPath, warm, 0.045, 0.5),
+        branchSceneKeys[index],
+      ),
+      bindComponentProcessActor(
+        createPath(transformedPath, "#ff9b87", 0.045, 0.5),
+        branchSceneKeys[index],
+      ),
+      bindComponentProcessActor(
+        createPath(depositPath, amber, 0.038, 0.5),
+        branchSceneKeys[index],
+      ),
+      bindComponentProcessActor(
+        createPath(mergedPath, warm, 0.06, 0.58),
+        branchSceneKeys[index],
+      ),
+    );
     const copyGlyph = place(
       context,
       createPanel(["RESIDUAL ADD BACKWARD", "copy g -> skip | transform"], {
@@ -952,10 +1093,25 @@ function buildBackpropTowerProcess(
       xShift: -3.2,
       zShift: -3.2,
     });
-    const identity = createPacket(warm, 0.2);
-    const transformed = createPacket("#ff9b87", 0.2);
-    const deposit = createPacket(amber, 0.16);
-    const merged = createPacket(warm, 0.22);
+    copyGlyph.name = branchTargetNames[index];
+    jacobian.name = branchTargetNames[index];
+    plusGlyph.name = branchTargetNames[index];
+    const identity = bindComponentProcessActor(
+      createPacket(warm, 0.2),
+      branchSceneKeys[index],
+    );
+    const transformed = bindComponentProcessActor(
+      createPacket("#ff9b87", 0.2),
+      branchSceneKeys[index],
+    );
+    const deposit = bindComponentProcessActor(
+      createPacket(amber, 0.16),
+      branchSceneKeys[index],
+    );
+    const merged = bindComponentProcessActor(
+      createPacket(warm, 0.22),
+      branchSceneKeys[index],
+    );
     context.group.add(identity, transformed, deposit, merged);
     branchPackets.push({ identity, transformed, deposit, merged });
     branchPaths.push({
@@ -965,7 +1121,7 @@ function buildBackpropTowerProcess(
       merged: mergedPath,
     });
     branchStageObjects.push({ copy: copyGlyph, jacobian, plus: plusGlyph });
-    place(
+    const parameterRack = place(
       context,
       createPanel([rackNames[index], "parameter gradient"], {
         width: 4.8,
@@ -976,13 +1132,18 @@ function buildBackpropTowerProcess(
       }),
       { stop, slot: side, row: -1 },
     );
+    parameterRack.name = branchTargetNames[index];
   });
   context.group.add(
-    createPath(
-      handoff(finalNormBackward.position.clone(), branchStarts[0]),
-      warm,
-      0.05,
-      0.5,
+    bindComponentProcessActor(
+      createPath(
+        handoff(finalNormBackward.position.clone(), branchStarts[0]),
+        warm,
+        0.05,
+        0.5,
+      ),
+      "backprop-final-norm-flow",
+      "backprop-block-1-mlp-flow",
     ),
   );
 
@@ -998,6 +1159,8 @@ function buildBackpropTowerProcess(
     }),
     { stop: 6, slot: "centre" },
   );
+  outputBoard.name =
+    "assistant-target-backprop-through-tower-embedding-gradient-output";
   const noUpdatePanel = place(
     context,
     createPanel(["GRADIENTS COLLECTED", "NO WEIGHTS MOVED"], {
@@ -1012,13 +1175,20 @@ function buildBackpropTowerProcess(
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
-    setObjectOpacity(inputBoard, 1 - smoothStep(p, 0.08, 0.24) * 0.68);
-    setObjectOpacity(finalNormBackward, Math.max(smoothStep(p, 0, 0.035), 1 - smoothStep(p, 0.12, 0.26) * 0.72));
-    setObjectOpacity(finalNormRack, smoothStep(p, 0.02, 0.08) * (0.4 + windowPulse(p, 0.02, 0.06, 0.16) * 0.6));
+    setObjectOpacity(inputBoard, 1 - smoothStep(p, 0.04, 0.18) * 0.68);
+    setObjectOpacity(
+      finalNormBackward,
+      1 - smoothStep(p, 0.12, 0.22) * 0.72,
+    );
+    setObjectOpacity(
+      finalNormRack,
+      smoothStep(p, 0.02, 0.07) *
+        (0.4 + windowPulse(p, 0.02, 0.07, 0.18) * 0.6),
+    );
     branchPackets.forEach((packets, index) => {
-      const start = 0.04 + index * 0.205;
-      const branchEnd = start + 0.13;
-      const mergeEnd = start + 0.2;
+      const start = 0.17 + index * 0.18;
+      const branchEnd = start + 0.12;
+      const mergeEnd = start + 0.175;
       const branchProgress = smoothStep(p, start, branchEnd);
       samplePath(packets.identity, branchPaths[index].identity, branchProgress, 0.14);
       samplePath(packets.transformed, branchPaths[index].transformed, branchProgress, 0.14);
@@ -1091,6 +1261,7 @@ function buildParameterMatrixProcess(
     }),
     { stop: 1, slot: "left", xShift: 1.0 },
   );
+  matrixBoard.name = "assistant-target-parameter-matrix-wq-matrix";
   // The sighting rig rides on the board itself, so it keeps pointing at cell
   // [3,6] whatever angle the bay is hung at.
   const cellX = -matrixWidth / 2 + 6.5 * (matrixWidth / 8);
@@ -1107,6 +1278,9 @@ function buildParameterMatrixProcess(
   columnLaser.position.set(cellX, cellY, 0.3);
   const selector = makeRing(amber, 0.62, 0.08);
   selector.position.set(cellX, cellY, 0.36);
+  rowLaser.name = "assistant-target-parameter-matrix-selected-cell";
+  columnLaser.name = "assistant-target-parameter-matrix-selected-cell";
+  selector.name = "assistant-target-parameter-matrix-selected-cell";
   matrixBoard.add(rowLaser, columnLaser, selector);
 
   const weightPanel = place(
@@ -1120,6 +1294,7 @@ function buildParameterMatrixProcess(
     }),
     { stop: 2, slot: "right" },
   );
+  weightPanel.name = "assistant-target-parameter-matrix-stored-weight";
   const accumulatingPanel = place(
     context,
     createPanel(["GRADIENT REGISTER", "SUM 12 CONTRIBUTIONS"], {
@@ -1131,6 +1306,8 @@ function buildParameterMatrixProcess(
     }),
     { stop: 3, slot: "left" },
   );
+  accumulatingPanel.name =
+    "assistant-target-parameter-matrix-gradient-accumulator";
   const finalGradientPanel = place(
     context,
     createPanel(["GRADIENT REGISTER", "g = -0.003100"], {
@@ -1142,6 +1319,8 @@ function buildParameterMatrixProcess(
     }),
     { stop: 4, slot: "right" },
   );
+  finalGradientPanel.name =
+    "assistant-target-parameter-matrix-settled-gradient";
   const lockPanel = place(
     context,
     createPanel(["LOCKED", "NO UPDATE YET"], {
@@ -1153,7 +1332,7 @@ function buildParameterMatrixProcess(
     }),
     { stop: 4, slot: "centre" },
   );
-  place(
+  const contributionPanel = place(
     context,
     createPanel(["(b,t) CONTRIBUTIONS", "INDIVIDUAL VALUES UNKNOWN"], {
       width: 6.4,
@@ -1164,6 +1343,8 @@ function buildParameterMatrixProcess(
     }),
     { stop: 0, slot: "centre" },
   );
+  contributionPanel.name =
+    "assistant-target-parameter-matrix-gradient-contributions";
   const contributionPackets: THREE.Object3D[] = [];
   const contributionRoutes: THREE.Vector3[][] = [];
   const contributionEnd = accumulatingPanel.position
@@ -1180,11 +1361,19 @@ function buildParameterMatrixProcess(
       contributionEnd,
     ];
     contributionRoutes.push(route);
-    const packet = createPacket(warm, 0.16);
+    const packet = bindComponentProcessActor(
+      createPacket(warm, 0.16),
+      "parameter-matrix-contribution-flow",
+    );
     packet.position.copy(route[0]);
     context.group.add(packet);
     contributionPackets.push(packet);
-    context.group.add(createPath(route, warm, 0.025, 0.18));
+    context.group.add(
+      bindComponentProcessActor(
+        createPath(route, warm, 0.025, 0.18),
+        "parameter-matrix-contribution-flow",
+      ),
+    );
   }
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
@@ -1240,9 +1429,10 @@ function buildAdamWProcess(
     }),
     { stop: 0, slot: "left", xShift: 0.6 },
   );
+  input.name = "assistant-target-adamw-state-optimizer-inputs";
   const clipCheck = place(
     context,
-    createPanel(["GLOBAL-NORM CLIP CHECK", "|g| under threshold -> unchanged", "(real runs clip before Adam)"], {
+    createPanel(["GLOBAL-NORM CLIPPING BOUNDARY", "held fixed | outcome not in trace", "AdamW receives g = -0.0031"], {
       width: 5.9,
       height: 1.9,
       color: "#f4fbff",
@@ -1251,6 +1441,7 @@ function buildAdamWProcess(
     }),
     { stop: 1, slot: "left", row: 1 },
   );
+  clipCheck.name = "assistant-target-adamw-state-clip-check";
   // The first and second moments are computed from the same gradient at the
   // same instant, so they face each other across the runway and stay abreast
   // through the bias correction one stop later.
@@ -1265,6 +1456,7 @@ function buildAdamWProcess(
     }),
     { stop: 2, slot: "left" },
   );
+  moment.name = "assistant-target-adamw-state-first-moment-lane";
   const variance = place(
     context,
     createPanel(["v1=.999v0+.001g^2", "v1=9.61e-9"], {
@@ -1276,6 +1468,7 @@ function buildAdamWProcess(
     }),
     { stop: 2, slot: "right" },
   );
+  variance.name = "assistant-target-adamw-state-second-moment-lane";
   const correctedMoment = place(
     context,
     createPanel(["m_hat=m1/(1-beta1)", "m_hat=-0.0031"], {
@@ -1287,6 +1480,8 @@ function buildAdamWProcess(
     }),
     { stop: 3, slot: "left", row: 1 },
   );
+  correctedMoment.name =
+    "assistant-target-adamw-state-first-moment-lane";
   const correctedVariance = place(
     context,
     createPanel(["v_hat=v1/(1-beta2)", "v_hat=9.61e-6"], {
@@ -1298,6 +1493,8 @@ function buildAdamWProcess(
     }),
     { stop: 3, slot: "right", row: 1 },
   );
+  correctedVariance.name =
+    "assistant-target-adamw-state-second-moment-lane";
   const normalized = place(
     context,
     createPanel(["m_hat/(sqrt(v_hat)+eps)", "= -0.999996774"], {
@@ -1309,6 +1506,7 @@ function buildAdamWProcess(
     }),
     { stop: 4, slot: "left" },
   );
+  normalized.name = "assistant-target-adamw-state-normalized-gradient";
   const adamComponent = place(
     context,
     createPanel(["-eta x normalized", "+0.000999996774"], {
@@ -1320,6 +1518,7 @@ function buildAdamWProcess(
     }),
     { stop: 5, slot: "left", row: 1 },
   );
+  adamComponent.name = "assistant-target-adamw-state-update-components";
   const decayComponent = place(
     context,
     createPanel(["-eta x lambda x w", "-0.000000174"], {
@@ -1331,6 +1530,7 @@ function buildAdamWProcess(
     }),
     { stop: 5, slot: "right", row: 1 },
   );
+  decayComponent.name = "assistant-target-adamw-state-update-components";
   // The junction stands at the runway edge, clear of the DELTA arch it feeds,
   // so neither hides the other on the way out.
   const plus = place(context, createGlyph("+", green, 1.9), {
@@ -1339,6 +1539,7 @@ function buildAdamWProcess(
     row: 0.5,
     xShift: -3.6,
   });
+  plus.name = "assistant-target-adamw-state-update-components";
   const delta = place(
     context,
     createPanel(["DELTA w", "+0.000999822774"], {
@@ -1350,6 +1551,7 @@ function buildAdamWProcess(
     }),
     { stop: 5, slot: "centre", zShift: -3.4 },
   );
+  delta.name = "assistant-target-adamw-state-delta-weight";
   // The second-moment stream has to change sides twice; both crossings happen
   // at arch height so the walkway underneath stays clear.
   const varianceFeed = [
@@ -1367,30 +1569,81 @@ function buildAdamWProcess(
     normalized.position.clone(),
   ];
   const paths = [
-    createPath(avenueRoute(input.position, moment.position, 1.0), warm, 0.045, 0.35),
-    createPath(varianceFeed, amber, 0.045, 0.35),
-    createPath([moment.position, correctedMoment.position, normalized.position], warm, 0.045, 0.35),
-    createPath(varianceReturn, amber, 0.045, 0.35),
-    createPath([normalized.position, adamComponent.position, plus.position, delta.position], green, 0.05, 0.4),
+    bindComponentProcessActor(
+      createPath(
+        avenueRoute(input.position, moment.position, 1.0),
+        warm,
+        0.045,
+        0.35,
+      ),
+      "adamw-moment-flow",
+    ),
+    bindComponentProcessActor(
+      createPath(varianceFeed, amber, 0.045, 0.35),
+      "adamw-moment-flow",
+    ),
+    bindComponentProcessActor(
+      createPath(
+        [moment.position, correctedMoment.position, normalized.position],
+        warm,
+        0.045,
+        0.35,
+      ),
+      "adamw-moment-flow",
+    ),
+    bindComponentProcessActor(
+      createPath(varianceReturn, amber, 0.045, 0.35),
+      "adamw-moment-flow",
+    ),
+    bindComponentProcessActor(
+      createPath(
+        [
+          normalized.position,
+          adamComponent.position,
+          plus.position,
+          delta.position,
+        ],
+        green,
+        0.05,
+        0.4,
+      ),
+      "adamw-update-flow",
+    ),
     // Weight decay reads the same register but skips the moment machinery, so
     // it crosses to the far lane at the same arch and runs the length of it.
-    createPath(
-      [
-        input.position,
-        vector(-4.8, 4.9, avenueZ(0.5)),
-        vector(0, AVENUE.archY + 0.8, avenueZ(0.9)),
-        vector(5.2, 5.8, avenueZ(1.3)),
-        decayComponent.position,
-        plus.position,
-        delta.position,
-      ],
-      amber,
-      0.035,
-      0.28,
+    bindComponentProcessActor(
+      createPath(
+        [
+          input.position,
+          vector(-4.8, 4.9, avenueZ(0.5)),
+          vector(0, AVENUE.archY + 0.8, avenueZ(0.9)),
+          vector(5.2, 5.8, avenueZ(1.3)),
+          decayComponent.position,
+          plus.position,
+          delta.position,
+        ],
+        amber,
+        0.035,
+        0.28,
+      ),
+      "adamw-update-flow",
     ),
   ];
   context.group.add(...paths);
-  const packets = [createPacket(warm, 0.15), createPacket(amber, 0.15), createPacket(green, 0.17)];
+  const packets = [
+    bindComponentProcessActor(
+      createPacket(warm, 0.15),
+      "adamw-moment-flow",
+    ),
+    bindComponentProcessActor(
+      createPacket(amber, 0.15),
+      "adamw-moment-flow",
+    ),
+    bindComponentProcessActor(
+      createPacket(green, 0.17),
+      "adamw-update-flow",
+    ),
+  ];
   context.group.add(...packets);
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
@@ -1451,6 +1704,7 @@ function buildWeightUpdateProcess(
     }),
     { stop: 0, slot: "left" },
   );
+  oldTile.name = "assistant-target-weight-update-stored-weight-before";
   const deltaTile = place(
     context,
     createPanel(["DELTA w", "+0.000999822774"], {
@@ -1462,6 +1716,7 @@ function buildWeightUpdateProcess(
     }),
     { stop: 0, slot: "right" },
   );
+  deltaTile.name = "assistant-target-weight-update-delta-weight";
   const oldStart = oldTile.position.clone();
   const deltaStart = deltaTile.position.clone();
   const oldYaw = oldTile.rotation.y;
@@ -1470,6 +1725,7 @@ function buildWeightUpdateProcess(
     stop: 1,
     slot: "centre",
   });
+  plus.name = "assistant-target-weight-update-scalar-addition";
   const oldMeet = plus.position.clone().add(vector(-3.6, -0.5, 1.8));
   const deltaMeet = plus.position.clone().add(vector(3.6, -0.5, 1.8));
   const resultTile = place(
@@ -1483,14 +1739,29 @@ function buildWeightUpdateProcess(
     }),
     { stop: 2, slot: "right" },
   );
+  resultTile.name = "assistant-target-weight-update-updated-weight";
   const equals = place(context, createGlyph("=", green, 2.0), {
     stop: 2,
     slot: "right",
     xShift: -3.0,
     zShift: 2.6,
   });
-  context.group.add(createPath(avenueRoute(oldStart, oldMeet, 0.8), amber, 0.045, 0.34));
-  context.group.add(createPath(avenueRoute(deltaStart, deltaMeet, 0.8), green, 0.045, 0.34));
+  equals.name = "assistant-target-weight-update-scalar-addition";
+  context.group.add(
+    bindComponentProcessActor(
+      createPath(avenueRoute(oldStart, oldMeet, 0.8), amber, 0.045, 0.34),
+      "weight-update-operands-flow",
+    ),
+    bindComponentProcessActor(
+      createPath(
+        avenueRoute(deltaStart, deltaMeet, 0.8),
+        green,
+        0.045,
+        0.34,
+      ),
+      "weight-update-operands-flow",
+    ),
+  );
 
   const matrixValuesBefore = Array.from({ length: 64 }, () => "." as string);
   const matrixValuesAfter = [...matrixValuesBefore];
@@ -1518,11 +1789,13 @@ function buildWeightUpdateProcess(
     createValueBoard(matrixValuesBefore, 8, 8, boardOptions),
     { stop: 4, slot: "left" },
   );
+  beforeBoard.name = "assistant-target-weight-update-matrix-before";
   const afterBoard = place(
     context,
     createValueBoard(matrixValuesAfter, 8, 8, boardOptions),
     { stop: 4, slot: "right" },
   );
+  afterBoard.name = "assistant-target-weight-update-matrix-after";
   const selectedCellPosition = afterBoard.localToWorld(
     vector(
       -updateBoardWidth / 2 + 6.5 * (updateBoardWidth / 8),
@@ -1538,10 +1811,21 @@ function buildWeightUpdateProcess(
     selectedCellPosition.clone(),
   ];
   context.group.add(
-    createPath([equals.position, ...insertionRoute], green, 0.055, 0.38),
+    bindComponentProcessActor(
+      createPath([equals.position, ...insertionRoute], green, 0.055, 0.38),
+      "weight-update-write-flow",
+    ),
   );
-  const insertionPacket = addAt(context, createPacket(green, 0.22), resultTile.position.clone());
+  const insertionPacket = addAt(
+    context,
+    bindComponentProcessActor(
+      createPacket(green, 0.22),
+      "weight-update-write-flow",
+    ),
+    resultTile.position.clone(),
+  );
   const updateRing = addAt(context, makeRing(green, 0.72, 0.075), selectedCellPosition.clone());
+  updateRing.name = "assistant-target-weight-update-matrix-after";
   updateRing.rotation.y = afterBoard.rotation.y;
   const onlyNow = place(
     context,
@@ -1611,6 +1895,8 @@ function buildNextStepProcess(
     }),
     { stop: 0, slot: "left" },
   );
+  beforeReadout.name =
+    "assistant-target-model-changed-next-step-old-parameter-state";
   const afterReadout = place(
     context,
     createPanel(["theta1 SELECTED CELL", "WQ[3,6] = 0.018399822774"], {
@@ -1622,6 +1908,8 @@ function buildNextStepProcess(
     }),
     { stop: 1, slot: "right" },
   );
+  afterReadout.name =
+    "assistant-target-model-changed-next-step-updated-parameter-state";
 
   // The model itself is a bay, not an obstacle: the four storeys stack up one
   // lane so the visitor reads them from the runway on the way past.
@@ -1629,6 +1917,10 @@ function buildNextStepProcess(
   context.group.add(model);
   const thetaZero = new THREE.Group();
   const thetaOne = new THREE.Group();
+  thetaZero.name =
+    "assistant-target-model-changed-next-step-old-parameter-state";
+  thetaOne.name =
+    "assistant-target-model-changed-next-step-updated-parameter-state";
   model.add(thetaZero, thetaOne);
   const oldMaterial = new THREE.MeshBasicMaterial({
     color: "#7f98aa",
@@ -1669,11 +1961,14 @@ function buildNextStepProcess(
       (Math.floor(index / 4) - 1.5) * 0.72,
       1.6,
     );
+    bindComponentProcessActor(light, "next-step-version-flow");
     model.add(light);
     parameterLights.push(light);
   }
 
   const gradientBuffers = new THREE.Group();
+  gradientBuffers.name =
+    "assistant-target-model-changed-next-step-gradient-buffer";
   gradientBuffers.position.copy(
     avenueAnchor({ stop: 3, slot: "right" }).add(vector(0, -2.8, 0.9)),
   );
@@ -1686,7 +1981,7 @@ function buildNextStepProcess(
     box.position.set((index % 4 - 1.5) * 0.55, Math.floor(index / 4) * 0.55, 0);
     gradientBuffers.add(box);
   }
-  place(
+  const gradientBufferPanel = place(
     context,
     createPanel(["GRAD BUFFER", "clears -> 0"], {
       width: 4.8,
@@ -1697,6 +1992,8 @@ function buildNextStepProcess(
     }),
     { stop: 3, slot: "right" },
   );
+  gradientBufferPanel.name =
+    "assistant-target-model-changed-next-step-gradient-buffer";
   const memoryPanel = place(
     context,
     createPanel(["ADAM STATE PERSISTS", "m1=-0.00031", "v1=9.61e-9"], {
@@ -1708,6 +2005,8 @@ function buildNextStepProcess(
     }),
     { stop: 4, slot: "left" },
   );
+  memoryPanel.name =
+    "assistant-target-model-changed-next-step-optimizer-memory";
   const postTrainingPlaque = place(
     context,
     createPanel([
@@ -1735,6 +2034,7 @@ function buildNextStepProcess(
     }),
     { stop: 5, slot: "right" },
   );
+  nextBatch.name = "assistant-target-model-changed-next-step-next-batch";
   const batchStart = nextBatch.position.clone();
   const batchEnd = avenueAnchor({ stop: 5, slot: "right", zShift: -4.6 });
   const routePanel = place(
@@ -1748,11 +2048,27 @@ function buildNextStepProcess(
     }),
     { stop: 5, slot: "centre" },
   );
+  routePanel.name =
+    "assistant-target-model-changed-next-step-training-loop";
   // The gate leaves stand at the runway edge and slide outward, so the visitor
   // walks between them rather than around them.
   const gateZ = avenueZ(5.4);
-  const leftDoor = addAt(context, makeDeck(vector(1.4, 3.4, 0.25), green, 0.46), vector(-4.5, -0.65, gateZ));
-  const rightDoor = addAt(context, makeDeck(vector(1.4, 3.4, 0.25), green, 0.46), vector(4.5, -0.65, gateZ));
+  const leftDoor = addAt(
+    context,
+    bindComponentProcessActor(
+      makeDeck(vector(1.4, 3.4, 0.25), green, 0.46),
+      "next-step-loop-gate",
+    ),
+    vector(-4.5, -0.65, gateZ),
+  );
+  const rightDoor = addAt(
+    context,
+    bindComponentProcessActor(
+      makeDeck(vector(1.4, 3.4, 0.25), green, 0.46),
+      "next-step-loop-gate",
+    ),
+    vector(4.5, -0.65, gateZ),
+  );
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);

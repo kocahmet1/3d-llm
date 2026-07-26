@@ -1427,6 +1427,7 @@ function buildFinalHidden(context: ChamberProcessContext): ChamberProcessUpdater
     }),
     avenueAnchor({ stop: 0, slot: "centre", offset: [0, -1.15, 0] }),
   );
+  tokenBoard.name = "assistant-target-final-hidden-input-tensor";
 
   // The pods fly the avenue in the arch tier: the visitor walks under the whole
   // batch instead of having a rack of capsules laid across the walkway.
@@ -1434,7 +1435,7 @@ function buildFinalHidden(context: ChamberProcessContext): ChamberProcessUpdater
   const podEnter = avenueZ(1);
   const podExit = avenueZ(3);
   const pods = new THREE.Group();
-  pods.name = "twelve-final-layernorm-pods";
+  pods.name = "assistant-target-final-hidden-input-tensor";
   const podMaterial = createProcessMaterial(CYAN, 0.6, 0.74);
   for (let index = 0; index < 12; index += 1) {
     const row = Math.floor(index / 6);
@@ -1463,6 +1464,9 @@ function buildFinalHidden(context: ChamberProcessContext): ChamberProcessUpdater
     new THREE.Mesh(new THREE.BoxGeometry(8.0, 0.1, 0.26), createProcessMaterial(STEEL, 1.0, 0.72)),
     vector(0, podY, ringZ + 0.35),
   );
+  normRing.name = "assistant-target-final-hidden-layernorm";
+  innerRing.name = "assistant-target-final-hidden-layernorm";
+  meanPlane.name = "assistant-target-final-hidden-layernorm";
   // The recipe hangs above the vector it is applied to, rather than beside it:
   // stacking keeps the whole lane on one sightline from the walkway.
   add(
@@ -1536,6 +1540,10 @@ function buildFinalHidden(context: ChamberProcessContext): ChamberProcessUpdater
     }),
     avenueAnchor({ stop: 4, slot: "centre" }),
   );
+  before.name = "assistant-target-final-hidden-selected-input";
+  centered.name = "assistant-target-final-hidden-centered-vector";
+  normalized.name = "assistant-target-final-hidden-normalized-vector";
+  finalBoard.name = "assistant-target-final-hidden-output-tensor";
 
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
@@ -1597,6 +1605,7 @@ function buildVocabularyProjection(context: ChamberProcessContext): ChamberProce
       { stop: 0, slot: "left", xShift: 1.0 },
     ),
   );
+  hBoard.name = "assistant-target-vocab-hidden-input";
   const weightValues = Array.from({ length: 128 }, (_, index) => `w${Math.floor(index / 16)}${index % 16}`);
   const weights = add(
     root,
@@ -1615,11 +1624,13 @@ function buildVocabularyProjection(context: ChamberProcessContext): ChamberProce
       { stop: 1, slot: "right", offset: [0, 1.0, 0], xShift: 2.8 },
     ),
   );
+  weights.name = "assistant-target-vocab-weight-matrix";
   const rowBeam = add(
     root,
     new THREE.Mesh(new THREE.BoxGeometry(10.6, 0.1, 0.09), createProcessMaterial(CYAN, 1.4, 0.8)),
     weights.position.clone().add(vector(0, 1.85, 0.36)),
   );
+  rowBeam.name = "assistant-target-vocab-matrix-multiply";
   rowBeam.rotation.y = weights.rotation.y;
   const beamTop = rowBeam.position.y;
   const beamBottom = weights.position.y - 1.75;
@@ -1629,7 +1640,7 @@ function buildVocabularyProjection(context: ChamberProcessContext): ChamberProce
   const accumulatorY = AVENUE.archY + 0.4;
   const accumulatorZ = avenueZ(2);
   const accumulators = new THREE.Group();
-  accumulators.name = "sixteen-logit-accumulators";
+  accumulators.name = "assistant-target-vocab-accumulators";
   const accumulatorMaterial = createProcessMaterial(BLUE, 1.0, 0.78);
   const accumulatorMeshes: THREE.Mesh[] = [];
   const accumulatorX = (index: number) => (index - 7.5) * 0.92;
@@ -1655,6 +1666,7 @@ function buildVocabularyProjection(context: ChamberProcessContext): ChamberProce
 
   const productPackets = Array.from({ length: 16 }, (_, index) => {
     const packet = createPacket(index === SELECTED_TRACE.batch.selectedTargetTokenId ? GOLD : CYAN, 0.105);
+    packet.name = "assistant-target-vocab-matrix-multiply";
     root.add(packet);
     return packet;
   });
@@ -1677,6 +1689,7 @@ function buildVocabularyProjection(context: ChamberProcessContext): ChamberProce
       { stop: 3, slot: "right", row: 0.55 },
     ),
   );
+  bias.name = "assistant-target-vocab-bias";
   const vocabulary = [...SELECTED_TRACE.vocabulary];
   const logitLabels = SELECTED_TRACE.output.selectedLogits.map(
     (value, index) => `${vocabulary[index]}:${value.toFixed(3)}`,
@@ -1695,6 +1708,7 @@ function buildVocabularyProjection(context: ChamberProcessContext): ChamberProce
     }),
     avenueAnchor({ stop: 4, slot: "centre" }),
   );
+  logits.name = "assistant-target-vocab-logit-output";
 
   const hHome = hBoard.position.clone();
   const hYaw = hBoard.rotation.y;

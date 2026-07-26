@@ -331,6 +331,24 @@ export function createPacket(
   return packet;
 }
 
+/**
+ * Tags a scene-only moving actor for one or more authored component-process
+ * beats. These keys never enter the voice prompt; the focus stage uses them to
+ * include packets and routes that make an interaction visually legible.
+ */
+export function bindComponentProcessActor<T extends THREE.Object3D>(
+  object: T,
+  ...sceneKeys: string[]
+) {
+  const existing = Array.isArray(object.userData.componentProcessSceneKeys)
+    ? (object.userData.componentProcessSceneKeys as string[])
+    : [];
+  object.userData.componentProcessSceneKeys = [
+    ...new Set([...existing, ...sceneKeys]),
+  ];
+  return object;
+}
+
 export function createPath(
   points: readonly THREE.Vector3[],
   color: THREE.ColorRepresentation,

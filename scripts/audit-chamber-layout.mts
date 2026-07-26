@@ -106,7 +106,7 @@ const SHELL = await (async () => {
     { size: number[]; exhibitScale: number; exhibitPosition: number[] }
   > = {};
   const entry =
-    /"([a-z0-9-]+)":\s*\{\s*size:\s*\[([^\]]+)\][\s\S]*?exhibitScale:\s*([\d.]+),\s*exhibitPosition:\s*\[([^\]]+)\]/g;
+    /"([a-z0-9-]+)":\s*\{(?:\s|\/\/[^\r\n]*(?:\r?\n))*size:\s*\[([^\]]+)\][\s\S]*?exhibitScale:\s*([\d.]+),\s*exhibitPosition:\s*\[([^\]]+)\]/g;
   let match: RegExpExecArray | null;
   while ((match = entry.exec(block))) {
     specs[match[1]] = {
@@ -153,6 +153,11 @@ function collectSurfaces(root: THREE.Object3D): Surface[] {
     const box = new THREE.Box3();
     node.traverse((child) => {
       if (child.name === "neon-edge-frame") return;
+      // Painted light — beams, floor pools, glows — belongs to a surface but is
+      // not part of it. Counting it would inflate the surface's box, so two
+      // panels whose light spills overlap would report as physically clashing
+      // and a pool of light on the floor would occlude whatever is behind it.
+      if (child.userData.processDecal) return;
       const mesh = child as THREE.Mesh;
       if (!mesh.geometry) return;
       box.union(new THREE.Box3().setFromObject(mesh));
@@ -426,6 +431,12 @@ for (const station of stations) {
       mesh.geometry instanceof THREE.TorusGeometry
     ) {
       return;
+    }
+    // Light cast onto the floor or air is not something you can walk into.
+    let decorative: THREE.Object3D | null = node;
+    while (decorative) {
+      if (decorative.userData.processDecal) return;
+      decorative = decorative.parent;
     }
     const positions = mesh.geometry.getAttribute("position");
     if (!positions) return;

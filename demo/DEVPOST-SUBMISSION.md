@@ -53,7 +53,7 @@ Every station has four explanation layers you can switch between: **Story** (pla
 
 Two features I'm proud of:
 
-- **A realtime voice guide.** Right-click any component — a query vector, the causal mask, a single logit — and it lifts onto a lit stage while an in-world guide (OpenAI Realtime API) walks over and explains *exactly* what you're pointing at. It can also drive the lesson through allowlisted function calls ("take me to cross-entropy," "show the math view," "choose the right branch"), each validated against a fixed set of controls — never arbitrary clicks, URLs, or scripts.
+- **A realtime voice guide.** Right-click any component — a query vector, the causal mask, a single logit — and it lifts onto a lit stage while an in-world guide (OpenAI Realtime API) walks over and explains *exactly* what you're pointing at. The spotlight keeps the microphone open for hands-free follow-ups, and you can interrupt the guide simply by speaking again.
 - **A real trainer.** The Custom Training Chamber isn't a video. Paste your own `.txt`, hit start, and a real decoder-only Transformer trains on your machine — authentic loss, validation, throughput, checkpoints — the same loop you just walked through. A sync script pulls the Code-view snippets straight from that Python source, so the lesson can't drift into fake pseudocode.
 
 ## How I built it (Codex + GPT-5.6)

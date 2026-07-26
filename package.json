@@ -11,11 +11,12 @@
     "prebuild": "npm run code:sync",
     "dev": "vinext dev",
     "dev:training": "node scripts/start-training-chamber.mjs",
+    "audit:components": "node --experimental-strip-types --import ./scripts/ts-extension-register.mjs scripts/audit-component-processes.mts",
     "build": "vinext build",
     "start": "vinext start",
     "server": "vinext build && vinext start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs tests/assistant-feature.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern trainer/.venv",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern trainer/.venv --ignore-pattern lib",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

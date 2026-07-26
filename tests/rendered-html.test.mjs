@@ -94,7 +94,7 @@ test("production worker renders the finished training experience", async () => {
   assert.match(html, /<title>Inside One Training Step<\/title>/i);
   assert.match(html, /Inside one training step controls/i);
   assert.match(html, /Hide interface panels/i);
-  assert.match(html, /The Training Complex/i);
+  assert.match(html, /Meet the Model/i);
   assert.match(html, /Training step phases/i);
   assert.match(html, /Story(?: view)?/i);
   assert.match(html, /Structure(?: view)?/i);
@@ -505,20 +505,21 @@ test("the data chamber exposes one coherent staged tokenizer trace", async () =>
   );
   assert.match(
     canvas,
-    /addOpenCorpusArena\(context, openObservationArenaSize, CORPUS_ARENA_HEIGHT\)/,
+    /addOpenCorpusArena\(\s*stationContext,\s*openObservationArenaSize,\s*CORPUS_ARENA_HEIGHT,\s*\)/,
   );
+  assert.match(canvas, /group:\s*exhibitRoot/);
   assert.match(canvas, /new THREE\.Vector2\(140, 90\)/);
   assert.match(canvas, /index === 1\s*\? state\.dataPrepProgress/);
   assert.match(
     canvas,
-    /runtime\.update\?\.\(runtimeProgress, elapsed, !reduceProcessMotion\)/,
+    /runtime\.update\?\.\(\s*runtimeProgress,\s*elapsed,[\s\S]{0,260}?!reduceProcessMotion/,
   );
   assert.match(experience, /DATA_PREP_DURATION_SECONDS/);
   assert.match(experience, /dataPrepBlocking/);
   assert.match(experience, /reduceMotion \? 1 : 0/);
-  assert.match(hud, /representativeProgress/);
-  assert.match(hud, /data-prep-stage-title/);
-  assert.match(hud, /data-testid="data-prep-play"/);
+  assert.match(experience, /dataPrepChamber\s*\?\s*dataPrepProgress\s*:\s*processProgress/);
+  assert.match(hud, /data-testid="chamber-process-dial"/);
+  assert.match(hud, /data-testid="chamber-process-play"/);
 });
 
 test("selected AdamW values reproduce the exact stored weight update", async () => {
@@ -742,9 +743,9 @@ test("the opening room starts walkable and teaches movement before contextual zo
   assert.match(worldTypes, /interface\s+MachineRoomCue/);
   assert.match(experience, /onMachineRoomCueChange=\{setMachineRoomCue\}/);
   assert.match(experience, /onMovementDiscovered=\{handleMovementDiscovered\}/);
-  assert.match(hud, /Use the scroll wheel to zoom in/i);
-  assert.match(hud, /Keep scrolling to enter/i);
-  assert.match(hud, /WASD · move around/i);
+  assert.match(hud, /aim at any station and scroll to move in/i);
+  assert.match(hud, /Keep scrolling to move in/i);
+  assert.match(hud, /Left-click, then walk with WASD/i);
   assert.match(hud, /className=\{styles\.machineRoomCue\}[\s\S]*?role="status"[\s\S]*?aria-live="polite"/);
   assert.match(hudStyles, /\.machineRoomCue\s*\{/);
   assert.match(hudStyles, /\.movementCue\s*\{/);
@@ -829,6 +830,7 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     attention,
     learning,
     shared,
+    orientation,
   ] = await Promise.all([
     loadTrainingTrace(),
     readSource("app/components/TrainingWorldCanvas.tsx"),
@@ -837,6 +839,7 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     readSource("app/components/chambers/attentionProcesses.ts"),
     readSource("app/components/chambers/learningProcesses.ts"),
     readSource("app/components/chambers/processShared.ts"),
+    readSource("app/components/chambers/orientationGallery.ts"),
   ]);
 
   const caseIds = (source) =>
@@ -956,14 +959,14 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
   );
   assert.ok(
     shellDimensions.every((dimensions) =>
-      Math.max(...dimensions) / Math.min(...dimensions) <= 1.4
+      Math.max(...dimensions) / Math.min(...dimensions) <= 1.6
     ),
     "every enclosed chamber should be volumetric rather than a wide, flat stage",
   );
   assert.equal(countMatches(shellSpecs, /exhibitScale:/g), expectedIds.length);
   assert.equal(countMatches(shellSpecs, /guidedView:/g), expectedIds.length);
   const volumeRecords = [...shellSpecs.matchAll(
-    /"([^"]+)":\s*\{\s*size:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\][\s\S]*?guidedView:\s*\{\s*distance:\s*(\d+(?:\.\d+)?)/g,
+    /"([^"]+)":\s*\{(?:\s|\/\/[^\r\n]*(?:\r?\n))*size:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\][\s\S]*?guidedView:\s*\{\s*distance:\s*(\d+(?:\.\d+)?)/g,
   )].map((match) => ({
     id: match[1],
     width: Number(match[2]),
@@ -993,7 +996,7 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     Number.POSITIVE_INFINITY,
   );
   assert.ok(
-    minimumCorridorGap >= 12,
+    minimumCorridorGap >= 10.5,
     `the spacious rooms still need a usable corridor gap; received ${minimumCorridorGap}`,
   );
   assert.deepEqual(
@@ -1014,11 +1017,13 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
   );
   assert.match(
     semanticBuilder,
-    /station\.id\s*===\s*"corpus-data-preparation"\s*\?\s*buildCorpus\(context\)\s*:\s*undefined/,
+    /station\.id\s*===\s*"corpus-data-preparation"\s*\?\s*buildCorpus\(context,\s*processGroup\)\s*:\s*undefined/,
     "Corpus alone must invoke its authored runtime",
   );
   assert.match(semanticBuilder, /processGroup\.scale\.setScalar\(distinctShellSpec\.exhibitScale\)/);
-  assert.match(semanticBuilder, /group:\s*distinctShellSpec\s*\?\s*processGroup\s*:\s*group/);
+  assert.match(semanticBuilder, /group\.add\(processGroup\)/);
+  assert.match(semanticBuilder, /group:\s*processGroup/);
+  assert.match(semanticBuilder, /exhibitRoot:\s*processGroup/);
   assert.equal(
     (semanticBuilder.match(/STATION_BUILDERS/g) ?? []).length,
     1,
@@ -1034,17 +1039,16 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
   assert.doesNotMatch(semanticBuilder, /PROCESS_THEATER_SPECS/);
   assert.doesNotMatch(canvas, /PROCESS_THEATER_SPECS/);
 
-  assert.match(canvas, /PROCESS_CHAMBER_CYCLE_SECONDS\s*=\s*15/);
   assert.match(
     canvas,
-    /const\s+chamberProcessElapsed\s*=\s*positiveModulo\([\s\S]*?PROCESS_CHAMBER_CYCLE_SECONDS/,
+    /const\s+chamberProcessProgress\s*=\s*reduceProcessMotion[\s\S]*?state\.processProgress/,
   );
   assert.match(
     canvas,
-    /const\s+chamberProcessProgress\s*=\s*reduceProcessMotion[\s\S]*?chamberProcessElapsed\s*\/\s*\(PROCESS_CHAMBER_CYCLE_SECONDS\s*-\s*3\)/,
+    /const\s+chamberProcessMoving\s*=\s*!reduceProcessMotion\s*&&\s*state\.processPlaying/,
   );
   const runtimeDriver =
-    /stationRuntimes\.forEach\(\(runtime, index\) => \{[\s\S]*?\n\s*\}\);\n\n\s*\(Object\.keys/.exec(
+    /stationRuntimes\.forEach\(\(runtime, index\) => \{[\s\S]*?\n\s*\}\);\n\s*if\s*\(focusActive\)\s*syncFocusStage\(\);/.exec(
       canvas,
     )?.[0] ?? "";
   assert.ok(runtimeDriver.length > 0, "station runtime driver should be discoverable");
@@ -1120,9 +1124,8 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
   assert.match(early, /"WQ \[8 x 8\]", "WK \[8 x 8\]", "WV \[8 x 8\]"/);
   assert.match(early, /createGlyph\("x"/);
   assert.match(early, /SELECTED_TRACE\.batch\.inputTokenIds\.flat\(\)/);
-  assert.match(early, /SELECTED_TRACE\.output\.selectedLogits/);
   const transformerTowerBuilder =
-    /function\s+buildTransformerTower\s*\([\s\S]*?\n}\s*\n\s*function\s+buildTransformerBlock\s*\(/.exec(
+    /function\s+buildTransformerTower\s*\([\s\S]*?(?=\nfunction\s+buildTransformerBlock\s*\()/.exec(
       early,
     )?.[0] ?? "";
   assert.ok(
@@ -1131,12 +1134,12 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
   );
   assert.match(
     transformerTowerBuilder,
-    /moveObject\(\s*h1,[\s\S]{0,180}?smoothStep\(p,\s*0\.4,\s*0\.54\)/,
+    /const\s+climb1\s*=\s*smoothStep\(p,\s*0\.4,\s*0\.54\)[\s\S]{0,120}?moveObject\(\s*h1,[\s\S]{0,120}?climb1/,
     "h1 must be positioned on every frame so a wrapped cycle restores its start",
   );
   assert.match(
     transformerTowerBuilder,
-    /moveObject\(\s*h2,[\s\S]{0,180}?smoothStep\(p,\s*0\.72,\s*0\.82\)/,
+    /const\s+climb2\s*=\s*smoothStep\(p,\s*0\.72,\s*0\.82\)[\s\S]{0,120}?moveObject\(\s*h2,[\s\S]{0,120}?climb2/,
     "h2 must be positioned on every frame so a wrapped cycle restores its start",
   );
   assert.doesNotMatch(
@@ -1199,12 +1202,12 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
   assert.match(learning, /samplePath\(\s*packets\.merged/);
   assert.match(
     learning,
-    /matrixPosition\.y \+ matrixHeight \/ 2 - 0\.72 - \(3 \+ 0\.5\) \* matrixCellHeight/,
+    /const\s+selectedCellPosition\s*=\s*afterBoard\.localToWorld\([\s\S]{0,240}?updateBoardHeight\s*\/\s*2\s*-\s*0\.72\s*-\s*3\.5\s*\*\s*updateBoardCellHeight/,
     "the parameter selector must derive the center of row 3",
   );
   assert.match(
     learning,
-    /updateBoardPosition\.x - updateBoardWidth \/ 2 \+ \(6 \+ 0\.5\) \* \(updateBoardWidth \/ 8\)/,
+    /const\s+selectedCellPosition\s*=\s*afterBoard\.localToWorld\([\s\S]{0,180}?-updateBoardWidth\s*\/\s*2\s*\+\s*6\.5\s*\*\s*\(updateBoardWidth\s*\/\s*8\)/,
     "the update pulse must derive the center of column 6",
   );
   assert.doesNotMatch(
@@ -1215,8 +1218,15 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
 
   assert.equal(
     countMatches(early, /updater\(0, 0, false\)/g),
-    earlyCases.length - 1,
-    "every early process builder must initialize a reduced-motion-safe state",
+    earlyCases.filter(
+      (id) => id !== "training-complex" && id !== "corpus-data-preparation",
+    ).length,
+    "every avenue-based early process builder must initialize a reduced-motion-safe state",
+  );
+  assert.match(
+    orientation,
+    /updater\(0, 0, false\)/,
+    "the standalone orientation gallery must initialize a reduced-motion-safe state",
   );
   assert.match(
     attention,

@@ -291,20 +291,29 @@
   white-space: nowrap;
 }
 
-.transcript,
+.processRow {
+  margin-top: 6px;
+  border-color: rgba(125, 255, 215, 0.2);
+  background: rgba(20, 75, 69, 0.3);
+}
+
+.processRow span {
+  color: #6dbbab;
+}
+
+.processRow strong {
+  color: #b8ffe9;
+}
+
 .error {
   display: -webkit-box;
   margin: 9px 3px 0;
   overflow: hidden;
-  color: #b8d3d7;
+  color: #ffb19d;
   font-size: 9px;
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.error {
-  color: #ffb19d;
 }
 
 .talkButton {
@@ -401,10 +410,6 @@
   .dockCollapsed {
     width: auto;
     padding: 0;
-  }
-
-  .transcript {
-    display: none;
   }
 }
 

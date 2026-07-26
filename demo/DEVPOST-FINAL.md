@@ -64,7 +64,7 @@ All selected numeric relationships come from one controlled deterministic trace.
 
 The project also includes a contextual voice guide built with the OpenAI Realtime API over WebRTC. Right-clicking a supported exhibit lifts a magnified replica onto a spotlight stage. The guide receives a small, frozen snapshot describing the current chamber, selected exhibit, visible values, teaching branch, and explanation mode, so words such as “this” stay grounded even if the camera moves. Every station has accurate station-level context, while key chambers also have detailed component-level targets.
 
-The guide can operate the lesson through a small allowlist of validated tools: navigating between chambers, pausing or continuing, switching explanation or ride modes, choosing a branch, and controlling data-preparation playback. It never receives a generic browser click, DOM selector, URL, or script tool.
+The guide is deliberately explanation-only: it never navigates, changes lesson controls, or receives a generic browser click, DOM selector, URL, or script tool. The spotlight microphone stays open for hands-free follow-up questions, and the visitor can interrupt by speaking again.
 
 Finally, the Custom Training Chamber connects to a real local PyTorch trainer. A visitor can paste text or add `.txt` and `.md` files, choose a guarded configuration, and train a small byte-level decoder-only Transformer on their own machine. The interface reports authentic training and validation loss, throughput, fixed-seed samples, logs, and checkpoints, and supports pause, stop, resume, and checkpoint recovery.
 
@@ -86,7 +86,7 @@ The hardest challenge was serving two audiences at once: making the experience l
 
 The second challenge was spatial readability. Each concept needed its own opaque chamber so future ideas would not bleed through the current lesson. Camera height, occlusion, lighting, labels, and component placement all required iteration so the world stayed readable while moving.
 
-Grounding the voice guide presented a third challenge. The solution was to give it structured teaching context for the selected exhibit and tightly scoped lesson controls instead of broad access to the page.
+Grounding the voice guide presented a third challenge. The solution was to give it structured teaching context for the selected exhibit, held as one frozen spotlight snapshot for the full follow-up conversation instead of broad access to the page.
 
 ## What I learned
 

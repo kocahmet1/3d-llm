@@ -19,7 +19,10 @@ import type {
   TrainingHUDProps,
   TrainingPhase,
 } from "../lib/worldTypes";
-import { CHAMBER_PROCESS_DURATION_SECONDS } from "../lib/trainingTrace";
+import {
+  chamberProcessDurationSeconds,
+  chamberProcessLoops,
+} from "../lib/trainingTrace";
 import styles from "./TrainingHUD.module.css";
 
 const PHASES: ReadonlyArray<{
@@ -39,6 +42,17 @@ const RIDE_MODES: ReadonlyArray<{ id: RideMode; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "explore", label: "Explore" },
 ];
+
+/**
+ * Space is reserved for the chamber process dial, world-wide. A button that
+ * still has focus after a click would otherwise fire its own activation on the
+ * same press — either stealing the key or double-toggling and cancelling out.
+ * Buttons that opt into this keep Enter, and give up Space.
+ */
+function swallowSpaceActivation(event: ReactKeyboardEvent<HTMLButtonElement>) {
+  if (event.code !== "Space" && event.key !== " ") return;
+  event.preventDefault();
+}
 
 const DETAIL_MODES: ReadonlyArray<{
   id: DetailMode;
@@ -129,6 +143,7 @@ export function TrainingHUD({
   dataPrepProgress,
   processProgress,
   processPlaying,
+  processLocked,
   processStops,
   processAvailable,
   onProgressChange,
@@ -147,13 +162,18 @@ export function TrainingHUD({
   // auto-dismisses so it never lingers once they're moving.
   const [chamberEntryHint, setChamberEntryHint] = useState(false);
   useEffect(() => {
-    if (navigationMode !== "free-roam") {
-      setChamberEntryHint(false);
-      return;
-    }
-    setChamberEntryHint(true);
-    const timer = window.setTimeout(() => setChamberEntryHint(false), 7000);
-    return () => window.clearTimeout(timer);
+    let timer: number | undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const enteringChamber = navigationMode === "free-roam";
+      setChamberEntryHint(enteringChamber);
+      if (enteringChamber) {
+        timer = window.setTimeout(() => setChamberEntryHint(false), 7000);
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [navigationMode]);
   const fullCodeDialogId = useId();
   const fullCodeDialogTitleId = useId();
@@ -240,7 +260,15 @@ export function TrainingHUD({
       : safeProcessProgress;
   };
 
+  // The scrub handlers are declared above the component's main station lookup,
+  // so the one fact they need — whether this chamber's transport loops — is
+  // resolved here. An empty station list falls back to looping, the default.
+  const scrubStation =
+    stations[Math.min(stations.length - 1, Math.max(0, Math.round(stationIndex)))];
+  const processLoops = chamberProcessLoops(scrubStation?.id ?? "");
+
   const commitScrub = (from: number, to: number, direction: number) => {
+    if (processLocked) return;
     dialGestureRef.current = { position: to, at: Date.now() };
     const fromStop = stopIndexAt(from);
     const toStop = stopIndexAt(to);
@@ -254,14 +282,20 @@ export function TrainingHUD({
   };
 
   const scrubProcessBy = (delta: number) => {
+    if (processLocked) return;
     if (!Number.isFinite(delta) || delta === 0) return;
     // The running clock would otherwise fight the hand for the same value.
     onProcessPlayingChange(false);
     const base = readScrubBase();
-    commitScrub(base, wrapProgress(base + delta), delta);
+    // A looping chamber comes back round off either end. A run-once chamber
+    // must not: wrapping the orientation walk would throw the visitor from the
+    // entrance to the exit mid-drag.
+    const next = processLoops ? wrapProgress(base + delta) : clamp01(base + delta);
+    commitScrub(base, next, delta);
   };
 
   const scrubProcessTo = (value: number) => {
+    if (processLocked) return;
     onProcessPlayingChange(false);
     const base = readScrubBase();
     const next = clamp01(value);
@@ -277,6 +311,10 @@ export function TrainingHUD({
 
   const handleDialPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (processLocked) {
+      event.preventDefault();
+      return;
+    }
     // Suppressing the default also suppresses the focus it would have given us.
     event.preventDefault();
     event.currentTarget.focus();
@@ -317,6 +355,23 @@ export function TrainingHUD({
   };
 
   const handleDialKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (processLocked) {
+      if (
+        [
+          "ArrowRight",
+          "ArrowUp",
+          "ArrowLeft",
+          "ArrowDown",
+          "PageUp",
+          "PageDown",
+          "Home",
+          "End",
+        ].includes(event.key)
+      ) {
+        event.preventDefault();
+      }
+      return;
+    }
     switch (event.key) {
       case "ArrowRight":
       case "ArrowUp":
@@ -411,10 +466,13 @@ export function TrainingHUD({
   const safeDataPrepProgress = clamp01(dataPrepProgress);
   const journeyHoldingForData =
     station.id === "corpus-data-preparation" && safeDataPrepProgress < 1;
+  // The dial reads out the chamber it is actually driving, so a chamber with
+  // its own pacing (the orientation gallery) shows its own clock.
+  const processDurationSeconds = chamberProcessDurationSeconds(station.id);
   const processElapsedLabel = formatProcessClock(
-    safeProcessProgress * CHAMBER_PROCESS_DURATION_SECONDS,
+    safeProcessProgress * processDurationSeconds,
   );
-  const processTotalLabel = formatProcessClock(CHAMBER_PROCESS_DURATION_SECONDS);
+  const processTotalLabel = formatProcessClock(processDurationSeconds);
   const navigationStatus =
     navigationMode === "machine-room"
       ? {
@@ -972,16 +1030,22 @@ export function TrainingHUD({
           >
             Chamber process, step {currentProcessStop + 1} of {processStopCount},{" "}
             {processElapsedLabel} of {processTotalLabel},{" "}
-            {processPlaying ? "playing" : "held"}
+            {processLocked
+              ? "held while the isolated component replay plays"
+              : processPlaying
+                ? "playing"
+                : "held"}
           </h2>
           <p
             className={`${styles.dialHint} ${
               processPlaying ? "" : styles.dialHintLive
             }`}
           >
-            {processPlaying
-              ? "Space pauses · then turn the dial"
-              : "Turn the dial to move through the animation"}
+            {processLocked
+              ? "The isolated component replay owns this dial"
+              : processPlaying
+                ? "Space pauses · then turn the dial"
+                : "Turn the dial to move through the animation"}
           </p>
           <div className={styles.dialRow}>
             {/* A dial reads as an ornament until something shows which way it
@@ -1035,8 +1099,9 @@ export function TrainingHUD({
                 data-testid="chamber-process-dial"
                 data-detent={processDetent ? "true" : undefined}
                 role="slider"
-                tabIndex={0}
+                tabIndex={processLocked ? -1 : 0}
                 aria-label="Scrub the chamber process"
+                aria-disabled={processLocked}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={processPercent}
@@ -1082,6 +1147,11 @@ export function TrainingHUD({
               className={`${styles.processPlay} ${styles.dialPlay}`}
               data-testid="chamber-process-play"
               onClick={() => onProcessPlayingChange(!processPlaying)}
+              disabled={processLocked}
+              // The world's global Space binding already toggles this dial, so
+              // the focused button must not fire a second time and cancel it.
+              onKeyDown={swallowSpaceActivation}
+              onKeyUp={swallowSpaceActivation}
               aria-label={
                 processPlaying
                   ? "Pause the chamber process"
@@ -1156,6 +1226,11 @@ export function TrainingHUD({
               type="button"
               className={styles.playButton}
               onClick={() => onPlayingChange(!playing)}
+              // The ride is driven by the mouse alone. Space is spoken for by
+              // the chamber process dial, so a focused play button must not
+              // also answer to it; Enter still activates for keyboard users.
+              onKeyDown={swallowSpaceActivation}
+              onKeyUp={swallowSpaceActivation}
               aria-label={playing ? "Pause training journey" : "Play training journey"}
               aria-pressed={playing}
             >

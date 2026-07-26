@@ -7,14 +7,16 @@ const REALTIME_SESSION_CONFIG = JSON.stringify({
   type: "realtime",
   model: "gpt-realtime-2.1",
   output_modalities: ["audio"],
+  reasoning: {
+    effort: "low",
+  },
+  tools: [],
+  tool_choice: "none",
   audio: {
     input: {
-      transcription: {
-        model: "gpt-4o-mini-transcribe",
-      },
       turn_detection: {
         type: "semantic_vad",
-        eagerness: "auto",
+        eagerness: "high",
         create_response: true,
         interrupt_response: true,
       },

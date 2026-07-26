@@ -17,6 +17,114 @@ export const TEACHING_MODEL = {
   validTokens: 12,
 } as const;
 
+/**
+ * Exact learned-parameter census of the teaching model, derived from
+ * TEACHING_MODEL and matching `trainer/configs/toy.toml` (bias = true): token
+ * and position embeddings, per-block LayerNorms, Q/K/V/output projections with
+ * biases, the GELU MLP with biases, the final LayerNorm, and the untied
+ * vocabulary head with bias. The orientation chamber displays these counts;
+ * keeping them derived means they cannot drift from the model dimensions.
+ */
+export const TEACHING_MODEL_PARAMETERS = (() => {
+  const d = TEACHING_MODEL.modelWidth;
+  const vocabulary = TEACHING_MODEL.vocabularySize;
+  const positions = TEACHING_MODEL.sequenceLength;
+  const feedForward = TEACHING_MODEL.feedForwardWidth;
+  const tokenEmbedding = vocabulary * d;
+  const positionEmbedding = positions * d;
+  const perBlock =
+    2 * d + // LayerNorm 1 gain + bias
+    4 * (d * d + d) + // W_Q, W_K, W_V, W_O with biases
+    2 * d + // LayerNorm 2 gain + bias
+    (d * feedForward + feedForward) + // W_up + b_up
+    (feedForward * d + d); // W_down + b_down
+  const blocks = TEACHING_MODEL.transformerBlocks * perBlock;
+  const finalNorm = 2 * d;
+  const vocabularyHead = d * vocabulary + vocabulary;
+  return {
+    tokenEmbedding,
+    positionEmbedding,
+    embeddings: tokenEmbedding + positionEmbedding,
+    perBlock,
+    blocks,
+    finalNorm,
+    vocabularyHead,
+    total:
+      tokenEmbedding + positionEmbedding + blocks + finalNorm + vocabularyHead,
+  } as const;
+})();
+
+/**
+ * Published reference points the orientation chamber compares the specimen
+ * against. These are prose-scale facts from the GPT-2 and GPT-3 papers and
+ * model cards — deliberately kept beside, never inside, the deterministic
+ * trace: nothing here feeds a displayed calculation.
+ */
+export const PRODUCTION_SCALE_REFERENCES = {
+  gpt2Small: {
+    name: "GPT-2 SMALL",
+    year: 2019,
+    parameters: 124_000_000,
+    contextLength: 1024,
+    vocabularySize: 50257,
+    /** WebText: ~8M documents, ~40 GB of text (GPT-2 paper). */
+    trainingBytes: 40e9,
+    trainingData: "~40 GB of web text (WebText, ~8M documents)",
+    modelWidth: 768,
+    transformerBlocks: 12,
+    attentionHeads: 12,
+    feedForwardWidth: 3072,
+  },
+  gpt3: {
+    name: "GPT-3",
+    year: 2020,
+    parameters: 175_000_000_000,
+    contextLength: 2048,
+    vocabularySize: 50257,
+    /** ~570 GB of filtered text, ~300B training tokens (GPT-3 paper). */
+    trainingBytes: 570e9,
+    trainingData: "~570 GB of filtered text (~300B training tokens)",
+    modelWidth: 12288,
+    transformerBlocks: 96,
+    attentionHeads: 96,
+    feedForwardWidth: 49152,
+  },
+} as const;
+
+/**
+ * How one weight matrix inside a Transformer block compares between this
+ * world and GPT-2 small. Both models share the block's shapes — square
+ * projections at d_model², and an MLP that widens by 4× — so the two exhibits
+ * reduce to one honest ratio: every block matrix here is exactly 96× narrower
+ * and 96× shorter than GPT-2's, i.e. 9,216 of ours tile into one of theirs.
+ * The vocabulary head is deliberately excluded: its second dimension is the
+ * vocabulary, which scales by a different factor entirely.
+ */
+export const BLOCK_MATRIX_COMPARISON = (() => {
+  const ours = TEACHING_MODEL;
+  const theirs = PRODUCTION_SCALE_REFERENCES.gpt2Small;
+  const widthRatio = theirs.modelWidth / ours.modelWidth;
+  const feedForwardRatio = theirs.feedForwardWidth / ours.feedForwardWidth;
+  return {
+    widthRatio,
+    feedForwardRatio,
+    /** Only true because both dimensions scale by the same factor. */
+    tilesPerMatrix: widthRatio * feedForwardRatio,
+    attention: {
+      ours: [ours.modelWidth, ours.modelWidth] as const,
+      theirs: [theirs.modelWidth, theirs.modelWidth] as const,
+      oursCells: ours.modelWidth * ours.modelWidth,
+      theirsCells: theirs.modelWidth * theirs.modelWidth,
+    },
+    feedForward: {
+      ours: [ours.modelWidth, ours.feedForwardWidth] as const,
+      theirs: [theirs.modelWidth, theirs.feedForwardWidth] as const,
+      oursCells: ours.modelWidth * ours.feedForwardWidth,
+      theirsCells: theirs.modelWidth * theirs.feedForwardWidth,
+    },
+  } as const;
+})();
+
 /** Station indices retained by the fast Overview Ride. */
 export const OVERVIEW_KEY_STATION_INDICES = [
   0, 3, 4, 5, 6, 7, 11, 13, 15, 18, 20, 22, 23, 24,
@@ -204,7 +312,10 @@ export const DATA_PREP_TRACE = {
  * walked over, instead of the two drifting apart.
  */
 export const CHAMBER_PROCESS_STOPS: Readonly<Record<string, number>> = {
-  "training-complex": 6,
+  // Not an avenue: the orientation theater's "stops" are its slides, so the
+  // dial's detents land exactly on slide boundaries. A contract test ties this
+  // to the deck's actual length.
+  "training-complex": 8,
   "token-stream-context": 4,
   "batch-shifted-targets": 5,
   embedding: 5,
@@ -240,20 +351,61 @@ export const DEFAULT_CHAMBER_PROCESS_STOPS = 5;
  */
 export const CHAMBER_PROCESS_DURATION_SECONDS = 12;
 
+/**
+ * Chambers whose process is not paced like the others.
+ *
+ * Twelve seconds is right for watching one operation happen. The orientation
+ * gallery is not an operation: its transport walks the visitor from placard to
+ * placard, and each placard is a page of reading. At the shared pace the tour
+ * would cross the whole hall in the time it takes to read one heading, so it
+ * gets a briefing-length clock instead — about seven seconds a placard.
+ */
+export const CHAMBER_PROCESS_DURATION_OVERRIDES: Readonly<
+  Record<string, number>
+> = {
+  "training-complex": 56,
+};
+
+/** Seconds one pass of a chamber's process takes at normal speed. */
+export function chamberProcessDurationSeconds(stationId: string) {
+  return (
+    CHAMBER_PROCESS_DURATION_OVERRIDES[stationId] ??
+    CHAMBER_PROCESS_DURATION_SECONDS
+  );
+}
+
+/**
+ * Chambers whose process runs once instead of looping.
+ *
+ * A chamber animation has no end state worth resting on, so it loops. A
+ * briefing does: the orientation gallery's transport is a walk from the first
+ * placard to the last, and looping it would either march the visitor back up
+ * the hall or make the dial wrap them from the entrance to the exit. Running
+ * once means the walk simply finishes, facing the door, and the dial scrubs
+ * within the walk in both directions.
+ */
+const CHAMBER_PROCESS_RUNS_ONCE: ReadonlySet<string> = new Set([
+  "training-complex",
+]);
+
+export function chamberProcessLoops(stationId: string) {
+  return !CHAMBER_PROCESS_RUNS_ONCE.has(stationId);
+}
+
 export const TRAINING_STATIONS: TrainingStation[] = [
   {
     id: "training-complex",
-    title: "The Training Complex",
-    shortTitle: "Training Complex",
+    title: "Meet the Model",
+    shortTitle: "Meet the Model",
     phase: "overview",
     zoomBand: 0,
-    breadcrumb: ["one training step"],
-    story: "Text enters, the model makes guesses, a loss measures those guesses, and learning makes one tiny adjustment before the next batch arrives.",
-    structure: "A closed route links prepared data, a decoder-only Transformer, vocabulary predictions, cross-entropy loss, reverse-mode differentiation, and AdamW. Structures hold parameters; cool streams are activations; warm reverse streams are gradients. Production training wraps this same loop with validation runs, checkpoints, mixed precision, and parallelism.",
-    math: "This world follows one exact step of a 2-block model: B=2, T=6, V=16, d_model=8, H=2, d_head=4. Forward and backward leave parameters fixed; only AdamW changes them.",
-    formula: "batch → f_θ(batch) → L → ∇_θL → AdamW(θ, ∇_θL) → θ′",
-    shape: "θ → θ′ after 12 valid next-token predictions",
-    scaleLabel: "whole learning loop · 1 optimizer step",
+    breadcrumb: ["orientation"],
+    story: "A short briefing before the journey. Everything this model will ever read is two sentences — \"the cat sat on the mat\" and \"a small model can learn\" — and the model itself is 2,080 learned numbers, shrunk until every value ahead stays readable.",
+    structure: "The deck introduces the specimen: a decoder-only Transformer, the same species as GPT-2 and GPT-3, at reading size. 16 vocabulary entries instead of 50,257; a 6-token context window instead of 1,024–2,048; 2,080 parameters instead of 124 million or 175 billion; 46 bytes of training text instead of tens of gigabytes. Inside a block, every weight matrix is 8×8 or 8×32 where GPT-2's is 768×768 or 768×3072.",
+    math: "B=2, T=6, V=16, d_model=8, H=2, d_head=4, blocks=2. Parameter census: embeddings 176 + blocks 2×872 + final norm 16 + vocabulary head 144 = 2,080. Because d_model and d_ff both scale by 96, 9,216 of this model's block matrices tile into one of GPT-2 small's. Only the sizes differ — the operations ahead are identical.",
+    formula: "|θ| = 2,080 ; GPT-2 small: 1.24×10⁸ ; GPT-3: 1.75×10¹¹",
+    shape: "corpus 2 sentences · 46 bytes → batch [2×6] → θ 2,080",
+    scaleLabel: "orientation briefing · 8 slides",
     cameraHint: "wide",
   },
   {

@@ -25,7 +25,7 @@ Official deadline: **July 21, 2026 at 5:00 PM PDT**, which is **July 22 at
 - [ ] Create/connect a remote repository. This checkout currently has no
       remote URL configured, so there is no valid repository link to paste.
 - [ ] Push the final commit and verify in the repository website that the
-      machine room, assistant tools, demo director, README changes, and tests
+      machine room, voice guide, demo director, README changes, and tests
       are present.
 - [ ] If private, share it with **testing@devpost.com** and
       **build-week-event@openai.com**.

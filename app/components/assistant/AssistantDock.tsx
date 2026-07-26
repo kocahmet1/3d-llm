@@ -21,7 +21,8 @@ export interface AssistantDockProps {
   enabled: boolean;
   status: AssistantDockStatus;
   targetLabel: string;
-  transcript: string;
+  /** Present while the spotlight is looping the target's process slice. */
+  processLabel?: string | null;
   error?: string | null;
   /**
    * True while a spotlighted exhibit keeps the microphone open hands-free;
@@ -62,7 +63,7 @@ export function AssistantDock({
   enabled,
   status,
   targetLabel,
-  transcript,
+  processLabel,
   error,
   handsFree = false,
   onEnable,
@@ -183,7 +184,7 @@ export function AssistantDock({
           <span className={styles.guideGem} aria-hidden="true" />
           <span>
             <strong>Meet your guide</strong>
-            <small>Point · ask · navigate</small>
+            <small>Point · ask</small>
           </span>
         </button>
       </aside>
@@ -198,7 +199,7 @@ export function AssistantDock({
           <strong>In-world guide</strong>
           <small>
             {handsFree && status === "listening"
-              ? "Listening — ask or direct the lesson"
+              ? "Listening — ask about this component"
               : handsFree && status === "ready"
                 ? "Spotlight ready — ask anytime"
                 : STATUS_COPY[status]}
@@ -223,8 +224,13 @@ export function AssistantDock({
         <span>POINTING AT</span>
         <strong>{targetLabel}</strong>
       </div>
+      {processLabel ? (
+        <div className={`${styles.targetRow} ${styles.processRow}`}>
+          <span>REPLAYING</span>
+          <strong>{processLabel}</strong>
+        </div>
+      ) : null}
 
-      {transcript ? <p className={styles.transcript}>{transcript}</p> : null}
       {error ? <p className={styles.error}>{error}</p> : null}
       {status === "error" ? (
         <button
@@ -243,7 +249,7 @@ export function AssistantDock({
         type="button"
         className={`${styles.talkButton} ${status === "listening" ? styles.talkButtonActive : ""}`}
         disabled={!canTalk}
-        aria-label="Hold to ask the guide or control the lesson"
+        aria-label="Hold to ask the guide"
         onPointerDown={(event) => {
           if (!canTalk) return;
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -279,7 +285,7 @@ export function AssistantDock({
           <small>
             {handsFree
               ? "spotlight keeps the microphone open"
-              : "hold V · try “next chamber”"}
+              : "hold V · ask about this"}
           </small>
         </span>
       </button>

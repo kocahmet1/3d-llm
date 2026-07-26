@@ -24,46 +24,106 @@ function transpile(source, fileName) {
 let contextModulesPromise;
 async function loadContextModules() {
   if (!contextModulesPromise) {
+    const contentModules = [
+      "assistantContentCorpusExpansion",
+      "assistantContentEarlyExpansion",
+      "assistantContentForwardExpansion",
+      "assistantContentLearningExpansion",
+    ];
+    const beatModules = [
+      "componentBeatsCorpusExpansion",
+      "componentBeatsEarlyExpansion",
+      "componentBeatsForwardExpansion",
+      "componentBeatsLearningExpansion",
+    ];
+    const replaceImport = (source, specifier, replacement) =>
+      source.replace(
+        new RegExp(
+          `from\\s+["']${specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`,
+          "g",
+        ),
+        `from ${JSON.stringify(replacement)}`,
+      );
+
     contextModulesPromise = Promise.all([
       readSource("app/lib/trainingTrace.ts"),
       readSource("app/lib/assistantContext.ts"),
-      readSource("app/lib/assistantAppTools.ts"),
-    ]).then(async ([traceSource, contextSource, appToolsSource]) => {
+      readSource("app/lib/componentProcesses.ts"),
+      ...contentModules.map((name) => readSource(`app/lib/${name}.ts`)),
+      ...beatModules.map((name) => readSource(`app/lib/${name}.ts`)),
+    ]).then(async (sources) => {
+      const [traceSource, contextSource, componentProcessSource] =
+        sources.slice(0, 3);
+      const contentSources = sources.slice(3, 3 + contentModules.length);
+      const beatSources = sources.slice(3 + contentModules.length);
       const traceUrl = asDataModule(
         transpile(traceSource, "trainingTrace.ts"),
       );
-      const contextJavascript = transpile(
+      const contentUrls = Object.fromEntries(
+        contentModules.map((name, index) => {
+          const javascript = replaceImport(
+            transpile(contentSources[index], `${name}.ts`),
+            "./trainingTrace",
+            traceUrl,
+          );
+          return [name, asDataModule(javascript)];
+        }),
+      );
+      const beatUrls = Object.fromEntries(
+        beatModules.map((name, index) => [
+          name,
+          asDataModule(transpile(beatSources[index], `${name}.ts`)),
+        ]),
+      );
+      let contextJavascript = transpile(
         contextSource,
         "assistantContext.ts",
-      ).replace(
-        /from\s+["']\.\/trainingTrace["']/,
-        `from ${JSON.stringify(traceUrl)}`,
       );
-      const appToolsJavascript = transpile(
-        appToolsSource,
-        "assistantAppTools.ts",
-      ).replace(
-        /from\s+["']\.\/trainingTrace["']/,
-        `from ${JSON.stringify(traceUrl)}`,
+      contextJavascript = replaceImport(
+        contextJavascript,
+        "./trainingTrace",
+        traceUrl,
       );
-
+      for (const name of contentModules) {
+        contextJavascript = replaceImport(
+          contextJavascript,
+          `./${name}`,
+          contentUrls[name],
+        );
+      }
       assert.doesNotMatch(
         contextJavascript,
-        /from\s+["']\.\/trainingTrace["']/,
-        "the runtime test loader must replace the TypeScript module import",
+        /from\s+["']\.\/(?:trainingTrace|assistantContent[A-Za-z]+Expansion)["']/,
+        "the runtime test loader must replace assistant-context module imports",
       );
+      const contextUrl = asDataModule(contextJavascript);
+      let componentProcessJavascript = transpile(
+        componentProcessSource,
+        "componentProcesses.ts",
+      );
+      componentProcessJavascript = replaceImport(
+        componentProcessJavascript,
+        "./assistantContext",
+        contextUrl,
+      );
+      for (const name of beatModules) {
+        componentProcessJavascript = replaceImport(
+          componentProcessJavascript,
+          `./${name}`,
+          beatUrls[name],
+        );
+      }
       assert.doesNotMatch(
-        appToolsJavascript,
-        /from\s+["']\.\/trainingTrace["']/,
-        "the app-tool test loader must replace the TypeScript module import",
+        componentProcessJavascript,
+        /from\s+["']\.\/(?:assistantContext|componentBeats[A-Za-z]+Expansion)["']/,
+        "the runtime test loader must replace component-process module imports",
       );
-
-      const [trace, context, appTools] = await Promise.all([
+      const [trace, context, componentProcesses] = await Promise.all([
         import(traceUrl),
-        import(asDataModule(contextJavascript)),
-        import(asDataModule(appToolsJavascript)),
+        import(contextUrl),
+        import(asDataModule(componentProcessJavascript)),
       ]);
-      return { trace, context, appTools };
+      return { trace, context, componentProcesses };
     });
   }
   return contextModulesPromise;
@@ -79,6 +139,17 @@ async function loadRealtimeRoute() {
     );
   }
   return realtimeRoutePromise;
+}
+
+let focusVisibilityPromise;
+async function loadFocusVisibility() {
+  if (!focusVisibilityPromise) {
+    focusVisibilityPromise = readSource("app/lib/focusVisibility.ts").then(
+      (source) =>
+        import(asDataModule(transpile(source, "focusVisibility.ts"))),
+    );
+  }
+  return focusVisibilityPromise;
 }
 
 const validOffer = [
@@ -154,6 +225,234 @@ test("assistant context covers every station and every world binding", async () 
   }
 });
 
+test("every rich component derives an isolated replay from valid chamber beats", async () => {
+  const { context, componentProcesses } = await loadContextModules();
+  const components = Object.values(context.ASSISTANT_TARGET_CONTEXTS).filter(
+    ({ kind }) => kind === "component",
+  );
+  const definitions = componentProcesses.COMPONENT_PROCESS_DEFINITIONS;
+  const beats = componentProcesses.CHAMBER_PROCESS_BEATS;
+  const expectedCoveredStations = Object.keys(
+    context.ASSISTANT_STATION_CONTEXTS,
+  ).filter((stationId) => stationId !== "training-complex");
+  const componentsByStation = Map.groupBy(
+    components,
+    ({ stationId }) => stationId,
+  );
+  const beatsByStation = Map.groupBy(beats, ({ stationId }) => stationId);
+
+  assert.deepEqual(
+    [...componentsByStation.keys()].sort(),
+    [...expectedCoveredStations].sort(),
+    "every non-opening chamber must have rich component content",
+  );
+  for (const stationId of expectedCoveredStations) {
+    assert.ok(
+      (componentsByStation.get(stationId)?.length ?? 0) >= 3,
+      `${stationId} needs at least three component targets`,
+    );
+    assert.ok(
+      (beatsByStation.get(stationId)?.length ?? 0) >= 3,
+      `${stationId} needs at least three causal replay beats`,
+    );
+  }
+  assert.equal(Object.keys(definitions).length, components.length);
+  assert.ok(
+    components.length >= expectedCoveredStations.length * 3,
+    "covered chambers should expose substantial component inventories",
+  );
+
+  const beatIds = new Set();
+  for (const beat of beats) {
+    assert.equal(beatIds.has(beat.id), false, `duplicate beat ${beat.id}`);
+    beatIds.add(beat.id);
+    assert.ok(beat.startProgress >= 0 && beat.startProgress < beat.endProgress);
+    assert.ok(beat.endProgress <= 1);
+    assert.ok(beat.cause.length > 20);
+    assert.ok(beat.result.length > 20);
+    assert.ok(beat.targetIds.length >= 2);
+    assert.ok(Array.isArray(beat.auxiliarySceneKeys));
+    assert.ok(
+      beat.auxiliarySceneKeys.every(
+        (sceneKey) => typeof sceneKey === "string" && sceneKey.length > 0,
+      ),
+    );
+    for (const targetId of beat.targetIds) {
+      const target = context.ASSISTANT_TARGET_CONTEXTS[targetId];
+      assert.equal(target?.kind, "component", `${beat.id} has unknown ${targetId}`);
+      assert.equal(target.stationId, beat.stationId);
+      assert.ok(context.ASSISTANT_TARGET_WORLD_METADATA[targetId]);
+    }
+  }
+
+  for (const target of components) {
+    assert.ok(target.aliases.length > 0, `${target.id} needs voice aliases`);
+    assert.ok(target.summary.length > 20, `${target.id} needs a useful summary`);
+    assert.ok(target.role.length > 20, `${target.id} needs a useful role`);
+    assert.ok(target.inputs.length > 0, `${target.id} needs inputs`);
+    assert.ok(target.operation.length > 10, `${target.id} needs an operation`);
+    assert.ok(target.outputs.length > 0, `${target.id} needs outputs`);
+    assert.ok(
+      target.whyItMatters.length > 20,
+      `${target.id} needs significance`,
+    );
+    assert.ok(
+      target.commonMisconceptions.length > 0,
+      `${target.id} needs a misconception guardrail`,
+    );
+    for (const mode of ["story", "structure", "math", "code"]) {
+      assert.ok(
+        target.explanationByMode[mode]?.length > 0,
+        `${target.id} needs ${mode} guidance`,
+      );
+    }
+    for (const relatedTargetId of target.relatedTargetIds) {
+      assert.ok(
+        context.ASSISTANT_TARGET_CONTEXTS[relatedTargetId],
+        `${target.id} relates to unknown ${relatedTargetId}`,
+      );
+    }
+
+    const definition = definitions[target.id];
+    assert.equal(definition.targetId, target.id);
+    assert.equal(definition.stationId, target.stationId);
+    assert.equal(definition.playback.source, "authored-beats");
+    assert.ok(definition.beatIds.length > 0);
+    assert.ok(definition.beatIds.every((beatId) => beatIds.has(beatId)));
+    assert.equal(definition.participantTargetIds[0], target.id);
+    const targetBeats = beats.filter((beat) =>
+      definition.beatIds.includes(beat.id),
+    );
+    const expectedPartners = target.relatedTargetIds.filter((targetId) => {
+      const partner = context.ASSISTANT_TARGET_CONTEXTS[targetId];
+      return (
+        partner?.kind === "component" &&
+        partner.stationId === target.stationId &&
+        Boolean(context.ASSISTANT_TARGET_WORLD_METADATA[targetId]) &&
+        targetBeats.some((beat) => beat.targetIds.includes(targetId))
+      );
+    });
+    assert.deepEqual(
+      definition.participantTargetIds.slice(1),
+      expectedPartners,
+      `${target.id} must stage curated same-beat causal neighbours only`,
+    );
+    assert.deepEqual(
+      definition.auxiliarySceneKeys,
+      [...new Set(targetBeats.flatMap((beat) => beat.auxiliarySceneKeys))],
+    );
+    assert.ok(
+      definition.playback.startProgress <
+        definition.playback.endProgress,
+    );
+    assert.ok(definition.playback.durationSeconds >= 3.5);
+    assert.ok(definition.narrative.interactionCause.length > 20);
+    assert.ok(definition.narrative.sequence.length > 0);
+  }
+
+  assert.deepEqual(
+    definitions["mha:query-projection"].participantTargetIds,
+    ["mha:query-projection", "mha:normalized-input", "mha:projected-query"],
+  );
+  assert.ok(
+    definitions["mha:query-projection"].auxiliarySceneKeys.includes(
+      "mha-query-projection-flow",
+    ),
+  );
+  assert.deepEqual(
+    definitions["mha:head-split"].participantTargetIds,
+    ["mha:head-split", "mha:projected-query", "mha:head-0", "mha:head-1"],
+  );
+
+  const learningExpansionStations = new Set([
+    "target-comparison",
+    "output-backprop",
+    "backprop-through-tower",
+    "parameter-matrix",
+    "adamw-state",
+    "weight-update",
+    "model-changed-next-step",
+  ]);
+  for (const stationId of learningExpansionStations) {
+    assert.ok(
+      beatsByStation
+        .get(stationId)
+        ?.some(({ auxiliarySceneKeys }) => auxiliarySceneKeys.length > 0),
+      `${stationId} needs animated replay actors or routes`,
+    );
+  }
+  for (const target of components.filter(({ stationId }) =>
+    learningExpansionStations.has(stationId),
+  )) {
+    const definition = definitions[target.id];
+    const coBeatParticipants = new Set(
+      beats
+        .filter(
+          (beat) =>
+            beat.stationId === target.stationId &&
+            beat.targetIds.includes(target.id),
+        )
+        .flatMap(({ targetIds }) => targetIds)
+        .filter((targetId) => targetId !== target.id),
+    );
+    assert.deepEqual(
+      new Set(definition.participantTargetIds.slice(1)),
+      coBeatParticipants,
+      `${target.id} must stage every component in its narrated learning beat`,
+    );
+  }
+  assert.ok(
+    definitions[
+      "output-backprop:vocabulary-bias-gradient"
+    ].auxiliarySceneKeys.includes("output-backprop-fork-flow"),
+  );
+  const clippingContext =
+    context.ASSISTANT_TARGET_CONTEXTS["adamw-state:clip-check"];
+  assert.equal(clippingContext.exactValues.clippingOutcomeAvailable, false);
+  assert.equal("wasClipped" in clippingContext.exactValues, false);
+});
+
+test("component replay clock loops its chamber slice and holds under reduced motion", async () => {
+  const { componentProcesses } = await loadContextModules();
+  const definition =
+    componentProcesses.COMPONENT_PROCESS_DEFINITIONS[
+      "embedding:sum-result"
+    ];
+  const start = componentProcesses.componentProcessProgressAt(
+    definition,
+    0,
+  );
+  const halfway = componentProcesses.componentProcessProgressAt(
+    definition,
+    definition.playback.durationSeconds / 2,
+  );
+  const restarted = componentProcesses.componentProcessProgressAt(
+    definition,
+    definition.playback.durationSeconds,
+  );
+  const heldA = componentProcesses.componentProcessProgressAt(
+    definition,
+    1,
+    false,
+  );
+  const heldB = componentProcesses.componentProcessProgressAt(
+    definition,
+    100,
+    false,
+  );
+
+  assert.equal(start, definition.playback.startProgress);
+  assert.ok(start < halfway && halfway < definition.playback.endProgress);
+  assert.ok(Math.abs(restarted - start) < 1e-12);
+  assert.equal(heldA, heldB);
+  assert.equal(
+    heldA,
+    (definition.playback.startProgress +
+      definition.playback.endProgress) /
+      2,
+  );
+});
+
 test("semantic object names select rich attention context and unnamed meshes fall back", async () => {
   const { context } = await loadContextModules();
 
@@ -181,7 +480,7 @@ test("semantic object names select rich attention context and unnamed meshes fal
 });
 
 test("turn snapshots freeze the referent, mode, branch, and cloned visible state", async () => {
-  const { context } = await loadContextModules();
+  const { context, componentProcesses } = await loadContextModules();
   const visibleState = {
     animation: { phase: "value-gathering", progress: 0.4 },
     highlightedPositions: [0, 1, 2],
@@ -204,10 +503,34 @@ test("turn snapshots freeze the referent, mode, branch, and cloned visible state
   assert.match(snapshot.view.branch.label, /value gathering/i);
   assert.equal(snapshot.visibleState.animation.phase, "value-gathering");
   assert.deepEqual(snapshot.visibleState.highlightedPositions, [0, 1, 2]);
+  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(Object.hasOwn(snapshot, "tutorInstructions"), false);
   assert.equal(Object.isFrozen(snapshot), true);
   assert.equal(Object.isFrozen(snapshot.visibleState), true);
   assert.equal(Object.isFrozen(snapshot.visibleState.animation), true);
   assert.equal(Object.isFrozen(snapshot.visibleState.highlightedPositions), true);
+
+  const replaySnapshot = componentProcesses.attachComponentProcessContext(
+    snapshot,
+    "attention:values",
+    "playing-isolated-chamber-slice",
+  );
+  assert.equal(
+    replaySnapshot.componentProcess.status,
+    "playing-isolated-chamber-slice",
+  );
+  assert.equal(
+    replaySnapshot.componentProcess.selectedComponent,
+    componentProcesses.COMPONENT_PROCESS_DEFINITIONS["attention:values"].label,
+  );
+  assert.equal(
+    replaySnapshot.componentProcess.interactionPartners.length,
+    0,
+    "a component without a same-chamber causal neighbour must not invent one",
+  );
+  assert.ok(replaySnapshot.componentProcess.beats.length > 0);
+  assert.equal(Object.isFrozen(replaySnapshot.componentProcess), true);
+  assert.equal(Object.isFrozen(replaySnapshot.componentProcess.beats), true);
 });
 
 test("raycastable attention groups honor the context registry naming contract", async () => {
@@ -234,122 +557,112 @@ test("raycastable attention groups honor the context registry naming contract", 
   }
 });
 
-test("assistant app tools expose only allowlisted lesson controls", async () => {
-  const { trace, appTools } = await loadContextModules();
-  const tools = appTools.ASSISTANT_APP_TOOLS;
-  const names = tools.map(({ name }) => name);
+test("focus visibility lease hides only the exhibit parent and restores exactly", async () => {
+  const { createFocusVisibilityLease } = await loadFocusVisibility();
+  const chamber = { visible: true, parent: null };
+  const exhibit = { visible: true, parent: chamber };
+  const selected = { visible: true, parent: exhibit };
+  const detailOnlyChild = { visible: false, parent: exhibit };
+  const lease = createFocusVisibilityLease(exhibit);
 
-  assert.deepEqual(names, [
-    "navigate_chamber",
-    "set_journey_playback",
-    "set_detail_mode",
-    "set_ride_mode",
-    "choose_branch",
-    "control_data_preparation",
-  ]);
-  assert.equal(new Set(names).size, names.length);
-
-  for (const tool of tools) {
-    assert.equal(tool.type, "function");
-    assert.equal(tool.parameters.type, "object");
-    assert.equal(tool.parameters.additionalProperties, false);
-    assert.equal(tool.parameters.required.length, 1);
-  }
-
-  const navigate = tools.find(({ name }) => name === "navigate_chamber");
-  const destinations = navigate.parameters.properties.destination.enum;
-  assert.deepEqual(destinations.slice(0, 4), [
-    "next",
-    "previous",
-    "first",
-    "last",
-  ]);
-  assert.deepEqual(
-    destinations.slice(4),
-    trace.TRAINING_STATIONS.map(({ id }) => id),
+  lease.hide();
+  assert.equal(chamber.visible, true, "the chamber shell must remain visible");
+  assert.equal(exhibit.visible, false, "the original exhibit must be hidden");
+  assert.equal(
+    selected.visible,
+    true,
+    "source-local state must remain available to the staged clone",
   );
 
-  const serialized = JSON.stringify(tools);
-  assert.doesNotMatch(
-    serialized,
-    /css.?selector|javascript|https?:|api.?key|microphone/i,
+  selected.visible = false;
+  detailOnlyChild.visible = true;
+  lease.restore();
+  assert.equal(exhibit.visible, true);
+  assert.equal(
+    selected.visible,
+    false,
+    "component animation changes made during focus must survive dismissal",
+  );
+  assert.equal(
+    detailOnlyChild.visible,
+    true,
+    "Detail Mode changes made during focus must survive dismissal",
+  );
+
+  lease.hide();
+  assert.equal(
+    exhibit.visible,
+    true,
+    "a completed lease must not be able to hide the exhibit again",
   );
 });
 
-test("assistant app commands reject malformed or unlisted arguments", async () => {
-  const { trace, appTools } = await loadContextModules();
-  const exactStationId = trace.TRAINING_STATIONS[9].id;
+test("direct focus switches restore A before hiding B", async () => {
+  const { createFocusVisibilityLease } = await loadFocusVisibility();
+  const chamberA = { visible: true, parent: null };
+  const chamberB = { visible: true, parent: null };
 
-  assert.deepEqual(
-    appTools.parseAssistantAppCommand("navigate_chamber", {
-      destination: "next",
-    }),
-    {
-      ok: true,
-      command: { kind: "navigate_chamber", destination: "next" },
-    },
-  );
-  assert.deepEqual(
-    appTools.parseAssistantAppCommand("navigate_chamber", {
-      destination: exactStationId,
-    }),
-    {
-      ok: true,
-      command: { kind: "navigate_chamber", destination: exactStationId },
-    },
-  );
-  assert.equal(
-    appTools.parseAssistantAppCommand("navigate_chamber", {
-      destination: "not-a-real-chamber",
-    }).ok,
-    false,
-  );
-  assert.equal(
-    appTools.parseAssistantAppCommand("navigate_chamber", {
-      destination: "next",
-      progress: 0.75,
-    }).ok,
-    false,
-  );
-  assert.equal(
-    appTools.parseAssistantAppCommand("navigate_chamber", ["next"]).ok,
-    false,
-  );
-  assert.equal(
-    appTools.parseAssistantAppCommand("set_detail_mode", {
-      mode: "hidden-admin-mode",
-    }).ok,
-    false,
-  );
-  assert.equal(
-    appTools.parseAssistantAppCommand("run_javascript", {
-      code: "location.reload()",
-    }).ok,
-    false,
-  );
+  const focusA = createFocusVisibilityLease(chamberA);
+  focusA.hide();
+  assert.equal(chamberA.visible, false);
+
+  focusA.restore();
+  const focusB = createFocusVisibilityLease(chamberB);
+  focusB.hide();
+  assert.equal(chamberA.visible, true);
+  assert.equal(chamberB.visible, false);
+
+  focusB.restore();
+  assert.equal(chamberA.visible, true);
+  assert.equal(chamberB.visible, true);
 });
 
-test("assistant chamber navigation resolves IDs and stops at boundaries", async () => {
-  const { trace, appTools } = await loadContextModules();
-  const lastIndex = trace.TRAINING_STATIONS.length - 1;
-  const targetIndex = 7;
+test("hidden exhibit ancestry is excluded from component picking", async () => {
+  const { isVisibleThroughAncestor } = await loadFocusVisibility();
+  const chamber = { visible: true, parent: null };
+  const exhibit = { visible: true, parent: chamber };
+  const component = { visible: true, parent: exhibit };
+  const outside = { visible: true, parent: null };
 
-  assert.equal(appTools.resolveAssistantChamberIndex(0, "previous"), 0);
-  assert.equal(appTools.resolveAssistantChamberIndex(0, "next"), 1);
-  assert.equal(
-    appTools.resolveAssistantChamberIndex(lastIndex, "next"),
-    lastIndex,
+  assert.equal(isVisibleThroughAncestor(component, chamber), true);
+  component.visible = false;
+  assert.equal(isVisibleThroughAncestor(component, chamber), false);
+  component.visible = true;
+  exhibit.visible = false;
+  assert.equal(isVisibleThroughAncestor(component, chamber), false);
+  assert.equal(isVisibleThroughAncestor(outside, chamber), false);
+});
+
+test("spotlight lifecycle owns a reversible chamber exhibit container", async () => {
+  const canvas = await readSource(
+    "app/components/TrainingWorldCanvas.tsx",
   );
-  assert.equal(
-    appTools.resolveAssistantChamberIndex(
-      0,
-      trace.TRAINING_STATIONS[targetIndex].id,
-    ),
-    targetIndex,
+
+  assert.match(canvas, /exhibitRoot:\s*THREE\.Group/);
+  assert.match(canvas, /group\.add\(processGroup\)/);
+  assert.match(canvas, /exhibitRoot:\s*processGroup/);
+  assert.match(
+    canvas,
+    /const clearFocusStage = \(\) => \{[\s\S]*?focusSourceVisibilityLease\?\.restore\(\);[\s\S]*?focusSourceVisibilityLease = null;/,
   );
-  assert.equal(
-    appTools.resolveAssistantChamberIndex(4, "not-a-real-chamber"),
-    null,
+  assert.match(
+    canvas,
+    /focusSourceVisibilityLease = createFocusVisibilityLease\(\s*runtime\.exhibitRoot,\s*\);[\s\S]*?focusSourceVisibilityLease\.hide\(\);/,
+  );
+  assert.match(
+    canvas,
+    /const wasActive = focusActive;[\s\S]*?focusActive = false;\s*clearFocusStage\(\);[\s\S]*?const runtime = stationRuntimes\[currentStation\];/,
+    "a direct target switch must restore the previous exhibit before staging the next one",
+  );
+  assert.match(
+    canvas,
+    /return \(\) => \{\s*disposed = true;[\s\S]*?clearFocusStage\(\);/,
+    "unmount cleanup must restore an active chamber exhibit",
+  );
+  assert.match(
+    canvas,
+    /isVisibleThroughAncestor\(intersection\.object,\s*runtime\.group\)/,
+    "invisible source exhibits must not remain raycast-interactive",
   );
 });
 
@@ -424,7 +737,19 @@ test("Realtime route proxies SDP with a server-only bearer key", async () => {
     assert.equal(requestHeader(init, "Authorization"), `Bearer ${serverSecret}`);
     assert.ok(init?.body instanceof FormData);
     assert.equal(init.body.get("sdp"), validOffer);
-    assert.match(String(init.body.get("session")), /"type":"realtime"/);
+    const session = JSON.parse(String(init.body.get("session")));
+    assert.equal(session.type, "realtime");
+    assert.deepEqual(session.output_modalities, ["audio"]);
+    assert.deepEqual(session.reasoning, { effort: "low" });
+    assert.deepEqual(session.tools, []);
+    assert.equal(session.tool_choice, "none");
+    assert.equal(session.audio.input.transcription, undefined);
+    assert.deepEqual(session.audio.input.turn_detection, {
+      type: "semantic_vad",
+      eagerness: "high",
+      create_response: true,
+      interrupt_response: true,
+    });
     return new Response(validAnswer, {
       status: 200,
       headers: { "X-Request-Id": "req_assistant_contract" },
@@ -607,18 +932,17 @@ test("Realtime setup never echoes or logs a rejected temporary key", async () =>
   }
 });
 
-test("voice UI exposes a clearly temporary, memory-only key flow", async () => {
-  const [dock, hook, route, experience, canvas, appTools] = await Promise.all([
+test("voice guide keeps a private, low-latency audio-only Realtime flow", async () => {
+  const [dock, hook, route, experience, canvas] = await Promise.all([
     readSource("app/components/assistant/AssistantDock.tsx"),
     readSource("app/components/assistant/useRealtimeAssistant.ts"),
     readSource("app/api/realtime/session/route.ts"),
     readSource("app/components/TrainingExperience.tsx"),
     readSource("app/components/TrainingWorldCanvas.tsx"),
-    readSource("app/lib/assistantAppTools.ts"),
   ]);
 
   assert.match(dock, /Meet your guide/);
-  assert.match(dock, /hold V.*next chamber/i);
+  assert.match(dock, /hold V.*ask about this/i);
   assert.match(dock, /aria-label="Hold to ask the guide/);
   assert.match(dock, /onPointerDown/);
   assert.match(dock, /onPointerUp/);
@@ -641,19 +965,27 @@ test("voice UI exposes a clearly temporary, memory-only key flow", async () => {
     /status === "error"[\s\S]*onDisable\(\);[\s\S]*setShowKeyEntry\(true\)/,
   );
   assert.match(dock, /setTemporaryApiKey\(""\)/);
+  assert.doesNotMatch(
+    dock,
+    /navigate|direct the lesson|control the lesson|next chamber/i,
+  );
 
   assert.match(hook, /new RTCPeerConnection\(\)/);
   assert.match(hook, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(hook, /DEFAULT_SESSION_ENDPOINT\s*=\s*"\/api\/realtime\/session"/);
   assert.match(hook, /conversation\.item\.create/);
   assert.match(hook, /APPLICATION_CONTEXT_FOR_NEXT_USER_TURN/);
-  assert.match(hook, /tool_choice:\s*tools\.length\s*>\s*0\s*\?\s*"auto"/);
-  assert.match(hook, /response\.function_call_arguments\.done/);
-  assert.match(hook, /type:\s*"function_call_output"/);
-  assert.match(hook, /call_id:\s*pendingCall\.callId/);
-  assert.match(hook, /responseStatus\s*===\s*"completed"/);
-  assert.match(hook, /processedFunctionCallIdsRef/);
-  assert.match(hook, /pendingFunctionCallsRef/);
+  assert.match(hook, /APPLICATION_SPOTLIGHT_CONTEXT/);
+  assert.match(hook, /persistentContext/);
+  assert.match(hook, /reasoning:\s*\{\s*effort:\s*"low"/);
+  assert.match(hook, /eagerness:\s*currentOptions\.semanticVadEagerness\s*\?\?\s*"high"/);
+  assert.match(hook, /interrupt_response:\s*true/);
+  assert.match(hook, /voice-guide:turn-/);
+  assert.match(hook, /vad-to-first-output/);
+  assert.doesNotMatch(
+    hook,
+    /function_call|onToolCall|tool_choice|gpt-4o-mini-transcribe/,
+  );
   assert.match(hook, /enable\s*=\s*useCallback\(async \(temporaryApiKey\?: string\)/);
   assert.match(hook, /function isSecureSameOriginEndpoint\(endpoint: URL\)/);
   assert.match(hook, /endpoint\.origin\s*!==\s*window\.location\.origin/);
@@ -671,20 +1003,45 @@ test("voice UI exposes a clearly temporary, memory-only key flow", async () => {
 
   assert.match(experience, /event\.code\s*!==\s*"KeyV"/);
   assert.match(experience, /buildAssistantTurnContextSnapshot/);
-  assert.match(experience, /tools:\s*ASSISTANT_APP_TOOLS/);
-  assert.match(experience, /onToolCall:\s*handleAssistantToolCall/);
-  assert.match(experience, /resolveAssistantChamberIndex/);
+  assert.match(experience, /persistentContext:\s*spotlightContext/);
+  assert.match(experience, /semanticVadEagerness:\s*"high"/);
+  assert.match(
+    experience,
+    /buildAssistantContextSnapshot\(\s*targetId,\s*Boolean\(componentProcess\)/,
+  );
+  assert.match(experience, /resolveComponentProcessDefinition\(targetId\)/);
+  assert.match(experience, /setProcessPlaying\(false\)/);
+  assert.match(experience, /restoreComponentReplayTransport/);
+  assert.match(experience, /startTalking\(\)/);
+  assert.doesNotMatch(
+    experience,
+    /ASSISTANT_APP_TOOLS|onToolCall|handleAssistantToolCall|assistantAppTools/,
+  );
   assert.match(experience, /voice\.enable\(temporaryApiKey\)/);
   assert.match(canvas, /new THREE\.Raycaster\(\)/);
   assert.match(canvas, /createAssistantController/);
   assert.match(canvas, /resolveAssistantTarget/);
-  assert.match(appTools, /additionalProperties:\s*false/);
-  assert.doesNotMatch(appTools, /document\.|window\.|dispatchEvent|eval\(/);
-
+  assert.match(canvas, /componentProcessProgressAt/);
+  assert.match(canvas, /focusReplayProgress/);
+  assert.match(canvas, /findComponentProcessObjects/);
+  assert.match(canvas, /findComponentProcessAuxiliaryObjects/);
+  assert.match(canvas, /syncFocusStage/);
+  assert.match(canvas, /participantTargetIds/);
+  assert.match(canvas, /processLocked/);
+  assert.match(
+    experience,
+    /progress:\s*dataPreparation\s*\?\s*dataPrepProgress\s*:\s*processProgress/,
+  );
   assert.match(route, /process\.env\.OPENAI_API_KEY/);
   assert.match(route, /temporaryBearerKey/);
   assert.match(route, /request\.headers\.get\("authorization"\)/);
   assert.match(route, /api\.openai\.com\/v1\/realtime\/calls/);
+  assert.match(route, /output_modalities:\s*\["audio"\]/);
+  assert.match(route, /reasoning:\s*\{\s*effort:\s*"low"/);
+  assert.match(route, /tools:\s*\[\]/);
+  assert.match(route, /tool_choice:\s*"none"/);
+  assert.match(route, /eagerness:\s*"high"/);
+  assert.doesNotMatch(route, /gpt-4o-mini-transcribe/);
   assert.doesNotMatch(route, /NEXT_PUBLIC_OPENAI|PUBLIC_OPENAI/);
 
   const browserCredentialSources = [dock, hook, experience].join("\n");

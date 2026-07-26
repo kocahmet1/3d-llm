@@ -17,10 +17,8 @@ export type {
   AssistantTravelOptions,
 } from "./types";
 export type {
-  RealtimeAssistantToolCall,
-  RealtimeAssistantToolDefinition,
-  RealtimeAssistantToolResult,
   RealtimeAssistantStatus,
+  RealtimeAssistantTurnTiming,
   RealtimeAssistantTurnMode,
   RealtimeTurnContext,
   UseRealtimeAssistantOptions,

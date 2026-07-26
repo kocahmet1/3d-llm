@@ -1,3 +1,5 @@
+import type { MutableRefObject } from "react";
+
 export type TrainingPhase =
   | "overview"
   | "data"
@@ -81,6 +83,8 @@ export interface ChamberProcessTransport {
   /** Position through the current chamber's process animation, 0..1. */
   processProgress: number;
   processPlaying: boolean;
+  /** True while a component-specific replay temporarily owns the chamber clock. */
+  processLocked: boolean;
   onProcessProgressChange: (progress: number) => void;
   onProcessPlayingChange: (playing: boolean) => void;
 }
@@ -127,6 +131,14 @@ export interface TrainingCanvasProps extends ChamberProcessTransport {
   branchSide: BranchSide;
   detailMode: DetailMode;
   rideMode: RideMode;
+  /**
+   * Escape hatch for entering free-roam FPS mode (manual control plus pointer
+   * lock) from outside the canvas — the Explore tab uses this so switching to
+   * it drops the visitor straight into mouselook instead of leaving them to
+   * click the scene themselves. The canvas assigns the function once it has
+   * mounted; callers should always guard with `?.()`.
+   */
+  freeRoamRequestRef?: MutableRefObject<(() => void) | null>;
   assistantEnabled: boolean;
   assistantStatus: AssistantCanvasStatus;
   assistantAudioActivity: number;

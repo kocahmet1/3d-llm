@@ -9,6 +9,22 @@ import type {
   TrainingPhase,
   TrainingStation,
 } from "./worldTypes";
+import {
+  CORPUS_EXPANSION_COMPONENT_TARGETS,
+  CORPUS_EXPANSION_WORLD_METADATA,
+} from "./assistantContentCorpusExpansion";
+import {
+  EARLY_EXPANSION_COMPONENT_TARGETS,
+  EARLY_EXPANSION_WORLD_METADATA,
+} from "./assistantContentEarlyExpansion";
+import {
+  FORWARD_EXPANSION_COMPONENT_TARGETS,
+  FORWARD_EXPANSION_WORLD_METADATA,
+} from "./assistantContentForwardExpansion";
+import {
+  LEARNING_EXPANSION_COMPONENT_TARGETS,
+  LEARNING_EXPANSION_WORLD_METADATA,
+} from "./assistantContentLearningExpansion";
 
 /** JSON-safe values accepted from the live scene at the start of a voice turn. */
 export interface AssistantContextObject {
@@ -160,10 +176,36 @@ export interface BuildAssistantTurnContextInput
   visibleState?: AssistantVisibleState;
 }
 
+export interface AssistantComponentProcessPartner {
+  targetId: string;
+  label: string;
+  role: string;
+}
+
+export interface AssistantComponentProcessBeat {
+  id: string;
+  label: string;
+  cause: string;
+  result: string;
+}
+
+export interface AssistantComponentProcessContext {
+  status: "playing-isolated-chamber-slice" | "available-on-spotlight";
+  selectedComponent: string;
+  chamberRole: string;
+  startsBecause: readonly string[];
+  interactionCause: string;
+  interactionPartners: readonly AssistantComponentProcessPartner[];
+  beats: readonly AssistantComponentProcessBeat[];
+  sequence: readonly string[];
+  produces: readonly string[];
+  whyItMatters: string;
+  visualGrounding: readonly string[];
+}
+
 /** This is the only aggregate intended to be serialized into a model turn. */
 export interface AssistantTurnContextSnapshot {
-  schemaVersion: 1;
-  tutorInstructions: string;
+  schemaVersion: 2;
   process: AssistantProcessOverview;
   station: AssistantStationContext;
   target: AssistantTargetContext;
@@ -177,6 +219,7 @@ export interface AssistantTurnContextSnapshot {
     }>;
   }>;
   visibleState: AssistantVisibleState;
+  componentProcess?: AssistantComponentProcessContext;
   groundingRules: readonly string[];
 }
 
@@ -213,7 +256,7 @@ function cloneVisibleState(value?: AssistantVisibleState): AssistantVisibleState
   );
 }
 
-export const SESSION_TUTOR_INSTRUCTIONS = `You are the in-world voice tutor for a deterministic visualization of one decoder-only Transformer training step. Answer the user's question about the frozen selected target, using the supplied station, target, visible-state, and exact-value context. Treat words such as "this", "that", and "here" as references to the selected target. Prefer the requested Story, Structure, Math, or Code detail mode while remaining conversational. Explain how the target connects to the preceding and following stages when useful. Never invent a displayed value, tensor shape, object identity, or animation state. Clearly distinguish temporary activations, gradients, optimizer state, and learned parameters. Clearly distinguish this tiny teaching trace from production-scale language models. If the supplied context is insufficient, say what is missing or ask a short clarifying question. You can use the supplied application tools when the user explicitly asks you to navigate or change a lesson control. Make exactly one tool call for one requested action, wait for its result, and only then briefly confirm what actually changed. Do not call a tool merely to answer a question, do not claim success before its result, and never imply that an unavailable or rejected action occurred. Keep spoken answers focused, and let the user interrupt.`;
+export const SESSION_TUTOR_INSTRUCTIONS = `You are the in-world voice guide for a deterministic visualization of one decoder-only Transformer training step. A CURRENT SPOTLIGHT context may contain trusted application facts about the selected component; the most recent one is authoritative. Treat "this", "that", and "here" as the selected target. Answer only from those facts and the user's question. When componentProcess.status is "playing-isolated-chamber-slice", coordinate the explanation with that replay: identify what starts the interaction, what the selected component does, which listed partners it interacts with and why, and what output continues through the chamber. Do not imply that an unlisted object is visible, and explain that a loop is a replay for inspection rather than a repeated model computation if that distinction matters. Speak concisely: give one or two sentences first, then offer detail. Prefer the selected Story, Structure, Math, or Code view when useful. Never invent a displayed value, tensor shape, object identity, or animation state. Clearly distinguish temporary activations, gradients, optimizer state, and learned parameters. Clearly distinguish this tiny teaching trace from production-scale language models. If context is insufficient, say what is missing. Do not read context labels or raw JSON aloud. You only explain; never navigate, change a lesson control, or claim to have changed the app. Let the visitor interrupt you.`;
 
 export const GENERAL_PROCESS_OVERVIEW: AssistantProcessOverview = deepFreeze({
   title: "One complete language-model training step",
@@ -2226,6 +2269,10 @@ export const ASSISTANT_TARGET_CONTEXTS: Readonly<
       ...MHA_COMPONENT_TARGETS,
       ...HEAD_RECOMBINATION_COMPONENT_TARGETS,
       ...LOGITS_COMPONENT_TARGETS,
+      ...CORPUS_EXPANSION_COMPONENT_TARGETS,
+      ...EARLY_EXPANSION_COMPONENT_TARGETS,
+      ...FORWARD_EXPANSION_COMPONENT_TARGETS,
+      ...LEARNING_EXPANSION_COMPONENT_TARGETS,
     ].map((target) => [target.id, target]),
   ),
 );
@@ -2387,6 +2434,10 @@ export const ASSISTANT_TARGET_WORLD_METADATA: Readonly<
       ...MHA_WORLD_METADATA,
       ...HEAD_RECOMBINATION_WORLD_METADATA,
       ...LOGITS_WORLD_METADATA,
+      ...CORPUS_EXPANSION_WORLD_METADATA,
+      ...EARLY_EXPANSION_WORLD_METADATA,
+      ...FORWARD_EXPANSION_WORLD_METADATA,
+      ...LEARNING_EXPANSION_WORLD_METADATA,
     ].map((metadata) => [metadata.targetId, metadata]),
   ),
 );
@@ -2562,8 +2613,7 @@ export function buildAssistantTurnContextSnapshot(
       : undefined;
 
   return deepFreeze({
-    schemaVersion: 1 as const,
-    tutorInstructions: SESSION_TUTOR_INSTRUCTIONS,
+    schemaVersion: 2 as const,
     process: GENERAL_PROCESS_OVERVIEW,
     station: resolution.station,
     target: resolution.target,

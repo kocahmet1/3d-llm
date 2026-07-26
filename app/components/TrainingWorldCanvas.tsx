@@ -18,7 +18,20 @@ import {
   SELECTED_TRACE,
   TRAINING_STATIONS,
 } from "../lib/trainingTrace";
-import { resolveAssistantTarget } from "../lib/assistantContext";
+import {
+  ASSISTANT_TARGET_WORLD_METADATA,
+  resolveAssistantTarget,
+} from "../lib/assistantContext";
+import {
+  componentProcessProgressAt,
+  resolveComponentProcessDefinition,
+  type ComponentProcessDefinition,
+} from "../lib/componentProcesses";
+import {
+  createFocusVisibilityLease,
+  isVisibleThroughAncestor,
+  type FocusVisibilityLease,
+} from "../lib/focusVisibility";
 import type {
   BranchSide,
   DetailMode,
@@ -29,8 +42,21 @@ import type {
   TrainingStation,
 } from "../lib/worldTypes";
 import { buildDistinctChamberProcess } from "./chambers";
+import {
+  ORIENTATION_BAY_BLOCKERS,
+  ORIENTATION_EYE_Y,
+  ORIENTATION_TOUR_STOPS,
+  orientationTourPose,
+} from "./chambers/orientationGallery";
+
+/**
+ * The orientation gallery is the first station. Named rather than written as a
+ * bare 0 because the guided placard walk keys off it in several places.
+ */
+const ORIENTATION_STATION_INDEX = 0;
 import { AVENUE, avenueLaneX, avenueZ } from "./chambers/avenue";
 import {
+  bindComponentProcessActor,
   createNeonFrame,
   createPacket,
   createPanel as createProcessPanel,
@@ -131,6 +157,8 @@ interface StationLightAnchors {
 
 interface StationRuntime {
   group: THREE.Group;
+  /** Contains process exhibits only; the chamber shell remains a sibling. */
+  exhibitRoot: THREE.Group;
   phaseMaterials: THREE.MeshStandardMaterial[];
   navigationBounds: ChamberNavigationBounds;
   lightAnchors: StationLightAnchors;
@@ -162,6 +190,7 @@ interface WorldRefs {
   dataPrepProgress: number;
   processProgress: number;
   processPlaying: boolean;
+  processLocked: boolean;
   onProcessProgressChange: TrainingCanvasProps["onProcessProgressChange"];
   onProcessPlayingChange: TrainingCanvasProps["onProcessPlayingChange"];
   branchSide: BranchSide;
@@ -1514,10 +1543,21 @@ function buildTrainingComplex(context: BuildContext) {
   addAnimation(context, core, "pulse", 1.4, 0.12, 0.5);
 }
 
-function buildCorpus(context: BuildContext) {
-  addStationHeading(context, "SOURCE TEXT  >  CLEAN  >  PIECES + SPECIALS  >  VOCABULARY  >  TOKEN IDs");
+function buildCorpus(
+  stationContext: BuildContext,
+  exhibitRoot: THREE.Group,
+) {
+  addStationHeading(stationContext, "SOURCE TEXT  >  CLEAN  >  PIECES + SPECIALS  >  VOCABULARY  >  TOKEN IDs");
   const openObservationArenaSize = new THREE.Vector2(140, 90);
-  addOpenCorpusArena(context, openObservationArenaSize, CORPUS_ARENA_HEIGHT);
+  addOpenCorpusArena(
+    stationContext,
+    openObservationArenaSize,
+    CORPUS_ARENA_HEIGHT,
+  );
+  const context: BuildContext = {
+    ...stationContext,
+    group: exhibitRoot,
+  };
 
   // Compact assembly-line arc: all six tokenizer stages sit inside a single
   // camera view (x spans ±27 instead of ±51) in a shallow smile so the flow
@@ -1693,6 +1733,7 @@ function buildCorpus(context: BuildContext) {
       borderColor: BLUE,
       fontScale: 0.8,
     });
+    panel.name = "assistant-target-corpus-source-text";
     panel.position.copy(
       stagePoint(0, new THREE.Vector3(0, 1.5 - row * 2.95, 0)),
     );
@@ -1708,6 +1749,7 @@ function buildCorpus(context: BuildContext) {
       borderColor: CYAN,
       fontScale: 0.8,
     });
+    panel.name = "assistant-target-corpus-normalized-text";
     panel.position.copy(
       stagePoint(1, new THREE.Vector3(0, 1.5 - row * 2.95, 0)),
     );
@@ -1717,6 +1759,7 @@ function buildCorpus(context: BuildContext) {
   });
 
   const scanner = createNeonFrame(6.6, 6.1, CYAN);
+  scanner.name = "assistant-target-corpus-cleaning-scanner";
   scanner.position.copy(stagePoint(1, new THREE.Vector3(0, 0.15, 0.38)));
   scanner.rotation.y = stageYaws[1];
   context.group.add(scanner);
@@ -1730,12 +1773,16 @@ function buildCorpus(context: BuildContext) {
       depthWrite: false,
     }),
   );
+  scanLine.name = "assistant-target-corpus-cleaning-scanner";
   scanLine.position.copy(stagePoint(1, new THREE.Vector3(0, -3.05, 0.52)));
   scanLine.rotation.y = stageYaws[1];
   context.group.add(scanLine);
 
   const cleaningPackets = DATA_PREP_TRACE.sources.map(() => {
-    const packet = createPacket(CYAN, 0.3);
+    const packet = bindComponentProcessActor(
+      createPacket(CYAN, 0.3),
+      "corpus-cleaning-flow",
+    );
     packet.visible = false;
     context.group.add(packet);
     return packet;
@@ -1759,6 +1806,7 @@ function buildCorpus(context: BuildContext) {
       accent: CYAN,
     },
   );
+  vocabBoard.name = "assistant-target-corpus-vocabulary";
   const vocabHeight = 4 * vocabCellHeight + 0.72 + 0.5 + 0.34;
   vocabBoard.position.copy(stagePoint(3, new THREE.Vector3(0, 1.05, 0)));
   vocabBoard.rotation.y = stageYaws[3];
@@ -1814,6 +1862,7 @@ function buildCorpus(context: BuildContext) {
     matrixOptions,
   );
   for (const board of [matrixUnknown, matrixBoard]) {
+    board.name = "assistant-target-corpus-token-id-matrix";
     board.position.copy(stagePoint(4, new THREE.Vector3(0, 1.0, 0)));
     board.rotation.y = stageYaws[4];
     context.group.add(board);
@@ -1871,6 +1920,7 @@ function buildCorpus(context: BuildContext) {
         .map((token, index) => (token.startsWith("<") ? index : -1))
         .filter((index) => index >= 0),
     });
+    board.name = "assistant-target-corpus-token-pieces";
     board.position.copy(
       stagePoint(2, new THREE.Vector3(0, 1.75 - rowIndex * 2.6, 0)),
     );
@@ -1918,12 +1968,14 @@ function buildCorpus(context: BuildContext) {
       fontScale: 0.72,
     },
   );
+  injectorPlaque.name = "assistant-target-corpus-special-token-injector";
   injectorPlaque.position
     .copy(specialTokenSpawn)
     .add(new THREE.Vector3(0, 2.15, 0));
   injectorPlaque.rotation.y = injectorYaw;
   context.group.add(injectorPlaque);
   const injectorBeacon = createPacket(GOLD, 0.4);
+  injectorBeacon.name = "assistant-target-corpus-special-token-injector";
   injectorBeacon.position.copy(specialTokenSpawn);
   context.group.add(injectorBeacon);
   const injectorPath = [
@@ -1931,8 +1983,16 @@ function buildCorpus(context: BuildContext) {
     specialTokenSpawn.clone().lerp(stageCenters[2], 0.5).setY(4.2),
     stagePoint(2, new THREE.Vector3(0, 3.4, 0.4)),
   ];
-  context.group.add(createPath(injectorPath, GOLD, 0.05, 0.3));
-  const injectorPacket = createPacket(GOLD, 0.26);
+  context.group.add(
+    bindComponentProcessActor(
+      createPath(injectorPath, GOLD, 0.05, 0.3),
+      "corpus-special-injection-flow",
+    ),
+  );
+  const injectorPacket = bindComponentProcessActor(
+    createPacket(GOLD, 0.26),
+    "corpus-special-injection-flow",
+  );
   injectorPacket.visible = false;
   context.group.add(injectorPacket);
 
@@ -1976,12 +2036,15 @@ function buildCorpus(context: BuildContext) {
       outputPosition: outputPositions[index],
     };
   });
-  const lookupPacket = createPacket(CYAN, 0.24);
+  const lookupPacket = bindComponentProcessActor(
+    createPacket(CYAN, 0.24),
+    "corpus-lookup-flow",
+  );
   lookupPacket.visible = false;
   context.group.add(lookupPacket);
 
   const readyPanel = createProcessPanel(
-    ["S [2 x 7] READY", "NEXT: SLICE X AND Y CONTEXT WINDOWS"],
+    ["S [2 x 7] READY", "NEXT: X [2 x 6] / Y [2 x 6]"],
     {
       width: 7.4,
       height: 1.15,
@@ -1990,10 +2053,12 @@ function buildCorpus(context: BuildContext) {
       fontScale: 0.75,
     },
   );
+  readyPanel.name = "assistant-target-corpus-ready-source-matrix";
   readyPanel.position.set(stageCenters[5].x, 3.9, stageCenters[5].z + 0.3);
   readyPanel.rotation.y = stageYaws[5];
   context.group.add(readyPanel);
   const readyBeacon = createPacket(GREEN, 0.5);
+  readyBeacon.name = "assistant-target-corpus-ready-source-matrix";
   readyBeacon.position.set(stageCenters[5].x, 0.4, stageCenters[5].z + 0.4);
   context.group.add(readyBeacon);
 
@@ -3608,8 +3673,13 @@ type DistinctChamberShellSpec = {
    * The stop count is not repeated here — it comes from `CHAMBER_PROCESS_STOPS`,
    * so the thresholds lit on the runway and the detents on the HUD's process
    * dial cannot drift apart.
+   *
+   * `gallery` is the orientation chamber alone: rather than distributing the
+   * steps of a computation along a walk, it hangs eight lit placards in bays
+   * either side of a processional runway and walks the camera to each in turn.
+   * Its "stops" are placards.
    */
-  layout?: "dais" | "avenue";
+  layout?: "dais" | "avenue" | "gallery";
 };
 
 /**
@@ -3626,10 +3696,10 @@ type DistinctChamberShellSpec = {
  */
 const DISTINCT_CHAMBER_SHELL_SPECS = {
   "training-complex": {
-    size: [52, 60, 72], position: [0, 0, 0], spatialStyle: "panorama",
+    size: [52, 56, 72], position: [0, 0, 0], spatialStyle: "panorama",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
-    layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
+    layout: "gallery",
+    guidedView: { distance: 24, focusY: 2.4, fov: 58 },
   },
   "token-stream-context": {
     size: [48, 52, 60], position: [0, 0, 0], spatialStyle: "rail-gantry",
@@ -3644,7 +3714,9 @@ const DISTINCT_CHAMBER_SHELL_SPECS = {
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
   },
   "embedding": {
-    size: [46, 54, 62], position: [0, 0, 0], spatialStyle: "rail-gantry",
+    // Widened to 48: the contract suite requires every chamber to clear
+    // 48 x 48 x 54, and this was the one room below it.
+    size: [48, 54, 62], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
     guidedView: { distance: 26, focusY: 3.4, fov: 62 },
@@ -3780,10 +3852,7 @@ const DISTINCT_CHAMBER_SHELL_SPECS = {
  * the computation takes before setting off, and the navigation blockers follow
  * the plinths — leaving the whole runway free to walk down.
  */
-function buildAvenueFloor(
-  context: BuildContext,
-  spec: DistinctChamberShellSpec,
-) {
+function buildAvenueFloor(context: BuildContext) {
   const stops =
     CHAMBER_PROCESS_STOPS[context.station.id] ?? DEFAULT_CHAMBER_PROCESS_STOPS;
   const firstZ = AVENUE.firstStopZ;
@@ -3893,6 +3962,109 @@ function buildAvenueFloor(
   }
 }
 
+/**
+ * Floor treatment for the orientation gallery.
+ *
+ * Every other chamber asks the visitor to walk *through* a computation. This
+ * one is an exhibition hall: a polished processional runway down the middle
+ * with a carpet of dark stone either side, and a lit threshold opposite each
+ * bay marking where the guided tour stops to read that placard. The bays
+ * themselves are blocked, so the visitor walks the runway rather than through
+ * the exhibits.
+ */
+function buildGalleryFloor(
+  context: BuildContext,
+  spec: DistinctChamberShellSpec,
+) {
+  const nearZ = ORIENTATION_TOUR_STOPS[0].eye[2] + 6;
+  const farZ =
+    ORIENTATION_TOUR_STOPS[ORIENTATION_TOUR_STOPS.length - 1].look[2] - 7;
+  const runwayDepth = nearZ - farZ;
+  const runwayCenterZ = (nearZ + farZ) / 2;
+  const runwayHalfWidth = 4.4;
+
+  const stoneMaterial = new THREE.MeshStandardMaterial({
+    color: new THREE.Color("#a7b2c0").lerp(context.palette.phaseBase, 0.05),
+    map: getMarbleTexture(1.5, 1.5),
+    roughness: 0.28,
+    metalness: 0.12,
+    normalMap: getSurfaceReliefTexture("floor"),
+    normalScale: new THREE.Vector2(0.1, 0.1),
+    emissive: context.palette.dark,
+    emissiveIntensity: 0.08,
+  });
+
+  const runway = new THREE.Mesh(
+    new THREE.BoxGeometry(runwayHalfWidth * 2, 0.16, runwayDepth),
+    stoneMaterial,
+  );
+  runway.position.set(0, -4.66, runwayCenterZ);
+  context.group.add(runway);
+
+  for (const side of [-1, 1]) {
+    const rim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.13, 0.09, runwayDepth),
+      new THREE.MeshBasicMaterial({
+        color: context.palette.bright,
+        transparent: true,
+        opacity: 0.5,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    );
+    rim.position.set(side * runwayHalfWidth, -4.5, runwayCenterZ);
+    context.group.add(rim);
+  }
+
+  // A viewing mark inlaid in the runway opposite every bay, so the stops the
+  // tour makes are visible as part of the architecture.
+  for (const stop of ORIENTATION_TOUR_STOPS) {
+    const mark = new THREE.Mesh(
+      new THREE.RingGeometry(0.92, 1.06, 36),
+      new THREE.MeshBasicMaterial({
+        color: context.palette.phaseBase,
+        transparent: true,
+        opacity: 0.26,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    mark.rotation.x = -Math.PI / 2;
+    mark.position.set(stop.eye[0], -4.56, stop.eye[2]);
+    context.group.add(mark);
+  }
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(spec.size[0] * 0.8, runwayDepth * 1.05),
+    new THREE.MeshBasicMaterial({
+      map: getContactShadowTexture(),
+      color: "#000000",
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+    }),
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.set(0, -4.674, runwayCenterZ);
+  shadow.renderOrder = 1;
+  context.group.add(shadow);
+
+  if (context.navigationBounds) {
+    context.navigationBounds.walkY = ORIENTATION_EYE_Y;
+    context.navigationBounds.spawn.set(
+      0,
+      ORIENTATION_EYE_Y,
+      ORIENTATION_TOUR_STOPS[0].eye[2] + 4.5,
+    );
+    // The bays are solid; the runway between them stays walkable from the
+    // entrance all the way to the exit door.
+    context.navigationBounds.blockers = ORIENTATION_BAY_BLOCKERS.map(
+      (blocker) => ({ ...blocker }),
+    );
+  }
+}
+
 function buildDistinctChamberShell(context: BuildContext) {
   // Widened to the interface: the const-asserted table gives each entry a
   // literal type that omits the optional keys it does not set, so `layout`
@@ -3912,8 +4084,13 @@ function buildDistinctChamberShell(context: BuildContext) {
     spec.guidedView,
   );
 
+  if (spec.layout === "gallery") {
+    buildGalleryFloor(context, spec);
+    return spec;
+  }
+
   if (spec.layout === "avenue") {
-    buildAvenueFloor(context, spec);
+    buildAvenueFloor(context);
     return spec;
   }
 
@@ -4465,8 +4642,6 @@ function buildSemanticWorld(
       station.id === "corpus-data-preparation"
         ? undefined
         : buildDistinctChamberShell(context);
-    const authoredUpdate =
-      station.id === "corpus-data-preparation" ? buildCorpus(context) : undefined;
     const processGroup = new THREE.Group();
     processGroup.name = distinctShellSpec
       ? `spacious-${distinctShellSpec.spatialStyle}-exhibit`
@@ -4475,12 +4650,16 @@ function buildSemanticWorld(
       const [exhibitX, exhibitY, exhibitZ] = distinctShellSpec.exhibitPosition;
       processGroup.position.set(exhibitX, exhibitY, exhibitZ);
       processGroup.scale.setScalar(distinctShellSpec.exhibitScale);
-      group.add(processGroup);
     }
+    group.add(processGroup);
+    const authoredUpdate =
+      station.id === "corpus-data-preparation"
+        ? buildCorpus(context, processGroup)
+        : undefined;
     const processUpdate = buildDistinctChamberProcess({
       stationId: station.id,
       index,
-      group: distinctShellSpec ? processGroup : group,
+      group: processGroup,
       palette,
     });
     const update: StationUpdater | undefined =
@@ -4536,6 +4715,7 @@ function buildSemanticWorld(
     scene.add(group);
     return {
       group,
+      exhibitRoot: processGroup,
       phaseMaterials,
       lightAnchors,
       navigationBounds: context.navigationBounds ?? {
@@ -4644,6 +4824,7 @@ export function TrainingWorldCanvas({
   dataPrepProgress,
   processProgress,
   processPlaying,
+  processLocked,
   onProcessProgressChange,
   onProcessPlayingChange,
   branchSide,
@@ -4663,6 +4844,7 @@ export function TrainingWorldCanvas({
   onStationChange,
   onAssistantTargetChange,
   onAssistantFocusChange,
+  freeRoamRequestRef,
 }: TrainingCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -4679,6 +4861,7 @@ export function TrainingWorldCanvas({
     dataPrepProgress,
     processProgress,
     processPlaying,
+    processLocked,
     onProcessProgressChange,
     onProcessPlayingChange,
     branchSide,
@@ -4708,6 +4891,7 @@ export function TrainingWorldCanvas({
       dataPrepProgress,
       processProgress,
       processPlaying,
+      processLocked,
       onProcessProgressChange,
       onProcessPlayingChange,
       branchSide,
@@ -4748,6 +4932,7 @@ export function TrainingWorldCanvas({
     onProcessProgressChange,
     onProcessPlayingChange,
     playing,
+    processLocked,
     processPlaying,
     processProgress,
     progress,
@@ -4954,12 +5139,24 @@ export function TrainingWorldCanvas({
     let focusTravelPending = false;
     let focusRadius = 1;
     let focusVeilOpacity = 0;
+    let focusProcess: ComponentProcessDefinition | null = null;
+    let focusProcessElapsed = 0;
     const focusCenter = new THREE.Vector3();
+    const focusSourceCenter = new THREE.Vector3();
     const focusForward = new THREE.Vector3();
     const focusCameraWorld = new THREE.Vector3();
     const focusSphere = new THREE.Sphere();
+    interface FocusStageBinding {
+      source: THREE.Object3D;
+      copy: THREE.Object3D;
+      worldSpaceRoot: boolean;
+    }
+    const focusStageBindings: FocusStageBinding[] = [];
     const focusStageMaterials: THREE.Material[] = [];
     const focusMaterialCache = new Map<THREE.Material, THREE.Material>();
+    let focusSourceVisibilityLease:
+      | FocusVisibilityLease<THREE.Object3D>
+      | null = null;
     let lastRenderedStation = THREE.MathUtils.clamp(
       latest.current.stationIndex,
       0,
@@ -5071,6 +5268,17 @@ export function TrainingWorldCanvas({
     let cameraProgress = THREE.MathUtils.clamp(latest.current.progress, 0, 1);
     let renderedRouteProgress = cameraProgress;
     let manualOverride = true;
+    /**
+     * The orientation gallery's guided walk. While active the camera is driven
+     * from placard to placard by the chamber's process transport; any look or
+     * movement input releases it for good (until the visitor arrives again).
+     */
+    let galleryTourActive = false;
+    /** True once the tour has reached the pose for the current placard. */
+    let galleryTourSettled = false;
+    const galleryEye = new THREE.Vector3();
+    const galleryLook = new THREE.Vector3();
+    const galleryScratch = new THREE.Vector3();
     let wasPlaying = latest.current.playing;
     let reportedNavigationMode: NavigationMode | null = null;
     let reportedMachineRoomCueKey: string | null = null;
@@ -5273,31 +5481,52 @@ export function TrainingWorldCanvas({
     if (tourExtended) latest.current.onIntroTourChange?.("touring");
 
     /**
-     * Grab the pointer for FPS look. Called from the first movement key so
-     * the visitor starts looking with the mouse without a separate click.
-     * Skipped near the training console, where the cursor is handed back on
-     * purpose so its call-to-action stays clickable.
+     * Grab the pointer for FPS look, unless the training console's call-to-
+     * action is right in front of the visitor — that link needs a real click
+     * to work, so the cursor is left free near it on purpose.
+     */
+    const requestPointerLockIfClear = () => {
+      if (
+        reportedTrainingConsoleNearby ||
+        document.pointerLockElement === canvas ||
+        typeof canvas.requestPointerLock !== "function"
+      ) {
+        return;
+      }
+      try {
+        const result = canvas.requestPointerLock() as unknown;
+        if (result && typeof (result as Promise<void>).then === "function") {
+          (result as Promise<void>).catch(() => {});
+        }
+      } catch {
+        // Pointer lock can reject if requested too soon after an exit; the
+        // next attempt (another keypress, click, or Explore toggle) simply
+        // tries again.
+      }
+    };
+
+    /**
+     * Called from the first movement key so the visitor starts looking with
+     * the mouse without a separate click. Room-only: chamber free-roam is
+     * entered by a direct click on the canvas, or by switching to Explore
+     * (see enterFreeRoam below).
      */
     const requestRoomPointerLock = () => {
-      if (
-        navigationRegion.kind === "machine-room" &&
-        !reportedTrainingConsoleNearby &&
-        document.pointerLockElement !== canvas &&
-        typeof canvas.requestPointerLock === "function"
-      ) {
-        try {
-          const result = canvas.requestPointerLock() as unknown;
-          if (
-            result &&
-            typeof (result as Promise<void>).then === "function"
-          ) {
-            (result as Promise<void>).catch(() => {});
-          }
-        } catch {
-          // Pointer lock can reject if requested too soon after an exit;
-          // the next keypress simply tries again.
-        }
+      if (navigationRegion.kind === "machine-room") {
+        requestPointerLockIfClear();
       }
+    };
+
+    /**
+     * Drops the visitor straight into free-roam FPS mode: takes manual
+     * control away from whatever was driving the camera and grabs the
+     * pointer, so switching to Explore never leaves them stuck clicking the
+     * scene first. Exposed to the parent through freeRoamRequestRef.
+     */
+    const enterFreeRoam = () => {
+      cancelIntro();
+      beginManualControl();
+      requestPointerLockIfClear();
     };
 
     const reportNavigationMode = (mode: NavigationMode) => {
@@ -5366,6 +5595,11 @@ export function TrainingWorldCanvas({
       const hit = assistantRaycaster
         .intersectObject(runtime.group, true)
         .find((intersection) => {
+          if (
+            !isVisibleThroughAncestor(intersection.object, runtime.group)
+          ) {
+            return false;
+          }
           let object: THREE.Object3D | null = intersection.object;
           while (object) {
             if (object.userData.assistantNonInteractive) return false;
@@ -5462,9 +5696,11 @@ export function TrainingWorldCanvas({
         ? material.map(stageMaterialFor)
         : stageMaterialFor(material);
 
-    const cloneForStage = (source: THREE.Object3D): THREE.Object3D | null => {
+    const cloneForStage = (
+      source: THREE.Object3D,
+      worldSpaceRoot = false,
+    ): THREE.Object3D | null => {
       if (source.userData.assistantNonInteractive === true) return null;
-      if (!source.visible) return null;
 
       let copy: THREE.Object3D | null = null;
       if ((source as THREE.Mesh).isMesh) {
@@ -5480,7 +5716,9 @@ export function TrainingWorldCanvas({
         const points = source as THREE.Points;
         copy = new THREE.Points(points.geometry, stageMaterialSlot(points.material));
       } else if ((source as THREE.Sprite).isSprite) {
-        copy = new THREE.Sprite((source as THREE.Sprite).material);
+        copy = new THREE.Sprite(
+          stageMaterialFor((source as THREE.Sprite).material) as THREE.SpriteMaterial,
+        );
       } else if ((source as THREE.Group).isGroup || source.type === "Object3D") {
         copy = new THREE.Group();
       } else {
@@ -5491,12 +5729,129 @@ export function TrainingWorldCanvas({
       copy.position.copy(source.position);
       copy.quaternion.copy(source.quaternion);
       copy.scale.copy(source.scale);
+      copy.visible = source.visible;
       copy.renderOrder = FOCUS_STAGE_RENDER_ORDER;
+      focusStageBindings.push({ source, copy, worldSpaceRoot });
       for (const child of source.children) {
         const childCopy = cloneForStage(child);
         if (childCopy) copy.add(childCopy);
       }
       return copy;
+    };
+
+    const isAncestorOf = (
+      possibleAncestor: THREE.Object3D,
+      object: THREE.Object3D,
+    ) => {
+      for (let parent = object.parent; parent; parent = parent.parent) {
+        if (parent === possibleAncestor) return true;
+      }
+      return false;
+    };
+
+    const uniqueTopLevelObjects = (objects: readonly THREE.Object3D[]) => {
+      const unique = [...new Set(objects)];
+      return unique.filter(
+        (candidate) =>
+          !unique.some(
+            (other) =>
+              other !== candidate && isAncestorOf(other, candidate),
+          ),
+      );
+    };
+
+    /**
+     * Resolve every scene root for a semantic target. Some concepts
+     * intentionally own several siblings (for example all key vectors or all
+     * vocabulary bars), so a first-match lookup would silently omit most of
+     * the interaction.
+     */
+    const findComponentProcessObjects = (
+      runtime: StationRuntime,
+      targetId: string,
+    ) => {
+      const metadata = ASSISTANT_TARGET_WORLD_METADATA[targetId];
+      if (!metadata) return [];
+      const exactNames = new Set(metadata.matching.exactObjectNames);
+      const matches: THREE.Object3D[] = [];
+      runtime.group.traverse((object) => {
+        if (exactNames.has(object.name)) matches.push(object);
+      });
+      return uniqueTopLevelObjects(matches);
+    };
+
+    const findComponentProcessAuxiliaryObjects = (
+      runtime: StationRuntime,
+      sceneKeys: readonly string[],
+    ) => {
+      if (sceneKeys.length === 0) return [];
+      const requestedKeys = new Set(sceneKeys);
+      const matches: THREE.Object3D[] = [];
+      runtime.group.traverse((object) => {
+        const objectKeys = object.userData.componentProcessSceneKeys;
+        if (
+          Array.isArray(objectKeys) &&
+          objectKeys.some(
+            (key): key is string =>
+              typeof key === "string" && requestedKeys.has(key),
+          )
+        ) {
+          matches.push(object);
+        }
+      });
+      return uniqueTopLevelObjects(matches);
+    };
+
+    const copyDynamicMaterialState = (
+      source: THREE.Material,
+      staged: THREE.Material,
+    ) => {
+      const sourceWithOpacity = source as THREE.Material & { opacity?: number };
+      const stagedWithOpacity = staged as THREE.Material & { opacity?: number };
+      if (
+        typeof sourceWithOpacity.opacity === "number" &&
+        typeof stagedWithOpacity.opacity === "number"
+      ) {
+        stagedWithOpacity.opacity = sourceWithOpacity.opacity;
+      }
+      staged.visible = source.visible;
+
+      if (
+        source instanceof THREE.MeshStandardMaterial &&
+        staged instanceof THREE.MeshStandardMaterial
+      ) {
+        staged.color.copy(source.color);
+        staged.emissive.copy(source.emissive);
+        staged.emissiveIntensity = source.emissiveIntensity;
+      } else if (
+        source instanceof THREE.MeshBasicMaterial &&
+        staged instanceof THREE.MeshBasicMaterial
+      ) {
+        staged.color.copy(source.color);
+      }
+    };
+
+    const syncFocusStage = () => {
+      for (const binding of focusStageBindings) {
+        const { source, copy, worldSpaceRoot } = binding;
+        copy.visible = source.visible;
+        if (worldSpaceRoot) {
+          source.updateWorldMatrix(true, false);
+          source.matrixWorld.decompose(
+            copy.position,
+            copy.quaternion,
+            copy.scale,
+          );
+          copy.position.sub(focusSourceCenter);
+        } else {
+          copy.position.copy(source.position);
+          copy.quaternion.copy(source.quaternion);
+          copy.scale.copy(source.scale);
+        }
+      }
+      for (const [source, staged] of focusMaterialCache) {
+        copyDynamicMaterialState(source, staged);
+      }
     };
 
     const setAvatarRenderOrder = (renderOrder: number) => {
@@ -5506,10 +5861,16 @@ export function TrainingWorldCanvas({
     };
 
     const clearFocusStage = () => {
+      focusSourceVisibilityLease?.restore();
+      focusSourceVisibilityLease = null;
       for (const child of [...focusStage.children]) focusStage.remove(child);
+      focusStageBindings.length = 0;
       for (const material of focusStageMaterials) material.dispose();
       focusStageMaterials.length = 0;
       focusMaterialCache.clear();
+      focusProcess = null;
+      focusProcessElapsed = 0;
+      focusSourceCenter.set(0, 0, 0);
       focusStage.visible = false;
       focusStage.rotation.set(0, 0, 0);
       focusStage.scale.setScalar(1);
@@ -5557,19 +5918,68 @@ export function TrainingWorldCanvas({
         return false;
       };
 
-      anchor.updateWorldMatrix(true, false);
-      const staged = cloneForStage(anchor);
-      if (!staged) return abortFocus();
-      anchor.matrixWorld.decompose(
-        staged.position,
-        staged.quaternion,
-        staged.scale,
-      );
-      focusStage.add(staged);
-      assistantTargetBounds.setFromObject(staged, true);
+      const runtime = stationRuntimes[currentStation];
+      const componentProcess =
+        resolveComponentProcessDefinition(pickedTargetId);
+      const processRoots: THREE.Object3D[] = [];
+      if (componentProcess) {
+        const selectedRoots = findComponentProcessObjects(
+          runtime,
+          pickedTargetId,
+        );
+        processRoots.push(
+          ...(selectedRoots.length > 0 ? selectedRoots : [anchor]),
+        );
+        for (const participantTargetId of componentProcess.participantTargetIds) {
+          if (participantTargetId === pickedTargetId) continue;
+          processRoots.push(
+            ...findComponentProcessObjects(runtime, participantTargetId),
+          );
+        }
+        processRoots.push(
+          ...findComponentProcessAuxiliaryObjects(
+            runtime,
+            componentProcess.auxiliarySceneKeys,
+          ),
+        );
+      } else {
+        // Station-level or unnamed fallback picks keep the former static
+        // single-object spotlight because they do not represent an authored
+        // component interaction.
+        processRoots.push(anchor);
+      }
+
+      const sourceRoots = uniqueTopLevelObjects(processRoots);
+      if (componentProcess) {
+        runtime.update?.(
+          componentProcess.playback.startProgress,
+          0,
+          false,
+        );
+      }
+
+      const stagedRoots: THREE.Object3D[] = [];
+      for (const sourceRoot of sourceRoots) {
+        sourceRoot.updateWorldMatrix(true, false);
+        const stagedRoot = cloneForStage(sourceRoot, true);
+        if (!stagedRoot) continue;
+        sourceRoot.matrixWorld.decompose(
+          stagedRoot.position,
+          stagedRoot.quaternion,
+          stagedRoot.scale,
+        );
+        focusStage.add(stagedRoot);
+        stagedRoots.push(stagedRoot);
+      }
+      if (stagedRoots.length === 0) return abortFocus();
+
+      assistantTargetBounds.setFromObject(focusStage, true);
       if (assistantTargetBounds.isEmpty()) return abortFocus();
       assistantTargetBounds.getBoundingSphere(focusSphere);
-      staged.position.sub(focusSphere.center);
+      focusSourceCenter.copy(focusSphere.center);
+      for (const stagedRoot of stagedRoots) {
+        stagedRoot.position.sub(focusSourceCenter);
+      }
 
       const fovRadians = THREE.MathUtils.degToRad(camera.fov);
       const viewHeight = 2 * Math.tan(fovRadians / 2) * FOCUS_STAGE_DISTANCE;
@@ -5597,9 +6007,15 @@ export function TrainingWorldCanvas({
         THREE.MathUtils.clamp(focusRadius * 1.05, 0.3, 3.2),
       );
 
+      focusSourceVisibilityLease = createFocusVisibilityLease(
+        runtime.exhibitRoot,
+      );
+      focusSourceVisibilityLease.hide();
       focusActive = true;
       focusTargetId = pickedTargetId;
       focusStationIndex = currentStation;
+      focusProcess = componentProcess;
+      focusProcessElapsed = 0;
       focusTravelPending = true;
       setAvatarRenderOrder(FOCUS_AVATAR_RENDER_ORDER);
       reportAssistantTarget(focusTargetId);
@@ -5666,6 +6082,13 @@ export function TrainingWorldCanvas({
       glancePitch = 0;
       pendingDollyDistance = 0;
       verticalRoamEnabled = false;
+      // Arriving at the orientation gallery starts its guided walk. Only from
+      // here: this is the funnel for "placed at a chamber's spawn" (the dive
+      // from the machine room, HUD and voice navigation), whereas walking in
+      // through the tunnel sets the pose directly. Someone who walked here on
+      // foot is already steering, and should not have the camera taken away.
+      galleryTourActive = activeStationIndex === ORIENTATION_STATION_INDEX;
+      galleryTourSettled = false;
     };
 
     const seedManualPoseFromCamera = () => {
@@ -5793,6 +6216,21 @@ export function TrainingWorldCanvas({
       glancePitch = targetPitch;
       pendingDollyDistance = 0;
       verticalRoamEnabled = false;
+    };
+
+    /**
+     * Hands the gallery back to the visitor.
+     *
+     * The tour keeps `glanceYaw`/`glancePitch` and `targetYaw`/`targetPitch` in
+     * step while it drives, so releasing is just a matter of stopping — the
+     * camera is already where the look damping expects it to be and there is
+     * no snap.
+     */
+    const cancelGalleryTour = () => {
+      if (!galleryTourActive) return;
+      galleryTourActive = false;
+      targetYaw = glanceYaw;
+      targetPitch = glancePitch;
     };
 
     const beginManualControl = () => {
@@ -6175,6 +6613,7 @@ export function TrainingWorldCanvas({
     };
 
     const applyLookDelta = (deltaX: number, deltaY: number) => {
+      if (deltaX !== 0 || deltaY !== 0) cancelGalleryTour();
       targetYaw -= deltaX * 0.00235;
       targetPitch = THREE.MathUtils.clamp(
         targetPitch - deltaY * 0.0021,
@@ -6385,6 +6824,7 @@ export function TrainingWorldCanvas({
         pressedKeys.add(event.code);
         if (!event.repeat) {
           cancelIntro();
+          cancelGalleryTour();
           beginManualControl();
           // The first movement key also captures the mouse for FPS look, so
           // the visitor never has to click the scene first. Esc frees it.
@@ -6393,11 +6833,14 @@ export function TrainingWorldCanvas({
       } else if (["ShiftLeft", "ShiftRight"].includes(event.code)) {
         pressedKeys.add(event.code);
       } else if (event.code === "Space" && !event.repeat) {
-        // Hold the chamber's animation where it is. Only meaningful inside a
-        // chamber under free roam — elsewhere the process is driven by the
-        // ride or the room, and swallowing Space there would be a lie.
-        if (navigationRegion.kind === "chamber") {
+        // Space is the chamber process dial's key, and only that dial's: it
+        // holds or resumes the animation wherever the dial is on screen —
+        // chambers and the tunnels between them. The machine room has no
+        // process, so swallowing Space there would be a lie. The ride's own
+        // play/pause stays mouse-only so one key never drives two transports.
+        if (navigationRegion.kind !== "machine-room") {
           event.preventDefault();
+          if (latest.current.processLocked) return;
           cancelIntro();
           latest.current.onProcessPlayingChange(!latest.current.processPlaying);
         }
@@ -7305,7 +7748,49 @@ export function TrainingWorldCanvas({
           pendingDollyDistance = 0;
         }
 
-        if (navigationRegion.kind === "chamber") {
+        if (
+          navigationRegion.kind === "chamber" &&
+          galleryTourActive &&
+          activeStationIndex === ORIENTATION_STATION_INDEX
+        ) {
+          // The guided walk through the placard gallery.
+          //
+          // The pose is a pure function of the chamber's transport (see
+          // orientationTourPose), so the walk, the placard lighting, the HUD
+          // dial and the pause key are all the same thing — and winding the
+          // dial backward walks the visitor back up the hall.
+          orientationTourPose(state.processProgress, galleryEye, galleryLook);
+
+          // Damped rather than snapped: the visitor should feel walked, and a
+          // scrub of the dial should glide instead of teleporting.
+          const settleRate = galleryTourSettled ? 3.2 : 1.6;
+          localPlayerPosition.x = THREE.MathUtils.damp(
+            localPlayerPosition.x, galleryEye.x, settleRate, delta,
+          );
+          localPlayerPosition.y = THREE.MathUtils.damp(
+            localPlayerPosition.y, galleryEye.y, settleRate, delta,
+          );
+          localPlayerPosition.z = THREE.MathUtils.damp(
+            localPlayerPosition.z, galleryEye.z, settleRate, delta,
+          );
+          galleryTourSettled =
+            galleryTourSettled || localPlayerPosition.distanceTo(galleryEye) < 1.5;
+
+          galleryScratch.copy(galleryLook).sub(localPlayerPosition);
+          targetYaw = Math.atan2(-galleryScratch.x, -galleryScratch.z);
+          targetPitch = THREE.MathUtils.clamp(
+            Math.asin(
+              THREE.MathUtils.clamp(
+                galleryScratch.y / Math.max(0.001, galleryScratch.length()),
+                -1,
+                1,
+              ),
+            ),
+            -Math.PI * 0.485,
+            Math.PI * 0.485,
+          );
+          reportNavigationMode("free-roam");
+        } else if (navigationRegion.kind === "chamber") {
           reportNavigationMode("free-roam");
           const bounds = stationRuntimes[activeStationIndex].navigationBounds;
           if (!verticalRoamEnabled) {
@@ -7616,6 +8101,17 @@ export function TrainingWorldCanvas({
 
       const motionTime = cameraProgress * 76 + elapsed * 0.12;
       animations.forEach((record) => applyAnimation(record, motionTime));
+      if (focusActive && focusProcess && !reduceProcessMotion) {
+        focusProcessElapsed += delta;
+      }
+      const focusReplayProgress =
+        focusActive && focusProcess
+          ? componentProcessProgressAt(
+              focusProcess,
+              focusProcessElapsed,
+              !reduceProcessMotion,
+            )
+          : null;
       stationRuntimes.forEach((runtime, index) => {
         const stationDistance = Math.abs(stationFloat - index);
         runtime.group.visible = roomVisible
@@ -7641,7 +8137,9 @@ export function TrainingWorldCanvas({
           directorProcess === null &&
           !(guidedRide && state.playing);
         const runtimeProgress =
-          index === 1
+          focusReplayProgress !== null && index === focusStationIndex
+            ? focusReplayProgress
+            : index === 1
             ? state.dataPrepProgress
             : index === currentStation
               ? directorProcess !== null
@@ -7654,10 +8152,15 @@ export function TrainingWorldCanvas({
           runtime.update?.(
             runtimeProgress,
             elapsed,
-            scrubbable ? chamberProcessMoving : !reduceProcessMotion,
+            focusReplayProgress !== null && index === focusStationIndex
+              ? !reduceProcessMotion
+              : scrubbable
+                ? chamberProcessMoving
+                : !reduceProcessMotion,
           );
         }
       });
+      if (focusActive) syncFocusStage();
 
       (Object.keys(branchMaterials) as BranchSide[]).forEach((side) => {
         const selected = side === state.branchSide;
@@ -7880,8 +8383,14 @@ export function TrainingWorldCanvas({
     };
     frameHandle = window.requestAnimationFrame(renderFrame);
 
+    if (freeRoamRequestRef) freeRoamRequestRef.current = enterFreeRoam;
+
     return () => {
       disposed = true;
+      // Restore any source exhibits hidden by a spotlight before the shared
+      // chamber scene is disposed.
+      clearFocusStage();
+      if (freeRoamRequestRef) freeRoamRequestRef.current = null;
       // Leave no stale tour banner behind if the canvas unmounts mid-flow.
       if (introActive && tourExtended) {
         introActive = false;
@@ -7915,7 +8424,7 @@ export function TrainingWorldCanvas({
       composerTarget.dispose();
       renderer.dispose();
     };
-  }, []);
+  }, [freeRoamRequestRef]);
 
   return (
     <div

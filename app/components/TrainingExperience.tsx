@@ -5,7 +5,8 @@ import { TrainingHUD } from "./TrainingHUD";
 import { TrainingWorldCanvas } from "./TrainingWorldCanvas";
 import { AssistantDock, useRealtimeAssistant } from "./assistant";
 import {
-  CHAMBER_PROCESS_DURATION_SECONDS,
+  chamberProcessDurationSeconds,
+  chamberProcessLoops,
   CHAMBER_PROCESS_STOPS,
   DATA_PREP_DURATION_SECONDS,
   DATA_PREP_STAGES,
@@ -18,10 +19,10 @@ import {
   SESSION_TUTOR_INSTRUCTIONS,
 } from "../lib/assistantContext";
 import {
-  ASSISTANT_APP_TOOLS,
-  parseAssistantAppCommand,
-  resolveAssistantChamberIndex,
-} from "../lib/assistantAppTools";
+  attachComponentProcessContext,
+  resolveComponentProcessDefinition,
+  type AssistantTurnContextWithComponentProcess,
+} from "../lib/componentProcesses";
 import type {
   BranchSide,
   DetailMode,
@@ -30,7 +31,6 @@ import type {
   NavigationMode,
   RideMode,
 } from "../lib/worldTypes";
-import type { RealtimeAssistantToolCall } from "./assistant";
 import {
   registerDirectorExperience,
   unregisterDirectorExperience,
@@ -128,10 +128,21 @@ export function TrainingExperience() {
   const [spotlightTargetId, setSpotlightTargetId] = useState<string | null>(
     null,
   );
+  const [spotlightContext, setSpotlightContext] =
+    useState<AssistantTurnContextWithComponentProcess | null>(null);
   const previousBranchId = useRef<string | null>(null);
   const previousStationIndex = useRef(0);
   const assistantKeyHeld = useRef(false);
   const autoListenTargetRef = useRef<string | null>(null);
+  const componentReplayResumeRef = useRef<{
+    stationId: string;
+    transport: "chamber-process" | "data-preparation";
+    wasPlaying: boolean;
+    progress: number;
+  } | null>(null);
+  // The canvas assigns this once mounted; changeRideMode calls it to drop
+  // the visitor into free-roam FPS mode the instant Explore is selected.
+  const freeRoamRequestRef = useRef<(() => void) | null>(null);
 
   // The hand-off notice ("you have control now") dismisses itself.
   useEffect(() => {
@@ -168,6 +179,7 @@ export function TrainingExperience() {
 
   const handleDialProgressChange = useCallback(
     (value: number) => {
+      if (componentReplayResumeRef.current) return;
       if (dataPrepChamber) setDataPrepProgress(clamp01(value));
       else setProcessProgress(value);
     },
@@ -176,6 +188,7 @@ export function TrainingExperience() {
 
   const handleDialPlayingChange = useCallback(
     (next: boolean) => {
+      if (componentReplayResumeRef.current) return;
       // Taking hold of the dial takes the process off whatever was driving it.
       // On the guided ride the animation is paced by the camera's own position
       // along the route, so the ride has to stop — otherwise the next frame
@@ -187,42 +200,30 @@ export function TrainingExperience() {
     [dataPrepChamber],
   );
 
-  const clearAssistantSelection = useCallback(() => {
-    setSpotlightTargetId(null);
-    setAssistantTargetId(null);
+  const restoreComponentReplayTransport = useCallback(() => {
+    const resume = componentReplayResumeRef.current;
+    componentReplayResumeRef.current = null;
+    if (!resume || resume.stationId !== currentStation.id) return;
+    if (resume.transport === "data-preparation") {
+      setDataPrepProgress(resume.progress);
+      setDataPrepPlaying(resume.wasPlaying);
+    } else {
+      setProcessProgress(resume.progress);
+      setProcessPlaying(resume.wasPlaying);
+    }
+  }, [currentStation.id]);
+
+  const handleCanvasProcessProgressChange = useCallback((value: number) => {
+    if (componentReplayResumeRef.current) return;
+    setProcessProgress(value);
   }, []);
 
-  const navigateToStation = useCallback(
-    (targetIndex: number) => {
-      const boundedIndex = Math.min(
-        TRAINING_STATIONS.length - 1,
-        Math.max(0, targetIndex),
-      );
-      const destination = TRAINING_STATIONS[boundedIndex];
-      const changed = boundedIndex !== stationIndex;
-
-      if (changed) {
-        setPlaying(false);
-        clearAssistantSelection();
-        setReportedStation(boundedIndex);
-        setProgressState(
-          boundedIndex / Math.max(1, TRAINING_STATIONS.length - 1),
-        );
-      }
-
-      return {
-        ok: true,
-        changed,
-        stationId: destination.id,
-        stationTitle: destination.title,
-        stationIndex: boundedIndex,
-        message: changed
-          ? `Moved to ${destination.title}.`
-          : `Already at ${destination.title}.`,
-      };
-    },
-    [clearAssistantSelection, stationIndex],
-  );
+  const clearAssistantSelection = useCallback(() => {
+    setSpotlightTargetId(null);
+    setSpotlightContext(null);
+    setAssistantTargetId(null);
+    restoreComponentReplayTransport();
+  }, [restoreComponentReplayTransport]);
 
   const changeRideMode = useCallback((mode: RideMode) => {
     setRideMode(mode);
@@ -231,6 +232,10 @@ export function TrainingExperience() {
       setPlaying(true);
     } else {
       setPlaying(false);
+      // Explore is meant to drop the visitor straight into FPS free-roam
+      // rather than just stopping the ride and waiting for them to click
+      // the scene themselves.
+      freeRoamRequestRef.current?.();
     }
   }, []);
 
@@ -241,246 +246,71 @@ export function TrainingExperience() {
     setPlaying(rideMode !== "explore");
   }, [clearAssistantSelection, rideMode]);
 
-  const handleAssistantToolCall = useCallback(
-    (call: RealtimeAssistantToolCall) => {
-      const parsed = parseAssistantAppCommand(call.name, call.arguments);
-      if (!parsed.ok) {
-        return { ok: false, changed: false, error: parsed.error };
-      }
-
-      const command = parsed.command;
-      if (command.kind === "navigate_chamber") {
-        const targetIndex = resolveAssistantChamberIndex(
-          stationIndex,
-          command.destination,
-        );
-        if (targetIndex === null) {
-          return {
-            ok: false,
-            changed: false,
-            error: "That chamber does not exist.",
-          };
-        }
-        return navigateToStation(targetIndex);
-      }
-
-      if (command.kind === "set_journey_playback") {
-        if (command.action === "restart") {
-          const firstStation = TRAINING_STATIONS[0];
-          const restartPlaying = rideMode !== "explore";
-          const changed =
-            progress !== 0 ||
-            stationIndex !== 0 ||
-            playing !== restartPlaying;
-          restart();
-          return {
-            ok: true,
-            changed,
-            action: command.action,
-            stationId: firstStation.id,
-            stationTitle: firstStation.title,
-            message: "Restarted the journey from the first chamber.",
-          };
-        }
-        if (command.action === "play") {
-          if (rideMode === "explore") {
-            return {
-              ok: false,
-              changed: false,
-              error: "Journey playback is unavailable in Explore mode.",
-            };
-          }
-          if (progress >= 1) {
-            return {
-              ok: true,
-              changed: false,
-              action: command.action,
-              message: "The journey is already at the end. Restart it to play again.",
-            };
-          }
-          const changed = !playing;
-          setPlaying(true);
-          return {
-            ok: true,
-            changed,
-            action: command.action,
-            message: changed
-              ? "Resumed the journey."
-              : "The journey is already playing.",
-          };
-        }
-
-        const changed = playing;
-        setPlaying(false);
-        return {
-          ok: true,
-          changed,
-          action: command.action,
-          message: changed
-            ? "Paused the journey."
-            : "The journey is already paused.",
-        };
-      }
-
-      if (command.kind === "set_detail_mode") {
-        const changed = detailMode !== command.mode;
-        setDetailMode(command.mode);
-        return {
-          ok: true,
-          changed,
-          mode: command.mode,
-          message: changed
-            ? `Switched to ${command.mode} detail.`
-            : `${command.mode} detail is already selected.`,
-        };
-      }
-
-      if (command.kind === "set_ride_mode") {
-        const modeChanged = rideMode !== command.mode;
-        const changed =
-          modeChanged ||
-          (command.mode === "overview" &&
-            (detailMode !== "story" || !playing)) ||
-          (command.mode === "explore" && playing);
-        changeRideMode(command.mode);
-        return {
-          ok: true,
-          changed,
-          mode: command.mode,
-          message: modeChanged
-            ? `Switched to ${command.mode} mode.`
-            : changed
-              ? `Reset ${command.mode} mode to its default playback state.`
-            : `${command.mode} mode is already selected.`,
-        };
-      }
-
-      if (command.kind === "choose_branch") {
-        if (!currentStation.branch) {
-          return {
-            ok: false,
-            changed: false,
-            error: "The current chamber does not have a branch choice.",
-          };
-        }
-        const changed = branchSide !== command.side;
-        setBranchSide(command.side);
-        return {
-          ok: true,
-          changed,
-          side: command.side,
-          branchLabel: currentStation.branch[command.side],
-          stationId: currentStation.id,
-          message: changed
-            ? `Selected the ${command.side} branch.`
-            : `The ${command.side} branch is already selected.`,
-        };
-      }
-
-      if (stationIndex !== 1) {
-        return {
-          ok: false,
-          changed: false,
-          error:
-            "Data-preparation playback is only available in the Corpus & Data Preparation chamber.",
-        };
-      }
-      if (command.action === "restart") {
-        const changed = dataPrepProgress !== 0 || !dataPrepPlaying;
-        setDataPrepProgress(0);
-        setDataPrepPlaying(true);
-        return {
-          ok: true,
-          changed,
-          action: command.action,
-          message: "Restarted the data-preparation sequence.",
-        };
-      }
-      if (command.action === "play") {
-        if (dataPrepProgress >= 1) {
-          return {
-            ok: true,
-            changed: false,
-            action: command.action,
-            message:
-              "The data-preparation sequence is complete. Restart it to play again.",
-          };
-        }
-        const changed = !dataPrepPlaying;
-        setDataPrepPlaying(true);
-        return {
-          ok: true,
-          changed,
-          action: command.action,
-          message: changed
-            ? "Resumed data preparation."
-            : "Data preparation is already playing.",
-        };
-      }
-
-      const changed = dataPrepPlaying;
-      setDataPrepPlaying(false);
-      return {
-        ok: true,
-        changed,
-        action: command.action,
-        message: changed
-          ? "Paused data preparation."
-          : "Data preparation is already paused.",
-      };
-    },
-    [
-      branchSide,
-      changeRideMode,
-      currentStation,
-      dataPrepPlaying,
-      dataPrepProgress,
-      detailMode,
-      navigateToStation,
-      playing,
-      progress,
-      restart,
-      rideMode,
-      stationIndex,
-    ],
-  );
-
-  const makeAssistantTurnContext = useCallback(
-    () =>
-      buildAssistantTurnContextSnapshot({
+  const buildAssistantContextSnapshot = useCallback(
+    (explicitTargetId: string | null, replayingComponentProcess = false) => {
+      const snapshot = buildAssistantTurnContextSnapshot({
         stationId: currentStation.id,
-        explicitTargetId: assistantTargetId,
+        explicitTargetId,
         detailMode,
         branchSide,
         visibleState: {
           stationIndex,
           journeyProgress: Number(progress.toFixed(4)),
           dataPreparationProgress: Number(dataPrepProgress.toFixed(4)),
+          dataPreparationPlaying:
+            replayingComponentProcess &&
+            currentStation.id === "corpus-data-preparation"
+              ? false
+              : dataPrepPlaying,
+          chamberProcessProgress: Number(processProgress.toFixed(4)),
+          chamberProcessPlaying: replayingComponentProcess
+            ? false
+            : processPlaying,
+          componentProcessReplayActive: replayingComponentProcess,
           journeyPlaying: playing,
           rideMode,
         },
-      }),
+      });
+      return attachComponentProcessContext(
+        snapshot,
+        explicitTargetId,
+        replayingComponentProcess
+          ? "playing-isolated-chamber-slice"
+          : "available-on-spotlight",
+      );
+    },
     [
-      assistantTargetId,
       branchSide,
       currentStation.id,
+      dataPrepPlaying,
       dataPrepProgress,
       detailMode,
       playing,
+      processPlaying,
+      processProgress,
       progress,
       rideMode,
       stationIndex,
     ],
+  );
+  const makeAssistantTurnContext = useCallback(
+    () => buildAssistantContextSnapshot(assistantTargetId, false),
+    [assistantTargetId, buildAssistantContextSnapshot],
   );
   // While a component is spotlighted the session runs hands-free: the
   // microphone opens automatically and semantic VAD detects when the visitor
   // finishes asking. Without a spotlight, V remains classic push-to-talk.
   const voice = useRealtimeAssistant({
     turnMode: spotlightTargetId ? "semantic-vad" : "push-to-talk",
+    semanticVadEagerness: "high",
     instructions: SESSION_TUTOR_INSTRUCTIONS,
-    tools: ASSISTANT_APP_TOOLS,
-    onToolCall: handleAssistantToolCall,
+    persistentContext: spotlightContext,
     getTurnContext: makeAssistantTurnContext,
+    onTurnTiming: (timing) => {
+      if (process.env.NODE_ENV !== "production") {
+        console.info("Voice guide turn timing", timing);
+      }
+    },
   });
   const {
     isEnabled: voiceEnabled,
@@ -488,6 +318,7 @@ export function TrainingExperience() {
     startTalking,
     stopTalking,
     stopListening,
+    cancelResponse,
   } = voice;
   const assistantAudioActivity = useRemoteAudioActivity(
     voice.remoteStream,
@@ -505,15 +336,22 @@ export function TrainingExperience() {
     voice.status === "listening" ||
     voice.status === "thinking" ||
     voice.status === "speaking";
+  const activeComponentProcess = useMemo(
+    () => resolveComponentProcessDefinition(spotlightTargetId),
+    [spotlightTargetId],
+  );
 
   const startAssistantQuestion = useCallback(() => {
     if (!voiceEnabled || voiceStatus === "connecting" || voiceStatus === "error") {
       return;
     }
-    const started = startTalking(makeAssistantTurnContext());
+    const started = startTalking(
+      spotlightTargetId ? undefined : makeAssistantTurnContext(),
+    );
     if (started) setPlaying(false);
   }, [
     makeAssistantTurnContext,
+    spotlightTargetId,
     startTalking,
     voiceEnabled,
     voiceStatus,
@@ -530,6 +368,7 @@ export function TrainingExperience() {
   useEffect(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const respectReducedMotion = () => {
+      if (componentReplayResumeRef.current) return;
       if (reduceMotion.matches) {
         setPlaying(false);
         setDataPrepPlaying(false);
@@ -569,6 +408,8 @@ export function TrainingExperience() {
 
   // The transport's clock. It loops, because a chamber process has no end
   // state worth resting on — unlike data preparation, which finishes.
+  const processDurationSeconds = chamberProcessDurationSeconds(currentStation.id);
+  const processLoops = chamberProcessLoops(currentStation.id);
   useEffect(() => {
     if (!processPlaying) return undefined;
 
@@ -577,15 +418,25 @@ export function TrainingExperience() {
     const tick = (now: number) => {
       const delta = Math.min(0.05, (now - last) / 1000);
       last = now;
-      setProcessProgress(
-        (value) => (value + delta / CHAMBER_PROCESS_DURATION_SECONDS) % 1,
-      );
+      setProcessProgress((value) => {
+        if (componentReplayResumeRef.current) return value;
+        const next = value + delta / processDurationSeconds;
+        if (processLoops) return next % 1;
+        // A run-once chamber stops at its end rather than starting over. The
+        // clock pauses itself there, so the transport stays exactly where the
+        // animation finished and the dial can be scrubbed back into it.
+        if (next >= 1) {
+          setProcessPlaying(false);
+          return 1;
+        }
+        return next;
+      });
       frame = requestAnimationFrame(tick);
     };
 
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [processPlaying]);
+  }, [processPlaying, processDurationSeconds, processLoops]);
 
   useEffect(() => {
     if (stationIndex !== 1 || !dataPrepPlaying) return;
@@ -596,6 +447,7 @@ export function TrainingExperience() {
       const delta = Math.min(0.05, (now - last) / 1000);
       last = now;
       setDataPrepProgress((value) => {
+        if (componentReplayResumeRef.current) return value;
         const next = clamp01(value + delta / DATA_PREP_DURATION_SECONDS);
         if (next >= 1) setDataPrepPlaying(false);
         return next;
@@ -645,6 +497,9 @@ export function TrainingExperience() {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, button, select, textarea")) return;
 
+      // Space is deliberately absent here: it belongs to the chamber process
+      // dial, which TrainingWorldCanvas owns. The ride's own play/pause is
+      // mouse-only, so one key never drives two transports at once.
       const stationStep = 1 / ((TRAINING_STATIONS.length - 1) * 3);
       if (event.code === "ArrowRight") {
         event.preventDefault();
@@ -654,9 +509,6 @@ export function TrainingExperience() {
         event.preventDefault();
         setPlaying(false);
         setProgressState((value) => clamp01(value - stationStep));
-      } else if (event.code === "Space") {
-        event.preventDefault();
-        setPlaying((value) => !value);
       } else if (event.code === "KeyQ") {
         setBranchSide("left");
       } else if (event.code === "KeyE") {
@@ -743,6 +595,7 @@ export function TrainingExperience() {
       },
       setPlaying: (value) => setPlaying(value),
       setDataPrep: (value, prepPlaying) => {
+        if (componentReplayResumeRef.current) return;
         setDataPrepPlaying(prepPlaying);
         setDataPrepProgress(clamp01(value));
       },
@@ -768,19 +621,71 @@ export function TrainingExperience() {
 
   const handleAssistantFocusChange = useCallback(
     (targetId: string | null) => {
-      setSpotlightTargetId(targetId);
       if (targetId) {
+        if (targetId === spotlightTargetId && spotlightContext) return;
+
+        const switchingTargets =
+          spotlightTargetId !== null && spotlightTargetId !== targetId;
+        if (switchingTargets) {
+          // The canvas swaps targets directly, without an intermediate release.
+          // Stop A before the frozen snapshot for B takes over.
+          autoListenTargetRef.current = null;
+          stopListening();
+          if (voiceStatus === "thinking" || voiceStatus === "speaking") {
+            cancelResponse();
+          }
+        }
+
         // A spotlighted component pauses the ride and becomes the explicit
-        // conversation target until the visitor releases it.
+        // conversation target until the visitor releases it. Build from the
+        // explicit target before React state changes, so follow-ups stay tied
+        // to exactly this captured scene.
+        const componentProcess = resolveComponentProcessDefinition(targetId);
+        if (componentProcess && !componentReplayResumeRef.current) {
+          const dataPreparation =
+            componentProcess.stationId === "corpus-data-preparation";
+          componentReplayResumeRef.current = {
+            stationId: componentProcess.stationId,
+            transport: dataPreparation
+              ? "data-preparation"
+              : "chamber-process",
+            wasPlaying: dataPreparation ? dataPrepPlaying : processPlaying,
+            progress: dataPreparation ? dataPrepProgress : processProgress,
+          };
+          if (dataPreparation) setDataPrepPlaying(false);
+          else setProcessPlaying(false);
+        }
+
+        const nextContext = buildAssistantContextSnapshot(
+          targetId,
+          Boolean(componentProcess),
+        );
+        setSpotlightContext(nextContext);
+        setSpotlightTargetId(targetId);
         setPlaying(false);
         setAssistantTargetId(targetId);
       } else {
         // Spotlight released: close the hands-free microphone.
         autoListenTargetRef.current = null;
+        setSpotlightContext(null);
+        setSpotlightTargetId(null);
         stopListening();
+        restoreComponentReplayTransport();
       }
     },
-    [stopListening],
+    [
+      buildAssistantContextSnapshot,
+      cancelResponse,
+      dataPrepPlaying,
+      dataPrepProgress,
+      processPlaying,
+      processProgress,
+      restoreComponentReplayTransport,
+      spotlightContext,
+      spotlightTargetId,
+      stopListening,
+      voiceStatus,
+    ],
   );
 
   // As soon as a component is spotlighted (and whenever the guide becomes
@@ -792,14 +697,14 @@ export function TrainingExperience() {
       autoListenTargetRef.current = null;
       return;
     }
-    if (!spotlightTargetId) return;
+    if (!spotlightTargetId || !spotlightContext) return;
     if (voiceStatus !== "ready" && voiceStatus !== "listening") return;
     if (autoListenTargetRef.current === spotlightTargetId) return;
-    if (startTalking(makeAssistantTurnContext())) {
+    if (startTalking()) {
       autoListenTargetRef.current = spotlightTargetId;
     }
   }, [
-    makeAssistantTurnContext,
+    spotlightContext,
     spotlightTargetId,
     startTalking,
     voiceEnabled,
@@ -814,8 +719,9 @@ export function TrainingExperience() {
         playing={playing}
         dataPrepProgress={dataPrepProgress}
         processProgress={processProgress}
-        processPlaying={processPlaying}
-        onProcessProgressChange={setProcessProgress}
+        processPlaying={dialPlaying}
+        processLocked={Boolean(activeComponentProcess)}
+        onProcessProgressChange={handleCanvasProcessProgressChange}
         onProcessPlayingChange={handleDialPlayingChange}
         branchSide={branchSide}
         detailMode={detailMode}
@@ -834,6 +740,7 @@ export function TrainingExperience() {
         onStationChange={setReportedStation}
         onAssistantTargetChange={setAssistantTargetId}
         onAssistantFocusChange={handleAssistantFocusChange}
+        freeRoamRequestRef={freeRoamRequestRef}
       />
       <TrainingHUD
         progress={progress}
@@ -850,6 +757,7 @@ export function TrainingExperience() {
         dataPrepProgress={dataPrepProgress}
         processProgress={dialProgress}
         processPlaying={dialPlaying}
+        processLocked={Boolean(activeComponentProcess)}
         processStops={processStops}
         processAvailable={processAvailable}
         onProcessProgressChange={handleDialProgressChange}
@@ -868,7 +776,11 @@ export function TrainingExperience() {
         enabled={voice.isEnabled}
         status={voice.status}
         targetLabel={assistantTarget.target.label}
-        transcript={voice.transcript}
+        processLabel={
+          activeComponentProcess
+            ? `${activeComponentProcess.label} · isolated chamber replay`
+            : null
+        }
         error={voice.error}
         handsFree={Boolean(spotlightTargetId)}
         onEnable={(temporaryApiKey) => {
