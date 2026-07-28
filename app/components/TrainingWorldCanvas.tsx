@@ -23,7 +23,7 @@ import {
   resolveAssistantTarget,
 } from "../lib/assistantContext";
 import {
-  componentProcessProgressAt,
+  componentSpotlightPresentation,
   resolveComponentProcessDefinition,
   type ComponentProcessDefinition,
 } from "../lib/componentProcesses";
@@ -34,6 +34,7 @@ import {
 } from "../lib/focusVisibility";
 import type {
   BranchSide,
+  ComponentSpotlightPhase,
   DetailMode,
   MachineRoomCue,
   NavigationMode,
@@ -201,6 +202,10 @@ interface WorldRefs {
   assistantAudioActivity: TrainingCanvasProps["assistantAudioActivity"];
   assistantTargetId: TrainingCanvasProps["assistantTargetId"];
   assistantTargetLocked: TrainingCanvasProps["assistantTargetLocked"];
+  assistantFocusPhase: TrainingCanvasProps["assistantFocusPhase"];
+  assistantFocusToken: TrainingCanvasProps["assistantFocusToken"];
+  assistantFocusDismissGeneration:
+    TrainingCanvasProps["assistantFocusDismissGeneration"];
   onProgressChange: TrainingCanvasProps["onProgressChange"];
   onManualNavigation: TrainingCanvasProps["onManualNavigation"];
   onNavigationModeChange: TrainingCanvasProps["onNavigationModeChange"];
@@ -2234,6 +2239,14 @@ function buildCorpus(
   return update;
 }
 
+/** Type-compatible entry retained only for the retired builder catalog. */
+function buildLegacyCorpus(context: BuildContext) {
+  const exhibitRoot = new THREE.Group();
+  exhibitRoot.name = "legacy-corpus-authored-process";
+  context.group.add(exhibitRoot);
+  return buildCorpus(context, exhibitRoot);
+}
+
 function buildTokenStream(context: BuildContext) {
   addStationHeading(context, "continuous stream → sampled context windows");
   addShell(context, new THREE.Vector3(20, 13, 22), new THREE.Vector3(0, 0, -2));
@@ -3620,7 +3633,7 @@ const STATION_BUILDERS: Array<
   (context: BuildContext) => void | StationUpdater
 > = [
   buildTrainingComplex,
-  buildCorpus,
+  buildLegacyCorpus,
   buildTokenStream,
   buildBatchPlatform,
   buildEmbeddingHall,
@@ -4835,6 +4848,9 @@ export function TrainingWorldCanvas({
   assistantAudioActivity,
   assistantTargetId,
   assistantTargetLocked,
+  assistantFocusPhase,
+  assistantFocusToken,
+  assistantFocusDismissGeneration,
   onProgressChange,
   onManualNavigation,
   onNavigationModeChange,
@@ -4872,6 +4888,9 @@ export function TrainingWorldCanvas({
     assistantAudioActivity,
     assistantTargetId,
     assistantTargetLocked,
+    assistantFocusPhase,
+    assistantFocusToken,
+    assistantFocusDismissGeneration,
     onProgressChange,
     onManualNavigation,
     onNavigationModeChange,
@@ -4902,6 +4921,9 @@ export function TrainingWorldCanvas({
       assistantAudioActivity,
       assistantTargetId,
       assistantTargetLocked,
+      assistantFocusPhase,
+      assistantFocusToken,
+      assistantFocusDismissGeneration,
       onProgressChange,
       onManualNavigation,
       onNavigationModeChange,
@@ -4916,6 +4938,9 @@ export function TrainingWorldCanvas({
     assistantAudioActivity,
     assistantEnabled,
     assistantStatus,
+    assistantFocusPhase,
+    assistantFocusToken,
+    assistantFocusDismissGeneration,
     assistantTargetId,
     assistantTargetLocked,
     branchSide,
@@ -5141,6 +5166,13 @@ export function TrainingWorldCanvas({
     let focusVeilOpacity = 0;
     let focusProcess: ComponentProcessDefinition | null = null;
     let focusProcessElapsed = 0;
+    let focusPhase: ComponentSpotlightPhase = "solo-introduction";
+    let focusToken = 0;
+    let focusTokenSequence = 0;
+    let focusDismissGeneration =
+      latest.current.assistantFocusDismissGeneration;
+    let focusSelectedRoots: THREE.Object3D[] = [];
+    let focusReplayRoots: THREE.Object3D[] = [];
     const focusCenter = new THREE.Vector3();
     const focusSourceCenter = new THREE.Vector3();
     const focusForward = new THREE.Vector3();
@@ -5673,13 +5705,11 @@ export function TrainingWorldCanvas({
     };
 
     /**
-     * Deep-copies an exhibit subtree for the spotlight stage, sharing
-     * geometry and materials with the originals so nothing extra needs
-     * disposal. Opaque materials are swapped for transparent clones so the
-     * replica renders after the dimming veil and stays bright.
+     * Deep-copies an exhibit subtree for the spotlight stage. Geometry remains
+     * shared, while materials are cloned so the solo introduction can hold the
+     * exact picked appearance as the hidden chamber keeps updating.
      */
     const stageMaterialFor = (material: THREE.Material): THREE.Material => {
-      if (material.transparent) return material;
       let staged = focusMaterialCache.get(material);
       if (!staged) {
         staged = material.clone();
@@ -5699,6 +5729,7 @@ export function TrainingWorldCanvas({
     const cloneForStage = (
       source: THREE.Object3D,
       worldSpaceRoot = false,
+      bindToSource = true,
     ): THREE.Object3D | null => {
       if (source.userData.assistantNonInteractive === true) return null;
 
@@ -5731,9 +5762,11 @@ export function TrainingWorldCanvas({
       copy.scale.copy(source.scale);
       copy.visible = source.visible;
       copy.renderOrder = FOCUS_STAGE_RENDER_ORDER;
-      focusStageBindings.push({ source, copy, worldSpaceRoot });
+      if (bindToSource) {
+        focusStageBindings.push({ source, copy, worldSpaceRoot });
+      }
       for (const child of source.children) {
-        const childCopy = cloneForStage(child);
+        const childCopy = cloneForStage(child, false, bindToSource);
         if (childCopy) copy.add(childCopy);
       }
       return copy;
@@ -5860,16 +5893,12 @@ export function TrainingWorldCanvas({
       });
     };
 
-    const clearFocusStage = () => {
-      focusSourceVisibilityLease?.restore();
-      focusSourceVisibilityLease = null;
+    const clearFocusReplica = () => {
       for (const child of [...focusStage.children]) focusStage.remove(child);
       focusStageBindings.length = 0;
       for (const material of focusStageMaterials) material.dispose();
       focusStageMaterials.length = 0;
       focusMaterialCache.clear();
-      focusProcess = null;
-      focusProcessElapsed = 0;
       focusSourceCenter.set(0, 0, 0);
       focusStage.visible = false;
       focusStage.rotation.set(0, 0, 0);
@@ -5878,8 +5907,75 @@ export function TrainingWorldCanvas({
       focusPedestal.group.visible = false;
     };
 
+    const buildFocusReplica = (
+      sourceRoots: readonly THREE.Object3D[],
+      bindToSource: boolean,
+    ) => {
+      clearFocusReplica();
+      const stagedRoots: THREE.Object3D[] = [];
+      for (const sourceRoot of sourceRoots) {
+        sourceRoot.updateWorldMatrix(true, false);
+        const stagedRoot = cloneForStage(
+          sourceRoot,
+          true,
+          bindToSource,
+        );
+        if (!stagedRoot) continue;
+        sourceRoot.matrixWorld.decompose(
+          stagedRoot.position,
+          stagedRoot.quaternion,
+          stagedRoot.scale,
+        );
+        focusStage.add(stagedRoot);
+        stagedRoots.push(stagedRoot);
+      }
+      if (stagedRoots.length === 0) return false;
+
+      assistantTargetBounds.setFromObject(focusStage, true);
+      if (assistantTargetBounds.isEmpty()) return false;
+      assistantTargetBounds.getBoundingSphere(focusSphere);
+      focusSourceCenter.copy(focusSphere.center);
+      for (const stagedRoot of stagedRoots) {
+        stagedRoot.position.sub(focusSourceCenter);
+      }
+
+      const fovRadians = THREE.MathUtils.degToRad(camera.fov);
+      const viewHeight =
+        2 * Math.tan(fovRadians / 2) * FOCUS_STAGE_DISTANCE;
+      const stageScale = THREE.MathUtils.clamp(
+        (viewHeight * 0.4) / Math.max(0.001, focusSphere.radius * 2),
+        0.02,
+        60,
+      );
+      focusStage.scale.setScalar(stageScale);
+      focusRadius = focusSphere.radius * stageScale;
+      focusStage.position.copy(focusCenter);
+      focusStage.visible = true;
+
+      focusPedestal.group.visible = true;
+      focusPedestal.group.position.copy(focusCenter);
+      focusPedestal.group.position.y -= focusRadius * 1.18;
+      focusPedestal.group.scale.setScalar(
+        THREE.MathUtils.clamp(focusRadius * 1.05, 0.3, 3.2),
+      );
+      return true;
+    };
+
+    const clearFocusStage = () => {
+      focusSourceVisibilityLease?.restore();
+      focusSourceVisibilityLease = null;
+      clearFocusReplica();
+      focusProcess = null;
+      focusProcessElapsed = 0;
+      focusPhase = "solo-introduction";
+      focusToken = 0;
+      focusSelectedRoots = [];
+      focusReplayRoots = [];
+    };
+
     const exitFocus = () => {
       if (!focusActive) return;
+      const releasedFocusToken = focusToken;
       focusActive = false;
       focusTargetId = null;
       focusStationIndex = -1;
@@ -5887,7 +5983,10 @@ export function TrainingWorldCanvas({
       clearFocusStage();
       setAvatarRenderOrder(0);
       lastAssistantTravelTargetId = null;
-      latest.current.onAssistantFocusChange?.(null);
+      latest.current.onAssistantFocusChange?.(
+        null,
+        releasedFocusToken,
+      );
       setInteractionHint(null);
     };
 
@@ -5902,6 +6001,7 @@ export function TrainingWorldCanvas({
       const pickedTargetId = pick.targetId;
 
       const wasActive = focusActive;
+      const previousFocusToken = focusToken;
       focusActive = false;
       clearFocusStage();
       const abortFocus = () => {
@@ -5912,7 +6012,10 @@ export function TrainingWorldCanvas({
         if (wasActive) {
           setAvatarRenderOrder(0);
           lastAssistantTravelTargetId = null;
-          latest.current.onAssistantFocusChange?.(null);
+          latest.current.onAssistantFocusChange?.(
+            null,
+            previousFocusToken,
+          );
           setInteractionHint(null);
         }
         return false;
@@ -5921,75 +6024,57 @@ export function TrainingWorldCanvas({
       const runtime = stationRuntimes[currentStation];
       const componentProcess =
         resolveComponentProcessDefinition(pickedTargetId);
-      const processRoots: THREE.Object3D[] = [];
+      if (
+        !componentProcess &&
+        anchor !== runtime.exhibitRoot &&
+        !isAncestorOf(runtime.exhibitRoot, anchor)
+      ) {
+        // Shell, wall, and floor fallbacks are not duplicated onto the stage:
+        // hiding them would dismantle the chamber, while leaving them visible
+        // would recreate the duplicate-object bug spotlight mode avoids.
+        return abortFocus();
+      }
       if (componentProcess) {
-        const selectedRoots = findComponentProcessObjects(
-          runtime,
-          pickedTargetId,
+        const introduction = componentSpotlightPresentation(
+          componentProcess,
+          "solo-introduction",
+          0,
+          false,
         );
-        processRoots.push(
-          ...(selectedRoots.length > 0 ? selectedRoots : [anchor]),
+        const interaction = componentSpotlightPresentation(
+          componentProcess,
+          "interaction-replay",
+          0,
+          true,
         );
-        for (const participantTargetId of componentProcess.participantTargetIds) {
-          if (participantTargetId === pickedTargetId) continue;
-          processRoots.push(
-            ...findComponentProcessObjects(runtime, participantTargetId),
-          );
-        }
-        processRoots.push(
+        const selectedRoots = introduction.targetIds.flatMap(
+          (targetId) =>
+            findComponentProcessObjects(runtime, targetId),
+        );
+        focusSelectedRoots = uniqueTopLevelObjects(
+          selectedRoots.length > 0 ? selectedRoots : [anchor],
+        );
+        const interactionRoots = interaction.targetIds.flatMap(
+          (targetId) =>
+            findComponentProcessObjects(runtime, targetId),
+        );
+        interactionRoots.push(
           ...findComponentProcessAuxiliaryObjects(
             runtime,
-            componentProcess.auxiliarySceneKeys,
+            interaction.auxiliarySceneKeys,
           ),
         );
+        focusReplayRoots = uniqueTopLevelObjects([
+          ...focusSelectedRoots,
+          ...interactionRoots,
+        ]);
       } else {
         // Station-level or unnamed fallback picks keep the former static
         // single-object spotlight because they do not represent an authored
         // component interaction.
-        processRoots.push(anchor);
+        focusSelectedRoots = [anchor];
+        focusReplayRoots = [anchor];
       }
-
-      const sourceRoots = uniqueTopLevelObjects(processRoots);
-      if (componentProcess) {
-        runtime.update?.(
-          componentProcess.playback.startProgress,
-          0,
-          false,
-        );
-      }
-
-      const stagedRoots: THREE.Object3D[] = [];
-      for (const sourceRoot of sourceRoots) {
-        sourceRoot.updateWorldMatrix(true, false);
-        const stagedRoot = cloneForStage(sourceRoot, true);
-        if (!stagedRoot) continue;
-        sourceRoot.matrixWorld.decompose(
-          stagedRoot.position,
-          stagedRoot.quaternion,
-          stagedRoot.scale,
-        );
-        focusStage.add(stagedRoot);
-        stagedRoots.push(stagedRoot);
-      }
-      if (stagedRoots.length === 0) return abortFocus();
-
-      assistantTargetBounds.setFromObject(focusStage, true);
-      if (assistantTargetBounds.isEmpty()) return abortFocus();
-      assistantTargetBounds.getBoundingSphere(focusSphere);
-      focusSourceCenter.copy(focusSphere.center);
-      for (const stagedRoot of stagedRoots) {
-        stagedRoot.position.sub(focusSourceCenter);
-      }
-
-      const fovRadians = THREE.MathUtils.degToRad(camera.fov);
-      const viewHeight = 2 * Math.tan(fovRadians / 2) * FOCUS_STAGE_DISTANCE;
-      const stageScale = THREE.MathUtils.clamp(
-        (viewHeight * 0.4) / Math.max(0.001, focusSphere.radius * 2),
-        0.02,
-        60,
-      );
-      focusStage.scale.setScalar(stageScale);
-      focusRadius = focusSphere.radius * stageScale;
 
       camera.updateMatrixWorld();
       camera.getWorldPosition(focusCameraWorld);
@@ -5997,15 +6082,14 @@ export function TrainingWorldCanvas({
       focusCenter
         .copy(focusCameraWorld)
         .addScaledVector(focusForward, FOCUS_STAGE_DISTANCE);
-      focusStage.position.copy(focusCenter);
-      focusStage.visible = true;
-
-      focusPedestal.group.visible = true;
-      focusPedestal.group.position.copy(focusCenter);
-      focusPedestal.group.position.y -= focusRadius * 1.18;
-      focusPedestal.group.scale.setScalar(
-        THREE.MathUtils.clamp(focusRadius * 1.05, 0.3, 3.2),
-      );
+      if (
+        !buildFocusReplica(
+          focusSelectedRoots,
+          componentProcess === null,
+        )
+      ) {
+        return abortFocus();
+      }
 
       focusSourceVisibilityLease = createFocusVisibilityLease(
         runtime.exhibitRoot,
@@ -6016,6 +6100,12 @@ export function TrainingWorldCanvas({
       focusStationIndex = currentStation;
       focusProcess = componentProcess;
       focusProcessElapsed = 0;
+      focusPhase = componentProcess
+        ? "solo-introduction"
+        : "interaction-replay";
+      focusToken = ++focusTokenSequence;
+      focusDismissGeneration =
+        latest.current.assistantFocusDismissGeneration;
       focusTravelPending = true;
       setAvatarRenderOrder(FOCUS_AVATAR_RENDER_ORDER);
       reportAssistantTarget(focusTargetId);
@@ -6023,8 +6113,45 @@ export function TrainingWorldCanvas({
       hasAssistantTargetWorld = true;
       assistantTargetWasHit = true;
       lastAssistantTravelTargetId = null;
-      latest.current.onAssistantFocusChange?.(focusTargetId);
+      latest.current.onAssistantFocusChange?.(
+        focusTargetId,
+        focusToken,
+      );
       setInteractionHint("focus");
+      return true;
+    };
+
+    const transitionFocusToInteraction = () => {
+      if (
+        !focusActive ||
+        focusPhase !== "solo-introduction" ||
+        latest.current.assistantFocusPhase !== "interaction-replay" ||
+        latest.current.assistantFocusToken !== focusToken
+      ) {
+        return false;
+      }
+
+      const runtime = stationRuntimes[focusStationIndex];
+      if (focusProcess) {
+        const interaction = componentSpotlightPresentation(
+          focusProcess,
+          "interaction-replay",
+          0,
+          !reduceProcessMotion,
+        );
+        runtime.update?.(
+          interaction.replayProgress ??
+            focusProcess.playback.startProgress,
+          0,
+          !reduceProcessMotion,
+        );
+      }
+      focusProcessElapsed = 0;
+      if (!buildFocusReplica(focusReplayRoots, true)) {
+        exitFocus();
+        return false;
+      }
+      focusPhase = "interaction-replay";
       return true;
     };
 
@@ -8101,16 +8228,26 @@ export function TrainingWorldCanvas({
 
       const motionTime = cameraProgress * 76 + elapsed * 0.12;
       animations.forEach((record) => applyAnimation(record, motionTime));
-      if (focusActive && focusProcess && !reduceProcessMotion) {
+      const focusJustTransitioned = transitionFocusToInteraction();
+      if (
+        focusActive &&
+        focusPhase === "interaction-replay" &&
+        focusProcess &&
+        !focusJustTransitioned &&
+        !reduceProcessMotion
+      ) {
         focusProcessElapsed += delta;
       }
       const focusReplayProgress =
-        focusActive && focusProcess
-          ? componentProcessProgressAt(
+        focusActive &&
+        focusPhase === "interaction-replay" &&
+        focusProcess
+          ? componentSpotlightPresentation(
               focusProcess,
+              focusPhase,
               focusProcessElapsed,
               !reduceProcessMotion,
-            )
+            ).replayProgress
           : null;
       stationRuntimes.forEach((runtime, index) => {
         const stationDistance = Math.abs(stationFloat - index);
@@ -8160,7 +8297,9 @@ export function TrainingWorldCanvas({
           );
         }
       });
-      if (focusActive) syncFocusStage();
+      if (focusActive && focusPhase === "interaction-replay") {
+        syncFocusStage();
+      }
 
       (Object.keys(branchMaterials) as BranchSide[]).forEach((side) => {
         const selected = side === state.branchSide;
@@ -8182,7 +8321,14 @@ export function TrainingWorldCanvas({
       // the voice guide is connected: aiming and magnifying are always
       // available, speech simply requires the guide.
       lastRenderedStation = currentStation;
-      if (focusActive && currentStation !== focusStationIndex) exitFocus();
+      if (
+        focusActive &&
+        (currentStation !== focusStationIndex ||
+          latest.current.assistantFocusDismissGeneration !==
+            focusDismissGeneration)
+      ) {
+        exitFocus();
+      }
       updateLaserFlash(elapsed, !reduceProcessMotion);
 
       focusVeilOpacity = THREE.MathUtils.damp(
@@ -8526,9 +8672,17 @@ export function TrainingWorldCanvas({
             pointerEvents: "none",
           }}
         >
-          {assistantEnabled
-            ? "Spotlight active — just ask your question aloud · right-click empty space or Esc to release"
-            : "Spotlight active — right-click empty space or press Esc to release"}
+          {assistantFocusPhase === "interaction-replay"
+            ? assistantEnabled
+              ? "Interaction replay active — ask a follow-up aloud · right-click empty space or Esc to release"
+              : "Interaction replay active — right-click empty space or press Esc to release"
+            : assistantFocusPhase === "solo-introduction"
+              ? assistantEnabled
+                ? "Component introduction — the guide is explaining this component first"
+                : "Component introduction — its interaction will begin shortly"
+              : assistantEnabled
+                ? "Spotlight active — ask about this target aloud · right-click empty space or Esc to release"
+                : "Spotlight active — right-click empty space or press Esc to release"}
         </div>
       ) : null}
       <div

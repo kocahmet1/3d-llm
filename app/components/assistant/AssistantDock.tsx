@@ -21,8 +21,9 @@ export interface AssistantDockProps {
   enabled: boolean;
   status: AssistantDockStatus;
   targetLabel: string;
-  /** Present while the spotlight is looping the target's process slice. */
+  /** Present while the spotlight is presenting a component. */
   processLabel?: string | null;
+  processPhaseLabel?: string;
   error?: string | null;
   /**
    * True while a spotlighted exhibit keeps the microphone open hands-free;
@@ -64,6 +65,7 @@ export function AssistantDock({
   status,
   targetLabel,
   processLabel,
+  processPhaseLabel = "REPLAYING",
   error,
   handsFree = false,
   onEnable,
@@ -226,7 +228,7 @@ export function AssistantDock({
       </div>
       {processLabel ? (
         <div className={`${styles.targetRow} ${styles.processRow}`}>
-          <span>REPLAYING</span>
+          <span>{processPhaseLabel}</span>
           <strong>{processLabel}</strong>
         </div>
       ) : null}

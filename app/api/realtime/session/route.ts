@@ -17,7 +17,7 @@ const REALTIME_SESSION_CONFIG = JSON.stringify({
       turn_detection: {
         type: "semantic_vad",
         eagerness: "high",
-        create_response: true,
+        create_response: false,
         interrupt_response: true,
       },
     },

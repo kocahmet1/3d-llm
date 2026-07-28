@@ -17,20 +17,31 @@ import {
   buildAssistantTurnContextSnapshot,
   resolveAssistantTarget,
   SESSION_TUTOR_INSTRUCTIONS,
+  SPOTLIGHT_INTERACTION_CUE,
+  SPOTLIGHT_INTRODUCTION_CUE,
 } from "../lib/assistantContext";
 import {
   attachComponentProcessContext,
   resolveComponentProcessDefinition,
   type AssistantTurnContextWithComponentProcess,
 } from "../lib/componentProcesses";
+import {
+  advanceComponentSpotlight,
+  beginComponentSpotlight,
+  dismissComponentSpotlight,
+  EMPTY_COMPONENT_SPOTLIGHT,
+  type ComponentSpotlightSequence,
+} from "../lib/componentSpotlight";
 import type {
   BranchSide,
+  ComponentSpotlightPhase,
   DetailMode,
   IntroTourState,
   MachineRoomCue,
   NavigationMode,
   RideMode,
 } from "../lib/worldTypes";
+import type { RealtimeServerEvent } from "./assistant/realtimeAssistantTypes";
 import {
   registerDirectorExperience,
   unregisterDirectorExperience,
@@ -42,6 +53,75 @@ import styles from "./TrainingExperience.module.css";
 // 25s fly-through has been removed).
 const OVERVIEW_DURATION_SECONDS = 150;
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+const SILENT_SPOTLIGHT_INTRO_MS = 3_500;
+const VOICE_SPOTLIGHT_INTRO_TIMEOUT_MS = 12_000;
+const VOICE_SPOTLIGHT_CONNECTING_TIMEOUT_MS = 22_000;
+const VOICE_SPOTLIGHT_HARD_TIMEOUT_MS = 32_000;
+const VOICE_SPOTLIGHT_INTERACTION_TIMEOUT_MS = 15_000;
+const SPOTLIGHT_CUE_PURPOSE_KEY = "application_response_purpose";
+const SPOTLIGHT_CUE_TARGET_KEY = "application_target_id";
+const SPOTLIGHT_CUE_TOKEN_KEY = "application_focus_token";
+
+type SpotlightCuePurpose =
+  | "component-introduction"
+  | "component-interaction";
+
+interface SpotlightCueResponse {
+  purpose: SpotlightCuePurpose;
+  targetId: string;
+  focusToken: number;
+  completed: boolean;
+}
+
+interface SpotlightPhaseDeadline {
+  key: string;
+  expiresAt: number;
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function recordValue(value: unknown): UnknownRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : null;
+}
+
+function stringValue(record: UnknownRecord | null, key: string) {
+  const value = record?.[key];
+  return typeof value === "string" ? value : null;
+}
+
+function spotlightCueFromResponse(
+  response: UnknownRecord | null,
+): Omit<SpotlightCueResponse, "completed"> | null {
+  const metadata = recordValue(response?.metadata);
+  const purpose = stringValue(metadata, SPOTLIGHT_CUE_PURPOSE_KEY);
+  const targetId = stringValue(metadata, SPOTLIGHT_CUE_TARGET_KEY);
+  const rawFocusToken = stringValue(metadata, SPOTLIGHT_CUE_TOKEN_KEY);
+  const focusToken = rawFocusToken ? Number(rawFocusToken) : Number.NaN;
+  if (
+    (purpose !== "component-introduction" &&
+      purpose !== "component-interaction") ||
+    !targetId ||
+    !Number.isSafeInteger(focusToken) ||
+    focusToken <= 0
+  ) {
+    return null;
+  }
+  return { purpose, targetId, focusToken };
+}
+
+function spotlightCueKey(
+  purpose: SpotlightCuePurpose,
+  targetId: string,
+  focusToken: number,
+) {
+  return `${purpose}:${focusToken}:${targetId}`;
+}
+
+function spotlightFocusKey(targetId: string, focusToken: number) {
+  return `${focusToken}:${targetId}`;
+}
 
 function useRemoteAudioActivity(
   stream: MediaStream | null,
@@ -125,15 +205,36 @@ export function TrainingExperience() {
   const [assistantTargetId, setAssistantTargetId] = useState<string | null>(
     null,
   );
-  const [spotlightTargetId, setSpotlightTargetId] = useState<string | null>(
-    null,
+  const [spotlightSequence, setSpotlightSequence] =
+    useState<ComponentSpotlightSequence>(EMPTY_COMPONENT_SPOTLIGHT);
+  const spotlightSequenceRef = useRef<ComponentSpotlightSequence>(
+    EMPTY_COMPONENT_SPOTLIGHT,
   );
+  const spotlightTargetId = spotlightSequence.targetId;
+  const spotlightFocusToken = spotlightSequence.focusToken;
+  const spotlightPhase = spotlightSequence.phase;
   const [spotlightContext, setSpotlightContext] =
     useState<AssistantTurnContextWithComponentProcess | null>(null);
   const previousBranchId = useRef<string | null>(null);
   const previousStationIndex = useRef(0);
   const assistantKeyHeld = useRef(false);
-  const autoListenTargetRef = useRef<string | null>(null);
+  const autoListenFocusRef = useRef<string | null>(null);
+  const requestedSpotlightCuesRef = useRef(new Set<string>());
+  const spotlightCueResponsesRef = useRef(
+    new Map<string, SpotlightCueResponse>(),
+  );
+  const skippedInteractionCuesRef = useRef(new Set<string>());
+  const spotlightInterruptFocusRef = useRef<string | null>(null);
+  const spotlightPhaseDeadlineRef =
+    useRef<SpotlightPhaseDeadline | null>(null);
+  const voiceCleanupRef = useRef<() => void>(() => {});
+  const previousVoiceEnabledRef = useRef(false);
+  const [completedInteractionCueKey, setCompletedInteractionCueKey] =
+    useState<string | null>(null);
+  const [
+    assistantFocusDismissGeneration,
+    setAssistantFocusDismissGeneration,
+  ] = useState(0);
   const componentReplayResumeRef = useRef<{
     stationId: string;
     transport: "chamber-process" | "data-preparation";
@@ -218,12 +319,58 @@ export function TrainingExperience() {
     setProcessProgress(value);
   }, []);
 
+  const clearSpotlightCueOwnership = useCallback(
+    (sequence: ComponentSpotlightSequence) => {
+      if (!sequence.targetId) return;
+      requestedSpotlightCuesRef.current.delete(
+        spotlightCueKey(
+          "component-introduction",
+          sequence.targetId,
+          sequence.focusToken,
+        ),
+      );
+      requestedSpotlightCuesRef.current.delete(
+        spotlightCueKey(
+          "component-interaction",
+          sequence.targetId,
+          sequence.focusToken,
+        ),
+      );
+      skippedInteractionCuesRef.current.delete(
+        spotlightCueKey(
+          "component-interaction",
+          sequence.targetId,
+          sequence.focusToken,
+        ),
+      );
+      for (const [responseId, cue] of spotlightCueResponsesRef.current) {
+        if (
+          cue.targetId === sequence.targetId &&
+          cue.focusToken === sequence.focusToken
+        ) {
+          spotlightCueResponsesRef.current.delete(responseId);
+        }
+      }
+    },
+    [],
+  );
+
   const clearAssistantSelection = useCallback(() => {
-    setSpotlightTargetId(null);
+    const current = spotlightSequenceRef.current;
+    clearSpotlightCueOwnership(current);
+    voiceCleanupRef.current();
+    spotlightInterruptFocusRef.current = null;
+    spotlightPhaseDeadlineRef.current = null;
+    const next = dismissComponentSpotlight(current);
+    spotlightSequenceRef.current = next;
+    setSpotlightSequence(next);
     setSpotlightContext(null);
+    setCompletedInteractionCueKey(null);
+    autoListenFocusRef.current = null;
     setAssistantTargetId(null);
+    setAssistantFocusDismissGeneration((value) => value + 1);
     restoreComponentReplayTransport();
-  }, [restoreComponentReplayTransport]);
+  }, [clearSpotlightCueOwnership, restoreComponentReplayTransport]);
 
   const changeRideMode = useCallback((mode: RideMode) => {
     setRideMode(mode);
@@ -247,7 +394,13 @@ export function TrainingExperience() {
   }, [clearAssistantSelection, rideMode]);
 
   const buildAssistantContextSnapshot = useCallback(
-    (explicitTargetId: string | null, replayingComponentProcess = false) => {
+    (
+      explicitTargetId: string | null,
+      focusPhase: ComponentSpotlightPhase | null = null,
+    ) => {
+      const componentFocused = focusPhase !== null;
+      const replayingComponentProcess =
+        focusPhase === "interaction-replay";
       const snapshot = buildAssistantTurnContextSnapshot({
         stationId: currentStation.id,
         explicitTargetId,
@@ -258,15 +411,16 @@ export function TrainingExperience() {
           journeyProgress: Number(progress.toFixed(4)),
           dataPreparationProgress: Number(dataPrepProgress.toFixed(4)),
           dataPreparationPlaying:
-            replayingComponentProcess &&
+            componentFocused &&
             currentStation.id === "corpus-data-preparation"
               ? false
               : dataPrepPlaying,
           chamberProcessProgress: Number(processProgress.toFixed(4)),
-          chamberProcessPlaying: replayingComponentProcess
+          chamberProcessPlaying: componentFocused
             ? false
             : processPlaying,
           componentProcessReplayActive: replayingComponentProcess,
+          componentSpotlightPhase: focusPhase ?? "none",
           journeyPlaying: playing,
           rideMode,
         },
@@ -274,9 +428,11 @@ export function TrainingExperience() {
       return attachComponentProcessContext(
         snapshot,
         explicitTargetId,
-        replayingComponentProcess
-          ? "playing-isolated-chamber-slice"
-          : "available-on-spotlight",
+        focusPhase === "solo-introduction"
+          ? "introducing-selected-component"
+          : focusPhase === "interaction-replay"
+            ? "playing-isolated-chamber-slice"
+            : "available-on-spotlight",
       );
     },
     [
@@ -294,18 +450,180 @@ export function TrainingExperience() {
     ],
   );
   const makeAssistantTurnContext = useCallback(
-    () => buildAssistantContextSnapshot(assistantTargetId, false),
+    () => buildAssistantContextSnapshot(assistantTargetId, null),
     [assistantTargetId, buildAssistantContextSnapshot],
   );
+
+  const advanceSpotlightToInteraction = useCallback(
+    (targetId: string, focusToken: number) => {
+      const current = spotlightSequenceRef.current;
+      const next = advanceComponentSpotlight(
+        current,
+        targetId,
+        focusToken,
+      );
+      if (next === current) return false;
+      spotlightSequenceRef.current = next;
+      setSpotlightSequence(next);
+      spotlightPhaseDeadlineRef.current = {
+        key: spotlightFocusKey(targetId, focusToken),
+        expiresAt:
+          performance.now() +
+          VOICE_SPOTLIGHT_INTERACTION_TIMEOUT_MS,
+      };
+      setSpotlightContext(
+        buildAssistantContextSnapshot(
+          targetId,
+          "interaction-replay",
+        ),
+      );
+      return true;
+    },
+    [buildAssistantContextSnapshot],
+  );
+
+  const handleVoiceEvent = useCallback(
+    (event: RealtimeServerEvent) => {
+      if (event.type === "response.created") {
+        const response = recordValue(event.response);
+        const responseId = stringValue(response, "id");
+        const cue = spotlightCueFromResponse(response);
+        if (responseId && cue) {
+          spotlightCueResponsesRef.current.set(responseId, {
+            ...cue,
+            completed: false,
+          });
+        }
+        return;
+      }
+
+      if (
+        event.type === "response.done" ||
+        event.type === "response.cancelled"
+      ) {
+        const response = recordValue(event.response);
+        const responseId =
+          stringValue(response, "id") ??
+          (typeof event.response_id === "string"
+            ? event.response_id
+            : null);
+        if (!responseId) return;
+        let cue = spotlightCueResponsesRef.current.get(responseId);
+        if (!cue) {
+          const parsedCue = spotlightCueFromResponse(response);
+          if (parsedCue) {
+            cue = { ...parsedCue, completed: false };
+            spotlightCueResponsesRef.current.set(responseId, cue);
+          }
+        }
+        if (!cue) return;
+
+        const status =
+          event.type === "response.cancelled"
+            ? "cancelled"
+            : stringValue(response, "status");
+        if (status === "completed" || status === "incomplete") {
+          cue.completed = true;
+        } else if (status === "failed") {
+          spotlightCueResponsesRef.current.delete(responseId);
+          if (cue.purpose === "component-introduction") {
+            advanceSpotlightToInteraction(
+              cue.targetId,
+              cue.focusToken,
+            );
+          } else {
+            const current = spotlightSequenceRef.current;
+            if (
+              current.targetId === cue.targetId &&
+              current.focusToken === cue.focusToken
+            ) {
+              setCompletedInteractionCueKey(
+                spotlightCueKey(
+                  cue.purpose,
+                  cue.targetId,
+                  cue.focusToken,
+                ),
+              );
+            }
+          }
+        } else if (status === "cancelled") {
+          spotlightCueResponsesRef.current.delete(responseId);
+        }
+        return;
+      }
+
+      if (event.type === "output_audio_buffer.stopped") {
+        const responseId =
+          typeof event.response_id === "string"
+            ? event.response_id
+            : null;
+        if (!responseId) return;
+        const cue = spotlightCueResponsesRef.current.get(responseId);
+        if (!cue?.completed) return;
+        spotlightCueResponsesRef.current.delete(responseId);
+        if (cue.purpose === "component-introduction") {
+          advanceSpotlightToInteraction(
+            cue.targetId,
+            cue.focusToken,
+          );
+        } else {
+          const current = spotlightSequenceRef.current;
+          if (
+            current.targetId === cue.targetId &&
+            current.focusToken === cue.focusToken
+          ) {
+            setCompletedInteractionCueKey(
+              spotlightCueKey(
+                cue.purpose,
+                cue.targetId,
+                cue.focusToken,
+              ),
+            );
+          }
+        }
+        return;
+      }
+
+      if (event.type === "input_audio_buffer.speech_started") {
+        const current = spotlightSequenceRef.current;
+        if (!current.targetId) return;
+        if (
+          spotlightInterruptFocusRef.current !==
+          spotlightFocusKey(current.targetId, current.focusToken)
+        ) {
+          return;
+        }
+        const interactionKey = spotlightCueKey(
+          "component-interaction",
+          current.targetId,
+          current.focusToken,
+        );
+        if (current.phase === "solo-introduction") {
+          skippedInteractionCuesRef.current.add(interactionKey);
+          setCompletedInteractionCueKey(interactionKey);
+          advanceSpotlightToInteraction(
+            current.targetId,
+            current.focusToken,
+          );
+        } else if (current.phase === "interaction-replay") {
+          skippedInteractionCuesRef.current.add(interactionKey);
+          setCompletedInteractionCueKey(interactionKey);
+        }
+      }
+    },
+    [advanceSpotlightToInteraction],
+  );
+
   // While a component is spotlighted the session runs hands-free: the
-  // microphone opens automatically and semantic VAD detects when the visitor
-  // finishes asking. Without a spotlight, V remains classic push-to-talk.
+  // guide narrates its two phases, then semantic VAD keeps follow-ups
+  // hands-free. Without a spotlight, V remains classic push-to-talk.
   const voice = useRealtimeAssistant({
     turnMode: spotlightTargetId ? "semantic-vad" : "push-to-talk",
     semanticVadEagerness: "high",
     instructions: SESSION_TUTOR_INSTRUCTIONS,
     persistentContext: spotlightContext,
     getTurnContext: makeAssistantTurnContext,
+    onEvent: handleVoiceEvent,
     onTurnTiming: (timing) => {
       if (process.env.NODE_ENV !== "production") {
         console.info("Voice guide turn timing", timing);
@@ -317,9 +635,27 @@ export function TrainingExperience() {
     status: voiceStatus,
     startTalking,
     stopTalking,
+    requestResponse,
     stopListening,
     cancelResponse,
   } = voice;
+  useEffect(() => {
+    voiceCleanupRef.current = () => {
+      stopListening();
+      cancelResponse();
+    };
+    return () => {
+      voiceCleanupRef.current = () => {};
+    };
+  }, [cancelResponse, stopListening]);
+  useEffect(() => {
+    if (previousVoiceEnabledRef.current && !voiceEnabled) {
+      clearSpotlightCueOwnership(spotlightSequenceRef.current);
+      spotlightInterruptFocusRef.current = null;
+      autoListenFocusRef.current = null;
+    }
+    previousVoiceEnabledRef.current = voiceEnabled;
+  }, [clearSpotlightCueOwnership, voiceEnabled]);
   const assistantAudioActivity = useRemoteAudioActivity(
     voice.remoteStream,
     voice.status === "speaking",
@@ -620,20 +956,38 @@ export function TrainingExperience() {
   }, []);
 
   const handleAssistantFocusChange = useCallback(
-    (targetId: string | null) => {
+    (targetId: string | null, focusToken: number) => {
       if (targetId) {
-        if (targetId === spotlightTargetId && spotlightContext) return;
+        const currentFocus = spotlightSequenceRef.current;
+        if (
+          targetId === currentFocus.targetId &&
+          focusToken === currentFocus.focusToken &&
+          spotlightContext
+        ) {
+          return;
+        }
 
-        const switchingTargets =
-          spotlightTargetId !== null && spotlightTargetId !== targetId;
-        if (switchingTargets) {
+        const replacingFocus =
+          currentFocus.targetId !== null &&
+          (currentFocus.targetId !== targetId ||
+            currentFocus.focusToken !== focusToken);
+        const replacingUnfocusedVoiceTurn =
+          currentFocus.targetId === null &&
+          (voiceStatus === "listening" ||
+            voiceStatus === "thinking" ||
+            voiceStatus === "speaking");
+        if (replacingFocus || replacingUnfocusedVoiceTurn) {
           // The canvas swaps targets directly, without an intermediate release.
-          // Stop A before the frozen snapshot for B takes over.
-          autoListenTargetRef.current = null;
+          // Stop A (or a normal unfocused turn) before the frozen snapshot for
+          // the new component takes over.
+          clearSpotlightCueOwnership(currentFocus);
+          spotlightInterruptFocusRef.current = null;
+          spotlightPhaseDeadlineRef.current = null;
+          autoListenFocusRef.current = null;
           stopListening();
-          if (voiceStatus === "thinking" || voiceStatus === "speaking") {
-            cancelResponse();
-          }
+          // This also clears a generated response whose audio is still
+          // draining after response.done.
+          cancelResponse();
         }
 
         // A spotlighted component pauses the ride and becomes the explicit
@@ -658,53 +1012,368 @@ export function TrainingExperience() {
 
         const nextContext = buildAssistantContextSnapshot(
           targetId,
-          Boolean(componentProcess),
+          componentProcess ? "solo-introduction" : null,
         );
+        const nextSequence = componentProcess
+          ? beginComponentSpotlight(targetId, focusToken)
+          : {
+              targetId,
+              focusToken,
+              phase: null,
+            };
+        spotlightSequenceRef.current = nextSequence;
+        setSpotlightSequence(nextSequence);
         setSpotlightContext(nextContext);
-        setSpotlightTargetId(targetId);
+        spotlightPhaseDeadlineRef.current = componentProcess
+          ? {
+              key: spotlightFocusKey(targetId, focusToken),
+              expiresAt:
+                performance.now() +
+                VOICE_SPOTLIGHT_HARD_TIMEOUT_MS,
+            }
+          : null;
+        spotlightInterruptFocusRef.current = null;
+        setCompletedInteractionCueKey(null);
+        autoListenFocusRef.current = null;
         setPlaying(false);
         setAssistantTargetId(targetId);
       } else {
-        // Spotlight released: close the hands-free microphone.
-        autoListenTargetRef.current = null;
+        // Spotlight released: close the hands-free microphone and narration.
+        const currentFocus = spotlightSequenceRef.current;
+        clearSpotlightCueOwnership(currentFocus);
+        spotlightInterruptFocusRef.current = null;
+        spotlightPhaseDeadlineRef.current = null;
+        autoListenFocusRef.current = null;
+        const next = dismissComponentSpotlight(
+          currentFocus,
+        );
+        spotlightSequenceRef.current = next;
+        setSpotlightSequence(next);
         setSpotlightContext(null);
-        setSpotlightTargetId(null);
+        setCompletedInteractionCueKey(null);
         stopListening();
+        cancelResponse();
         restoreComponentReplayTransport();
       }
     },
     [
       buildAssistantContextSnapshot,
       cancelResponse,
+      clearSpotlightCueOwnership,
       dataPrepPlaying,
       dataPrepProgress,
       processPlaying,
       processProgress,
       restoreComponentReplayTransport,
       spotlightContext,
-      spotlightTargetId,
       stopListening,
       voiceStatus,
     ],
   );
 
-  // As soon as a component is spotlighted (and whenever the guide becomes
-  // ready while one is spotlighted), open the microphone so the visitor can
-  // simply ask. Semantic VAD ends the turn; follow-up questions reuse the
-  // still-open microphone until the spotlight is released.
+  // Phase one is proactive: the guide introduces the selected component while
+  // it is the only object on stage.
   useEffect(() => {
-    if (!voiceEnabled) {
-      autoListenTargetRef.current = null;
+    if (
+      !voiceEnabled ||
+      (voiceStatus !== "ready" && voiceStatus !== "listening") ||
+      !activeComponentProcess ||
+      !spotlightTargetId ||
+      !spotlightContext ||
+      spotlightPhase !== "solo-introduction"
+    ) {
       return;
     }
-    if (!spotlightTargetId || !spotlightContext) return;
-    if (voiceStatus !== "ready" && voiceStatus !== "listening") return;
-    if (autoListenTargetRef.current === spotlightTargetId) return;
-    if (startTalking()) {
-      autoListenTargetRef.current = spotlightTargetId;
+    const cueKey = spotlightCueKey(
+      "component-introduction",
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    if (requestedSpotlightCuesRef.current.has(cueKey)) return;
+    const focusKey = spotlightFocusKey(
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    if (
+      spotlightInterruptFocusRef.current !== focusKey &&
+      !startTalking()
+    ) {
+      return;
+    }
+    spotlightInterruptFocusRef.current = focusKey;
+    const requested = requestResponse({
+      instructions: SPOTLIGHT_INTRODUCTION_CUE,
+      context: spotlightContext,
+      metadata: {
+        [SPOTLIGHT_CUE_PURPOSE_KEY]: "component-introduction",
+        [SPOTLIGHT_CUE_TARGET_KEY]: spotlightTargetId,
+        [SPOTLIGHT_CUE_TOKEN_KEY]: String(spotlightFocusToken),
+      },
+    });
+    if (requested) {
+      requestedSpotlightCuesRef.current.add(cueKey);
     }
   }, [
+    activeComponentProcess,
+    requestResponse,
     spotlightContext,
+    spotlightFocusToken,
+    spotlightPhase,
+    spotlightTargetId,
+    startTalking,
+    voiceEnabled,
+    voiceStatus,
+  ]);
+
+  // Phase two starts the authored replay and receives its own causal narration.
+  useEffect(() => {
+    if (
+      !voiceEnabled ||
+      (voiceStatus !== "ready" && voiceStatus !== "listening") ||
+      !activeComponentProcess ||
+      !spotlightTargetId ||
+      !spotlightContext ||
+      spotlightPhase !== "interaction-replay"
+    ) {
+      return;
+    }
+    const cueKey = spotlightCueKey(
+      "component-interaction",
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    if (
+      requestedSpotlightCuesRef.current.has(cueKey) ||
+      skippedInteractionCuesRef.current.has(cueKey)
+    ) {
+      return;
+    }
+    const focusKey = spotlightFocusKey(
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    if (
+      spotlightInterruptFocusRef.current !== focusKey &&
+      !startTalking()
+    ) {
+      return;
+    }
+    spotlightInterruptFocusRef.current = focusKey;
+    const requested = requestResponse({
+      instructions: SPOTLIGHT_INTERACTION_CUE,
+      context: spotlightContext,
+      metadata: {
+        [SPOTLIGHT_CUE_PURPOSE_KEY]: "component-interaction",
+        [SPOTLIGHT_CUE_TARGET_KEY]: spotlightTargetId,
+        [SPOTLIGHT_CUE_TOKEN_KEY]: String(spotlightFocusToken),
+      },
+    });
+    if (requested) {
+      requestedSpotlightCuesRef.current.add(cueKey);
+    }
+  }, [
+    activeComponentProcess,
+    requestResponse,
+    spotlightContext,
+    spotlightFocusToken,
+    spotlightPhase,
+    spotlightTargetId,
+    startTalking,
+    voiceEnabled,
+    voiceStatus,
+  ]);
+
+  // Voice-off, connection failure, or a lost response must never leave the
+  // visual presentation stuck on the solo component forever. This is an
+  // absolute deadline: pending server state cannot extend it.
+  useEffect(() => {
+    if (
+      !activeComponentProcess ||
+      !spotlightTargetId ||
+      spotlightPhase !== "solo-introduction"
+    ) {
+      return undefined;
+    }
+    const focusKey = spotlightFocusKey(
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    const phaseDeadline = spotlightPhaseDeadlineRef.current;
+    const now = performance.now();
+    const hardDeadline =
+      phaseDeadline?.key === focusKey
+        ? phaseDeadline.expiresAt
+        : now + VOICE_SPOTLIGHT_HARD_TIMEOUT_MS;
+    const phaseStartedAt =
+      hardDeadline - VOICE_SPOTLIGHT_HARD_TIMEOUT_MS;
+    const softDeadline =
+      !voiceEnabled || voiceStatus === "error" || voiceStatus === "off"
+        ? now + SILENT_SPOTLIGHT_INTRO_MS
+        : voiceStatus === "connecting"
+          ? phaseStartedAt + VOICE_SPOTLIGHT_CONNECTING_TIMEOUT_MS
+          : now + VOICE_SPOTLIGHT_INTRO_TIMEOUT_MS;
+    const deadline = Math.min(hardDeadline, softDeadline);
+    const timer = window.setTimeout(() => {
+      const current = spotlightSequenceRef.current;
+      if (
+        current.targetId !== spotlightTargetId ||
+        current.focusToken !== spotlightFocusToken ||
+        current.phase !== "solo-introduction"
+      ) {
+        return;
+      }
+      for (const [responseId, cue] of spotlightCueResponsesRef.current) {
+        if (
+          cue.purpose === "component-introduction" &&
+          cue.targetId === spotlightTargetId &&
+          cue.focusToken === spotlightFocusToken
+        ) {
+          spotlightCueResponsesRef.current.delete(responseId);
+        }
+      }
+      cancelResponse();
+      advanceSpotlightToInteraction(
+        spotlightTargetId,
+        spotlightFocusToken,
+      );
+    }, Math.max(0, deadline - now));
+    return () => window.clearTimeout(timer);
+  }, [
+    activeComponentProcess,
+    advanceSpotlightToInteraction,
+    cancelResponse,
+    spotlightFocusToken,
+    spotlightPhase,
+    spotlightTargetId,
+    voiceEnabled,
+    voiceStatus,
+  ]);
+
+  useEffect(() => {
+    if (
+      !voiceEnabled ||
+      !activeComponentProcess ||
+      !spotlightTargetId ||
+      spotlightPhase !== "interaction-replay"
+    ) {
+      return undefined;
+    }
+    const cueKey = spotlightCueKey(
+      "component-interaction",
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    if (completedInteractionCueKey === cueKey) return undefined;
+    const focusKey = spotlightFocusKey(
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    const phaseDeadline = spotlightPhaseDeadlineRef.current;
+    const now = performance.now();
+    const deadline =
+      phaseDeadline?.key === focusKey
+        ? phaseDeadline.expiresAt
+        : now + VOICE_SPOTLIGHT_INTERACTION_TIMEOUT_MS;
+    const timer = window.setTimeout(() => {
+      const current = spotlightSequenceRef.current;
+      if (
+        current.targetId !== spotlightTargetId ||
+        current.focusToken !== spotlightFocusToken ||
+        current.phase !== "interaction-replay"
+      ) {
+        return;
+      }
+      for (const [responseId, cue] of spotlightCueResponsesRef.current) {
+        if (
+          cue.purpose === "component-interaction" &&
+          cue.targetId === spotlightTargetId &&
+          cue.focusToken === spotlightFocusToken
+        ) {
+          spotlightCueResponsesRef.current.delete(responseId);
+        }
+      }
+      cancelResponse();
+      setCompletedInteractionCueKey(cueKey);
+    }, Math.max(0, deadline - now));
+    return () => window.clearTimeout(timer);
+  }, [
+    activeComponentProcess,
+    cancelResponse,
+    completedInteractionCueKey,
+    spotlightFocusToken,
+    spotlightPhase,
+    spotlightTargetId,
+    voiceEnabled,
+  ]);
+
+  // Once both scripted phases have run, semantic VAD keeps follow-up
+  // questions hands-free until the visitor releases the spotlight.
+  useEffect(() => {
+    if (!voiceEnabled) {
+      autoListenFocusRef.current = null;
+      return;
+    }
+    if (
+      !spotlightTargetId ||
+      !spotlightContext ||
+      spotlightPhase !== "interaction-replay"
+    ) {
+      return;
+    }
+    const cueKey = spotlightCueKey(
+      "component-interaction",
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    if (completedInteractionCueKey !== cueKey) return;
+    if (voiceStatus !== "ready" && voiceStatus !== "listening") return;
+    if (autoListenFocusRef.current === cueKey) return;
+    if (startTalking()) {
+      autoListenFocusRef.current = cueKey;
+      spotlightInterruptFocusRef.current = spotlightFocusKey(
+        spotlightTargetId,
+        spotlightFocusToken,
+      );
+    }
+  }, [
+    completedInteractionCueKey,
+    spotlightContext,
+    spotlightFocusToken,
+    spotlightPhase,
+    spotlightTargetId,
+    startTalking,
+    voiceEnabled,
+    voiceStatus,
+  ]);
+
+  // Station and unnamed fallback picks keep the original static spotlight
+  // behavior. They get normal hands-free Q&A, but never component-only
+  // scripts or a fabricated interaction phase.
+  useEffect(() => {
+    if (
+      !voiceEnabled ||
+      activeComponentProcess ||
+      !spotlightTargetId ||
+      spotlightPhase !== null ||
+      !spotlightContext ||
+      (voiceStatus !== "ready" && voiceStatus !== "listening")
+    ) {
+      return;
+    }
+    const focusKey = spotlightFocusKey(
+      spotlightTargetId,
+      spotlightFocusToken,
+    );
+    if (autoListenFocusRef.current === focusKey) return;
+    if (startTalking()) {
+      autoListenFocusRef.current = focusKey;
+      spotlightInterruptFocusRef.current = focusKey;
+    }
+  }, [
+    activeComponentProcess,
+    spotlightContext,
+    spotlightFocusToken,
+    spotlightPhase,
     spotlightTargetId,
     startTalking,
     voiceEnabled,
@@ -731,6 +1400,11 @@ export function TrainingExperience() {
         assistantAudioActivity={assistantAudioActivity}
         assistantTargetId={assistantTargetId}
         assistantTargetLocked={assistantTargetLocked}
+        assistantFocusPhase={spotlightPhase}
+        assistantFocusToken={spotlightFocusToken}
+        assistantFocusDismissGeneration={
+          assistantFocusDismissGeneration
+        }
         onProgressChange={handleWorldProgress}
         onManualNavigation={beginManualNavigation}
         onNavigationModeChange={setNavigationMode}
@@ -778,8 +1452,15 @@ export function TrainingExperience() {
         targetLabel={assistantTarget.target.label}
         processLabel={
           activeComponentProcess
-            ? `${activeComponentProcess.label} · isolated chamber replay`
+            ? spotlightPhase === "solo-introduction"
+              ? `${activeComponentProcess.label} · component introduction`
+              : `${activeComponentProcess.label} · isolated chamber replay`
             : null
+        }
+        processPhaseLabel={
+          spotlightPhase === "solo-introduction"
+            ? "INTRODUCING"
+            : "REPLAYING"
         }
         error={voice.error}
         handsFree={Boolean(spotlightTargetId)}
@@ -796,6 +1477,11 @@ export function TrainingExperience() {
       />
       <p className={styles.screenReaderStatus} aria-live="polite">
         {currentStation?.title}. {currentStation?.story}
+        {activeComponentProcess
+          ? spotlightPhase === "solo-introduction"
+            ? ` Introducing ${activeComponentProcess.label} by itself.`
+            : ` Showing the isolated interaction replay for ${activeComponentProcess.label}.`
+          : null}
       </p>
     </main>
   );

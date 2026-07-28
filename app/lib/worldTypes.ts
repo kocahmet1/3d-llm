@@ -25,6 +25,11 @@ export type AssistantCanvasStatus =
   | "speaking"
   | "error";
 
+/** The two visual and narration phases of a component spotlight. */
+export type ComponentSpotlightPhase =
+  | "solo-introduction"
+  | "interaction-replay";
+
 export interface MachineRoomCue {
   unitId: string;
   label: string;
@@ -144,6 +149,11 @@ export interface TrainingCanvasProps extends ChamberProcessTransport {
   assistantAudioActivity: number;
   assistantTargetId: string | null;
   assistantTargetLocked: boolean;
+  assistantFocusPhase: ComponentSpotlightPhase | null;
+  /** Monotonic key that prevents a late voice event from advancing a new focus. */
+  assistantFocusToken: number;
+  /** Parent-owned command generation for restart or other external dismissal. */
+  assistantFocusDismissGeneration: number;
   onProgressChange: (progress: number) => void;
   onManualNavigation: () => void;
   onNavigationModeChange: (mode: NavigationMode) => void;
@@ -157,5 +167,8 @@ export interface TrainingCanvasProps extends ChamberProcessTransport {
    * Fired when the visitor spotlights a component with the laser pointer
    * (left click while holding right click), or releases the spotlight (null).
    */
-  onAssistantFocusChange?: (targetId: string | null) => void;
+  onAssistantFocusChange?: (
+    targetId: string | null,
+    focusToken: number,
+  ) => void;
 }

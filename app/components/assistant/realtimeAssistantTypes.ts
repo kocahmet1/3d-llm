@@ -42,6 +42,18 @@ export interface RealtimeAssistantTurnTiming {
   firstOutputToDoneMs?: number;
 }
 
+export interface RealtimeAssistantResponseRequest {
+  /**
+   * Response-scoped cue appended to the fully composed tutor instructions.
+   * The hook preserves the session's grounding and safety instructions.
+   */
+  instructions: string;
+  /** Optional exact spotlight snapshot for this proactive response. */
+  context?: RealtimeTurnContext | null;
+  /** Short string values echoed by Realtime for response correlation. */
+  metadata?: Readonly<Record<string, string>>;
+}
+
 export interface UseRealtimeAssistantOptions {
   /** Same-origin endpoint that proxies SDP to OpenAI. */
   sessionEndpoint?: string;
@@ -86,6 +98,10 @@ export interface UseRealtimeAssistantResult {
   startTalking: (context?: RealtimeTurnContext | null) => boolean;
   /** Commit captured audio and request a response in push-to-talk mode. */
   stopTalking: () => boolean;
+  /** Ask the connected guide to speak without fabricating a user utterance. */
+  requestResponse: (
+    request: RealtimeAssistantResponseRequest,
+  ) => boolean;
   /**
    * Close the microphone without committing a turn or requesting a response.
    * Ends a hands-free (semantic-VAD) listening session in any state.

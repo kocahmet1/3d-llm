@@ -11,6 +11,7 @@ import { CORPUS_EXPANSION_PROCESS_BEATS } from "./componentBeatsCorpusExpansion"
 import { EARLY_EXPANSION_PROCESS_BEATS } from "./componentBeatsEarlyExpansion";
 import { FORWARD_EXPANSION_PROCESS_BEATS } from "./componentBeatsForwardExpansion";
 import { LEARNING_EXPANSION_PROCESS_BEATS } from "./componentBeatsLearningExpansion";
+import type { ComponentSpotlightPhase } from "./worldTypes";
 
 export interface ChamberProcessBeat {
   id: string;
@@ -765,6 +766,12 @@ function makeDefinition(
     auxiliarySceneKeys,
     narrative: {
       selectedComponent: target.label,
+      soloIntroduction: {
+        whatItIs: target.summary,
+        chamberRole: target.role,
+        operation: target.operation,
+        whyItMatters: target.whyItMatters,
+      },
       chamberRole: target.role,
       startsBecause: [...target.inputs],
       interactionCause:
@@ -833,6 +840,47 @@ export function componentProcessProgressAt(
   );
 }
 
+export interface ComponentSpotlightPresentation {
+  phase: ComponentSpotlightPhase;
+  targetIds: readonly string[];
+  auxiliarySceneKeys: readonly string[];
+  replayProgress: number | null;
+  contextStatus: ComponentProcessNarrative["status"];
+}
+
+/**
+ * One site-wide presentation contract for every component. The introduction
+ * contains only the selected semantic target; interaction restores the exact
+ * authored participants, actors, and replay slice.
+ */
+export function componentSpotlightPresentation(
+  definition: ComponentProcessDefinition,
+  phase: ComponentSpotlightPhase,
+  interactionElapsedSeconds: number,
+  motionEnabled = true,
+): ComponentSpotlightPresentation {
+  if (phase === "solo-introduction") {
+    return {
+      phase,
+      targetIds: [definition.targetId],
+      auxiliarySceneKeys: [],
+      replayProgress: null,
+      contextStatus: "introducing-selected-component",
+    };
+  }
+  return {
+    phase,
+    targetIds: definition.participantTargetIds,
+    auxiliarySceneKeys: definition.auxiliarySceneKeys,
+    replayProgress: componentProcessProgressAt(
+      definition,
+      interactionElapsedSeconds,
+      motionEnabled,
+    ),
+    contextStatus: "playing-isolated-chamber-slice",
+  };
+}
+
 export function attachComponentProcessContext(
   snapshot: AssistantTurnContextSnapshot,
   targetId: string | null | undefined,
@@ -840,11 +888,21 @@ export function attachComponentProcessContext(
 ): AssistantTurnContextWithComponentProcess {
   const definition = resolveComponentProcessDefinition(targetId);
   if (!definition) return snapshot;
+  const visualGrounding =
+    status === "introducing-selected-component"
+      ? [
+          "The normal chamber timeline is paused while this introduction is active.",
+          "Only the selected component is staged and centered under the spotlight.",
+          "Interaction partners and moving process actors are not visible yet.",
+          "The isolated interaction replay begins after this introduction.",
+        ]
+      : definition.narrative.visualGrounding;
   return deepFreeze({
     ...snapshot,
     componentProcess: {
-      status,
       ...definition.narrative,
+      status,
+      visualGrounding,
     },
   });
 }

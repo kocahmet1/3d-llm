@@ -190,8 +190,17 @@ export interface AssistantComponentProcessBeat {
 }
 
 export interface AssistantComponentProcessContext {
-  status: "playing-isolated-chamber-slice" | "available-on-spotlight";
+  status:
+    | "introducing-selected-component"
+    | "playing-isolated-chamber-slice"
+    | "available-on-spotlight";
   selectedComponent: string;
+  soloIntroduction: Readonly<{
+    whatItIs: string;
+    chamberRole: string;
+    operation: string;
+    whyItMatters: string;
+  }>;
   chamberRole: string;
   startsBecause: readonly string[];
   interactionCause: string;
@@ -205,7 +214,7 @@ export interface AssistantComponentProcessContext {
 
 /** This is the only aggregate intended to be serialized into a model turn. */
 export interface AssistantTurnContextSnapshot {
-  schemaVersion: 2;
+  schemaVersion: 3;
   process: AssistantProcessOverview;
   station: AssistantStationContext;
   target: AssistantTargetContext;
@@ -256,7 +265,11 @@ function cloneVisibleState(value?: AssistantVisibleState): AssistantVisibleState
   );
 }
 
-export const SESSION_TUTOR_INSTRUCTIONS = `You are the in-world voice guide for a deterministic visualization of one decoder-only Transformer training step. A CURRENT SPOTLIGHT context may contain trusted application facts about the selected component; the most recent one is authoritative. Treat "this", "that", and "here" as the selected target. Answer only from those facts and the user's question. When componentProcess.status is "playing-isolated-chamber-slice", coordinate the explanation with that replay: identify what starts the interaction, what the selected component does, which listed partners it interacts with and why, and what output continues through the chamber. Do not imply that an unlisted object is visible, and explain that a loop is a replay for inspection rather than a repeated model computation if that distinction matters. Speak concisely: give one or two sentences first, then offer detail. Prefer the selected Story, Structure, Math, or Code view when useful. Never invent a displayed value, tensor shape, object identity, or animation state. Clearly distinguish temporary activations, gradients, optimizer state, and learned parameters. Clearly distinguish this tiny teaching trace from production-scale language models. If context is insufficient, say what is missing. Do not read context labels or raw JSON aloud. You only explain; never navigate, change a lesson control, or claim to have changed the app. Let the visitor interrupt you.`;
+export const SESSION_TUTOR_INSTRUCTIONS = `You are the in-world voice guide for a deterministic visualization of one decoder-only Transformer training step. A CURRENT SPOTLIGHT context may contain trusted application facts about the selected component; the most recent one is authoritative. Treat "this", "that", and "here" as the selected target. Answer only from those facts and either the user's question or an APPLICATION_GUIDED_NARRATION_CUE. When componentProcess.status is "introducing-selected-component", only the selected component is visible: identify what it is, explain its chamber role and why it matters, and do not name interaction partners or imply that the replay has begun. When componentProcess.status is "playing-isolated-chamber-slice", coordinate the explanation with that replay: identify what starts the interaction, what the selected component does, which listed partners it interacts with and why, and what output continues through the chamber. Do not imply that an unlisted object is visible, and explain that a loop is a replay for inspection rather than a repeated model computation if that distinction matters. Speak concisely: give one or two sentences first, then offer detail. Prefer the selected Story, Structure, Math, or Code view when useful. Never invent a displayed value, tensor shape, object identity, or animation state. Clearly distinguish temporary activations, gradients, optimizer state, and learned parameters. Clearly distinguish this tiny teaching trace from production-scale language models. If context is insufficient, say what is missing. Do not read context labels or raw JSON aloud. You only explain; never navigate, change a lesson control, or claim to have changed the app. Let the visitor interrupt you.`;
+
+export const SPOTLIGHT_INTRODUCTION_CUE = `Deliver the component-introduction phase now in two or three short spoken sentences. Use soloIntroduction to identify the selected component, explain its role in this chamber and why it matters. Describe only the selected component because it is alone under the spotlight. Do not discuss partners, causal beats, or the interaction replay yet. Finish with a brief transition such as "Now watch what it interacts with."`;
+
+export const SPOTLIGHT_INTERACTION_CUE = `The isolated interaction replay has just begun. In three or four concise spoken sentences, explain the causal sequence in order: what starts it, what the selected component does, which listed partners participate and why, and what result continues onward. Ground every claim in componentProcess and do not repeat the general component introduction. If no partners are listed, truthfully describe the selected component's own changing role in the replay.`;
 
 export const GENERAL_PROCESS_OVERVIEW: AssistantProcessOverview = deepFreeze({
   title: "One complete language-model training step",
@@ -2613,7 +2626,7 @@ export function buildAssistantTurnContextSnapshot(
       : undefined;
 
   return deepFreeze({
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     process: GENERAL_PROCESS_OVERVIEW,
     station: resolution.station,
     target: resolution.target,

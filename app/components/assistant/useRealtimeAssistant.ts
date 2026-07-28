@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   RealtimeAssistantError,
+  RealtimeAssistantResponseRequest,
   RealtimeAssistantStatus,
   RealtimeAssistantTurnTiming,
   RealtimeServerEvent,
@@ -11,12 +12,23 @@ import type {
   UseRealtimeAssistantOptions,
   UseRealtimeAssistantResult,
 } from "./realtimeAssistantTypes";
+import {
+  cancelRealtimeResponse,
+  EMPTY_REALTIME_RESPONSE_LIFECYCLE,
+  markRealtimeAudioStopped,
+  markRealtimeResponseCreated,
+  markRealtimeResponseGenerated,
+  markRealtimeResponseRequested,
+  markRealtimeResponseTerminated,
+  responseEventBelongsToActive,
+} from "../../lib/realtimeResponseLifecycle";
 
 const DEFAULT_SESSION_ENDPOINT = "/api/realtime/session";
 const DEFAULT_CONNECTION_TIMEOUT_MS = 20_000;
 const MAX_CONTEXT_CHARACTERS = 32_000;
 const MAX_TEMPORARY_API_KEY_CHARACTERS = 512;
 const RETAINED_PERFORMANCE_TURNS = 8;
+const RESPONSE_REQUEST_TOKEN_KEY = "application_request_token";
 
 const DEFAULT_INSTRUCTIONS = `
 You are a concise, friendly in-world tutor for an interactive LLM training visualization.
@@ -45,6 +57,30 @@ function isRecord(value: unknown): value is UnknownRecord {
 function stringField(record: UnknownRecord, key: string) {
   const value = record[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function responseIdFromEvent(event: RealtimeServerEvent) {
+  const response = isRecord(event.response)
+    ? event.response
+    : undefined;
+  return (
+    (response ? stringField(response, "id") : undefined) ??
+    stringField(event, "response_id") ??
+    null
+  );
+}
+
+function responseRequestTokenFromEvent(event: RealtimeServerEvent) {
+  const response = isRecord(event.response)
+    ? event.response
+    : undefined;
+  const metadata =
+    response && isRecord(response.metadata)
+      ? response.metadata
+      : undefined;
+  return metadata
+    ? stringField(metadata, RESPONSE_REQUEST_TOKEN_KEY) ?? null
+    : null;
 }
 
 function makeEventId() {
@@ -254,8 +290,11 @@ export function useRealtimeAssistant(
   const connectionAttemptRef = useRef(0);
   const intentionalCloseRef = useRef(false);
   const statusRef = useRef<RealtimeAssistantStatus>("off");
-  const respondingRef = useRef(false);
-  const localTalkingRef = useRef(false);
+  const responseLifecycleRef = useRef(
+    EMPTY_REALTIME_RESPONSE_LIFECYCLE,
+  );
+  const microphoneOpenRef = useRef(false);
+  const speechActiveRef = useRef(false);
   const turnTimingRef = useRef<TurnTimingState>({
     id: 0,
     speechStoppedAt: null,
@@ -426,6 +465,35 @@ export function useRealtimeAssistant(
     }
   }, [reportError]);
 
+  const requestAudioResponse = useCallback(
+    (response: UnknownRecord = {}) => {
+      const requestToken = makeEventId();
+      const suppliedMetadata = isRecord(response.metadata)
+        ? response.metadata
+        : {};
+      const requested = sendEvent({
+        type: "response.create",
+        response: {
+          ...response,
+          output_modalities: ["audio"],
+          metadata: {
+            ...suppliedMetadata,
+            [RESPONSE_REQUEST_TOKEN_KEY]: requestToken,
+          },
+        },
+      });
+      if (requested) {
+        responseLifecycleRef.current =
+          markRealtimeResponseRequested(
+            responseLifecycleRef.current,
+            requestToken,
+          );
+      }
+      return requested;
+    },
+    [sendEvent],
+  );
+
   const takeTurnContext = useCallback(
     (explicitContext?: RealtimeTurnContext | null) => {
       if (explicitContext !== undefined) {
@@ -508,7 +576,7 @@ export function useRealtimeAssistant(
                     type: "semantic_vad",
                     eagerness:
                       currentOptions.semanticVadEagerness ?? "high",
-                    create_response: true,
+                    create_response: false,
                     interrupt_response: true,
                   }
                 : null,
@@ -530,7 +598,17 @@ export function useRealtimeAssistant(
 
       if (type === "input_audio_buffer.speech_started") {
         beginTurnTiming();
-        localTalkingRef.current = true;
+        microphoneOpenRef.current = true;
+        speechActiveRef.current = true;
+        const responseLifecycle = responseLifecycleRef.current;
+        if (responseLifecycle.responding) {
+          if (!responseLifecycle.awaitingAudioStop) {
+            sendEvent({ type: "response.cancel" });
+          }
+          sendEvent({ type: "output_audio_buffer.clear" });
+          responseLifecycleRef.current =
+            cancelRealtimeResponse(responseLifecycle);
+        }
         if (mountedRef.current) setIsTalking(true);
         updateStatus("listening");
         return;
@@ -538,8 +616,16 @@ export function useRealtimeAssistant(
 
       if (type === "input_audio_buffer.speech_stopped") {
         markSpeechStopped();
-        localTalkingRef.current = false;
-        if (mountedRef.current) setIsTalking(false);
+        speechActiveRef.current = false;
+        if (mountedRef.current) {
+          setIsTalking(microphoneOpenRef.current);
+        }
+        if (
+          (optionsRef.current.turnMode ?? "push-to-talk") ===
+          "semantic-vad"
+        ) {
+          requestAudioResponse();
+        }
         updateStatus("thinking");
         return;
       }
@@ -549,22 +635,56 @@ export function useRealtimeAssistant(
         type === "response.output_text.delta" ||
         type === "response.output_audio.delta"
       ) {
+        const responseId = responseIdFromEvent(serverEvent);
+        if (
+          !responseEventBelongsToActive(
+            responseLifecycleRef.current,
+            responseId,
+          )
+        ) {
+          return;
+        }
         markFirstOutput();
-        respondingRef.current = true;
         updateStatus("speaking");
         return;
       }
 
       if (type === "response.created") {
+        const responseId = responseIdFromEvent(serverEvent);
+        const currentLifecycle = responseLifecycleRef.current;
+        const nextLifecycle = markRealtimeResponseCreated(
+          currentLifecycle,
+          responseId,
+          responseRequestTokenFromEvent(serverEvent),
+        );
+        if (nextLifecycle === currentLifecycle) return;
         markResponseCreated();
-        respondingRef.current = true;
+        responseLifecycleRef.current = nextLifecycle;
         updateStatus("thinking");
         return;
       }
 
       if (type === "response.done" || type === "response.cancelled") {
-        localTalkingRef.current = false;
-        if (mountedRef.current) setIsTalking(false);
+        const responseId = responseIdFromEvent(serverEvent);
+        let currentLifecycle = responseLifecycleRef.current;
+        if (
+          !responseEventBelongsToActive(
+            currentLifecycle,
+            responseId,
+          )
+        ) {
+          const boundLifecycle = markRealtimeResponseCreated(
+            currentLifecycle,
+            responseId,
+            responseRequestTokenFromEvent(serverEvent),
+          );
+          if (boundLifecycle === currentLifecycle) return;
+          currentLifecycle = boundLifecycle;
+          responseLifecycleRef.current = boundLifecycle;
+        }
+        if (mountedRef.current) {
+          setIsTalking(microphoneOpenRef.current);
+        }
         completeTurnTiming();
 
         const response = isRecord(serverEvent.response)
@@ -573,8 +693,12 @@ export function useRealtimeAssistant(
         const responseStatus = response
           ? stringField(response, "status")
           : undefined;
-        respondingRef.current = false;
         if (responseStatus === "failed") {
+          responseLifecycleRef.current =
+            markRealtimeResponseTerminated(
+              currentLifecycle,
+              responseId,
+            );
           const details = response && isRecord(response.status_details)
             ? response.status_details
             : undefined;
@@ -584,10 +708,52 @@ export function useRealtimeAssistant(
               "The assistant could not complete that response.",
             fatal: false,
           });
-        } else {
+          updateStatus(
+            microphoneOpenRef.current ? "listening" : "ready",
+          );
+        } else if (
+          type === "response.cancelled" ||
+          responseStatus === "cancelled"
+        ) {
+          responseLifecycleRef.current =
+            markRealtimeResponseTerminated(
+              currentLifecycle,
+              responseId,
+            );
           clearError();
+          updateStatus(
+            microphoneOpenRef.current ? "listening" : "ready",
+          );
+        } else {
+          // Response generation can finish before its WebRTC audio buffer has
+          // drained. Retain response ownership and the speaking state until
+          // output_audio_buffer.stopped so a second narration cannot overlap.
+          responseLifecycleRef.current =
+            markRealtimeResponseGenerated(
+              currentLifecycle,
+              responseId,
+            );
+          clearError();
+          updateStatus(
+            speechActiveRef.current ? "listening" : "speaking",
+          );
         }
-        updateStatus("ready");
+        return;
+      }
+
+      if (type === "output_audio_buffer.stopped") {
+        const currentLifecycle = responseLifecycleRef.current;
+        const nextLifecycle = markRealtimeAudioStopped(
+          currentLifecycle,
+          responseIdFromEvent(serverEvent),
+        );
+        if (nextLifecycle === currentLifecycle) return;
+        responseLifecycleRef.current = nextLifecycle;
+        updateStatus(
+          speechActiveRef.current || microphoneOpenRef.current
+            ? "listening"
+            : "ready",
+        );
         return;
       }
 
@@ -615,6 +781,8 @@ export function useRealtimeAssistant(
       markResponseCreated,
       markSpeechStopped,
       reportError,
+      requestAudioResponse,
+      sendEvent,
       updateStatus,
     ],
   );
@@ -656,8 +824,10 @@ export function useRealtimeAssistant(
       audio.srcObject = null;
     }
 
-    respondingRef.current = false;
-    localTalkingRef.current = false;
+    responseLifecycleRef.current =
+      EMPTY_REALTIME_RESPONSE_LIFECYCLE;
+    microphoneOpenRef.current = false;
+    speechActiveRef.current = false;
 
     if (updateReactState && mountedRef.current) {
       setIsConnected(false);
@@ -985,26 +1155,32 @@ export function useRealtimeAssistant(
 
       if (turnMode === "semantic-vad") {
         microphoneTrack.enabled = true;
-        localTalkingRef.current = true;
+        microphoneOpenRef.current = true;
+        speechActiveRef.current = false;
         if (mountedRef.current) setIsTalking(true);
         updateStatus("listening");
         return true;
       }
 
-      if (localTalkingRef.current) return true;
+      if (microphoneOpenRef.current) return true;
       beginTurnTiming();
       sendEvent({ type: "input_audio_buffer.clear" });
-      if (respondingRef.current) {
-        sendEvent({ type: "response.cancel" });
+      const responseLifecycle = responseLifecycleRef.current;
+      if (responseLifecycle.responding) {
+        if (!responseLifecycle.awaitingAudioStop) {
+          sendEvent({ type: "response.cancel" });
+        }
         sendEvent({ type: "output_audio_buffer.clear" });
-        respondingRef.current = false;
+        responseLifecycleRef.current =
+          cancelRealtimeResponse(responseLifecycle);
       }
 
       const injected = injectContextForTurn(context);
       if (!injected) return false;
 
       microphoneTrack.enabled = true;
-      localTalkingRef.current = true;
+      microphoneOpenRef.current = true;
+      speechActiveRef.current = false;
       if (mountedRef.current) setIsTalking(true);
       updateStatus("listening");
       return true;
@@ -1028,21 +1204,86 @@ export function useRealtimeAssistant(
     if ((optionsRef.current.turnMode ?? "push-to-talk") === "semantic-vad") {
       return true;
     }
-    if (!localTalkingRef.current) return false;
+    if (!microphoneOpenRef.current) return false;
 
     microphoneTrack.enabled = false;
-    localTalkingRef.current = false;
+    microphoneOpenRef.current = false;
+    speechActiveRef.current = false;
     if (mountedRef.current) setIsTalking(false);
 
     markSpeechStopped();
     const committed = sendEvent({ type: "input_audio_buffer.commit" });
-    const requested = committed && sendEvent({ type: "response.create" });
+    const requested = committed && requestAudioResponse();
     if (requested) {
-      respondingRef.current = true;
       updateStatus("thinking");
     }
     return requested;
-  }, [markSpeechStopped, sendEvent, updateStatus]);
+  }, [
+    markSpeechStopped,
+    requestAudioResponse,
+    sendEvent,
+    updateStatus,
+  ]);
+
+  const requestResponse = useCallback(
+    (request: RealtimeAssistantResponseRequest) => {
+      if (
+        dataChannelRef.current?.readyState !== "open" ||
+        responseLifecycleRef.current.responding
+      ) {
+        return false;
+      }
+
+      const currentOptions = optionsRef.current;
+      let instructions: string;
+      try {
+        instructions = composeSessionInstructions(
+          currentOptions.instructions?.trim() || DEFAULT_INSTRUCTIONS,
+          request.context === undefined
+            ? currentOptions.persistentContext
+            : request.context,
+        );
+      } catch (contextError) {
+        reportError({
+          message: `The spotlight narration could not be prepared: ${errorMessage(contextError)}`,
+          fatal: false,
+        });
+        return false;
+      }
+
+      const responseInstructions = [
+        instructions,
+        "APPLICATION_GUIDED_NARRATION_CUE",
+        request.instructions.trim(),
+        "END_APPLICATION_GUIDED_NARRATION_CUE",
+      ].join("\n\n");
+      if (responseInstructions.length > MAX_CONTEXT_CHARACTERS) {
+        reportError({
+          message: `Assistant instructions exceed ${MAX_CONTEXT_CHARACTERS.toLocaleString()} characters.`,
+          fatal: false,
+        });
+        return false;
+      }
+
+      clearError();
+      beginTurnTiming();
+      const requested = requestAudioResponse({
+        instructions: responseInstructions,
+        ...(request.metadata ? { metadata: request.metadata } : {}),
+      });
+      if (requested) {
+        updateStatus("thinking");
+      }
+      return requested;
+    },
+    [
+      beginTurnTiming,
+      clearError,
+      reportError,
+      requestAudioResponse,
+      updateStatus,
+    ],
+  );
 
   /**
    * Close the microphone without committing a turn or requesting a response.
@@ -1053,7 +1294,8 @@ export function useRealtimeAssistant(
     const microphoneTrack = microphoneTrackRef.current;
     if (!microphoneTrack) return false;
     microphoneTrack.enabled = false;
-    localTalkingRef.current = false;
+    microphoneOpenRef.current = false;
+    speechActiveRef.current = false;
     if (mountedRef.current) setIsTalking(false);
     if (statusRef.current === "listening") updateStatus("ready");
     return true;
@@ -1061,17 +1303,29 @@ export function useRealtimeAssistant(
 
   const cancelResponse = useCallback(() => {
     if (dataChannelRef.current?.readyState !== "open") return false;
-    const cancelled = sendEvent({ type: "response.cancel" });
-    sendEvent({ type: "output_audio_buffer.clear" });
-    respondingRef.current = false;
-    if (cancelled) updateStatus("ready");
-    return cancelled;
+    const responseLifecycle = responseLifecycleRef.current;
+    const cancelled =
+      responseLifecycle.responding &&
+      !responseLifecycle.awaitingAudioStop
+        ? sendEvent({ type: "response.cancel" })
+        : false;
+    const cleared = sendEvent({ type: "output_audio_buffer.clear" });
+    responseLifecycleRef.current =
+      cancelRealtimeResponse(responseLifecycle);
+    if (cancelled || cleared) {
+      updateStatus(
+        speechActiveRef.current || microphoneOpenRef.current
+          ? "listening"
+          : "ready",
+      );
+    }
+    return cancelled || cleared;
   }, [sendEvent, updateStatus]);
 
   const turnMode = options.turnMode ?? "push-to-talk";
   useEffect(() => {
     const track = microphoneTrackRef.current;
-    if (track && !localTalkingRef.current) {
+    if (track && !microphoneOpenRef.current) {
       track.enabled = false;
     }
     if (dataChannelRef.current?.readyState === "open") {
@@ -1107,6 +1361,7 @@ export function useRealtimeAssistant(
     disable,
     startTalking,
     stopTalking,
+    requestResponse,
     stopListening,
     cancelResponse,
   };

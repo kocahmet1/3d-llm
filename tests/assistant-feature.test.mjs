@@ -152,6 +152,34 @@ async function loadFocusVisibility() {
   return focusVisibilityPromise;
 }
 
+let componentSpotlightPromise;
+async function loadComponentSpotlight() {
+  if (!componentSpotlightPromise) {
+    componentSpotlightPromise = readSource(
+      "app/lib/componentSpotlight.ts",
+    ).then((source) =>
+      import(asDataModule(transpile(source, "componentSpotlight.ts"))),
+    );
+  }
+  return componentSpotlightPromise;
+}
+
+let realtimeResponseLifecyclePromise;
+async function loadRealtimeResponseLifecycle() {
+  if (!realtimeResponseLifecyclePromise) {
+    realtimeResponseLifecyclePromise = readSource(
+      "app/lib/realtimeResponseLifecycle.ts",
+    ).then((source) =>
+      import(
+        asDataModule(
+          transpile(source, "realtimeResponseLifecycle.ts"),
+        )
+      ),
+    );
+  }
+  return realtimeResponseLifecyclePromise;
+}
+
 const validOffer = [
   "v=0",
   "o=- 0 0 IN IP4 127.0.0.1",
@@ -257,6 +285,11 @@ test("every rich component derives an isolated replay from valid chamber beats",
     );
   }
   assert.equal(Object.keys(definitions).length, components.length);
+  assert.equal(
+    components.length,
+    148,
+    "the complete authored component inventory must remain intact",
+  );
   assert.ok(
     components.length >= expectedCoveredStations.length * 3,
     "covered chambers should expose substantial component inventories",
@@ -346,8 +379,71 @@ test("every rich component derives an isolated replay from valid chamber beats",
         definition.playback.endProgress,
     );
     assert.ok(definition.playback.durationSeconds >= 3.5);
+    assert.deepEqual(definition.narrative.soloIntroduction, {
+      whatItIs: target.summary,
+      chamberRole: target.role,
+      operation: target.operation,
+      whyItMatters: target.whyItMatters,
+    });
     assert.ok(definition.narrative.interactionCause.length > 20);
     assert.ok(definition.narrative.sequence.length > 0);
+
+    const introduction =
+      componentProcesses.componentSpotlightPresentation(
+        definition,
+        "solo-introduction",
+        123,
+      );
+    assert.deepEqual(
+      introduction.targetIds,
+      [target.id],
+      `${target.id} must appear alone during its introduction`,
+    );
+    assert.deepEqual(introduction.auxiliarySceneKeys, []);
+    assert.equal(introduction.replayProgress, null);
+    assert.equal(
+      introduction.contextStatus,
+      "introducing-selected-component",
+    );
+
+    const interaction =
+      componentProcesses.componentSpotlightPresentation(
+        definition,
+        "interaction-replay",
+        0,
+      );
+    assert.deepEqual(
+      interaction.targetIds,
+      definition.participantTargetIds,
+      `${target.id} must restore its exact authored interaction cast`,
+    );
+    assert.deepEqual(
+      interaction.auxiliarySceneKeys,
+      definition.auxiliarySceneKeys,
+      `${target.id} must restore its exact authored interaction actors`,
+    );
+    assert.equal(
+      interaction.replayProgress,
+      definition.playback.startProgress,
+    );
+    assert.equal(
+      interaction.contextStatus,
+      "playing-isolated-chamber-slice",
+    );
+
+    const reducedMotion =
+      componentProcesses.componentSpotlightPresentation(
+        definition,
+        "interaction-replay",
+        100,
+        false,
+      );
+    assert.equal(
+      reducedMotion.replayProgress,
+      (definition.playback.startProgress +
+        definition.playback.endProgress) /
+        2,
+    );
   }
 
   assert.deepEqual(
@@ -453,6 +549,137 @@ test("component replay clock loops its chamber slice and holds under reduced mot
   );
 });
 
+test("component spotlight sequence is phase-ordered and rejects stale completions", async () => {
+  const spotlight = await loadComponentSpotlight();
+  const first = spotlight.beginComponentSpotlight(
+    "attention:values",
+    41,
+  );
+
+  assert.deepEqual(first, {
+    targetId: "attention:values",
+    focusToken: 41,
+    phase: "solo-introduction",
+  });
+  assert.equal(
+    spotlight.advanceComponentSpotlight(
+      first,
+      "attention:values",
+      40,
+    ),
+    first,
+    "a completion from an older opening must be ignored",
+  );
+  assert.equal(
+    spotlight.advanceComponentSpotlight(
+      first,
+      "attention:queries",
+      41,
+    ),
+    first,
+    "a completion for another component must be ignored",
+  );
+
+  const interaction = spotlight.advanceComponentSpotlight(
+    first,
+    "attention:values",
+    41,
+  );
+  assert.equal(interaction.phase, "interaction-replay");
+  assert.equal(
+    spotlight.advanceComponentSpotlight(
+      interaction,
+      "attention:values",
+      41,
+    ),
+    interaction,
+    "an interaction replay cannot advance twice",
+  );
+
+  const reopened = spotlight.beginComponentSpotlight(
+    "attention:values",
+    42,
+  );
+  assert.equal(
+    spotlight.advanceComponentSpotlight(
+      reopened,
+      "attention:values",
+      41,
+    ),
+    reopened,
+    "a late completion cannot advance a reopened copy of the same target",
+  );
+  assert.deepEqual(spotlight.dismissComponentSpotlight(reopened), {
+    targetId: null,
+    focusToken: 42,
+    phase: null,
+  });
+});
+
+test("Realtime response ownership ignores late events after a spotlight switch", async () => {
+  const lifecycle = await loadRealtimeResponseLifecycle();
+  let state = lifecycle.markRealtimeResponseRequested(
+    lifecycle.EMPTY_REALTIME_RESPONSE_LIFECYCLE,
+    "request-a",
+  );
+  state = lifecycle.markRealtimeResponseCreated(
+    state,
+    "response-a",
+    "request-a",
+  );
+  state = lifecycle.markRealtimeResponseGenerated(
+    state,
+    "response-a",
+  );
+  assert.equal(state.responding, true);
+  assert.equal(state.awaitingAudioStop, true);
+
+  state = lifecycle.cancelRealtimeResponse(state);
+  state = lifecycle.markRealtimeResponseRequested(
+    state,
+    "request-b",
+  );
+  assert.equal(
+    lifecycle.markRealtimeResponseCreated(
+      state,
+      "response-a-late",
+      "request-a",
+    ),
+    state,
+    "a cancelled pre-created request cannot bind to B's pending token",
+  );
+  state = lifecycle.markRealtimeResponseCreated(
+    state,
+    "response-b",
+    "request-b",
+  );
+  const activeB = state;
+
+  assert.equal(
+    lifecycle.markRealtimeResponseTerminated(
+      activeB,
+      "response-a",
+    ),
+    activeB,
+    "a late terminal event from A must not release B",
+  );
+  assert.equal(
+    lifecycle.markRealtimeAudioStopped(activeB, "response-a"),
+    activeB,
+    "a late audio-stop event from A must not release B",
+  );
+
+  state = lifecycle.markRealtimeResponseGenerated(
+    activeB,
+    "response-b",
+  );
+  assert.equal(state.awaitingAudioStop, true);
+  state = lifecycle.markRealtimeAudioStopped(state, "response-b");
+  assert.equal(state.responding, false);
+  assert.equal(state.activeResponseId, null);
+  assert.equal(state.awaitingAudioStop, false);
+});
+
 test("semantic object names select rich attention context and unnamed meshes fall back", async () => {
   const { context } = await loadContextModules();
 
@@ -503,12 +730,45 @@ test("turn snapshots freeze the referent, mode, branch, and cloned visible state
   assert.match(snapshot.view.branch.label, /value gathering/i);
   assert.equal(snapshot.visibleState.animation.phase, "value-gathering");
   assert.deepEqual(snapshot.visibleState.highlightedPositions, [0, 1, 2]);
-  assert.equal(snapshot.schemaVersion, 2);
+  assert.equal(snapshot.schemaVersion, 3);
   assert.equal(Object.hasOwn(snapshot, "tutorInstructions"), false);
   assert.equal(Object.isFrozen(snapshot), true);
   assert.equal(Object.isFrozen(snapshot.visibleState), true);
   assert.equal(Object.isFrozen(snapshot.visibleState.animation), true);
   assert.equal(Object.isFrozen(snapshot.visibleState.highlightedPositions), true);
+
+  const introductionSnapshot =
+    componentProcesses.attachComponentProcessContext(
+      snapshot,
+      "attention:values",
+      "introducing-selected-component",
+    );
+  assert.equal(
+    introductionSnapshot.componentProcess.status,
+    "introducing-selected-component",
+  );
+  assert.equal(
+    introductionSnapshot.componentProcess.soloIntroduction.whatItIs,
+    snapshot.target.summary,
+  );
+  assert.match(
+    introductionSnapshot.componentProcess.visualGrounding.join(" "),
+    /only the selected component/i,
+  );
+  assert.match(
+    introductionSnapshot.componentProcess.visualGrounding.join(" "),
+    /not visible yet/i,
+  );
+  assert.equal(
+    introductionSnapshot.componentProcess.interactionPartners.length,
+    0,
+    "a partnerless component must remain truthful in its solo phase",
+  );
+  assert.equal(Object.isFrozen(introductionSnapshot), true);
+  assert.equal(
+    Object.isFrozen(introductionSnapshot.componentProcess.soloIntroduction),
+    true,
+  );
 
   const replaySnapshot = componentProcesses.attachComponentProcessContext(
     snapshot,
@@ -747,7 +1007,7 @@ test("Realtime route proxies SDP with a server-only bearer key", async () => {
     assert.deepEqual(session.audio.input.turn_detection, {
       type: "semantic_vad",
       eagerness: "high",
-      create_response: true,
+      create_response: false,
       interrupt_response: true,
     });
     return new Response(validAnswer, {
@@ -974,6 +1234,21 @@ test("voice guide keeps a private, low-latency audio-only Realtime flow", async 
   assert.match(hook, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(hook, /DEFAULT_SESSION_ENDPOINT\s*=\s*"\/api\/realtime\/session"/);
   assert.match(hook, /conversation\.item\.create/);
+  assert.match(hook, /APPLICATION_GUIDED_NARRATION_CUE/);
+  assert.match(hook, /response\.create/);
+  assert.match(hook, /output_modalities:\s*\["audio"\]/);
+  assert.match(hook, /metadata:\s*request\.metadata/);
+  assert.match(hook, /responseLifecycleRef/);
+  assert.match(hook, /responseIdFromEvent/);
+  assert.match(hook, /RESPONSE_REQUEST_TOKEN_KEY/);
+  assert.match(hook, /responseRequestTokenFromEvent/);
+  assert.match(hook, /responseEventBelongsToActive/);
+  assert.match(hook, /microphoneOpenRef/);
+  assert.match(hook, /speechActiveRef/);
+  assert.match(
+    hook,
+    /type === "output_audio_buffer\.stopped"[\s\S]*?markRealtimeAudioStopped/,
+  );
   assert.match(hook, /APPLICATION_CONTEXT_FOR_NEXT_USER_TURN/);
   assert.match(hook, /APPLICATION_SPOTLIGHT_CONTEXT/);
   assert.match(hook, /persistentContext/);
@@ -1005,14 +1280,39 @@ test("voice guide keeps a private, low-latency audio-only Realtime flow", async 
   assert.match(experience, /buildAssistantTurnContextSnapshot/);
   assert.match(experience, /persistentContext:\s*spotlightContext/);
   assert.match(experience, /semanticVadEagerness:\s*"high"/);
-  assert.match(
-    experience,
-    /buildAssistantContextSnapshot\(\s*targetId,\s*Boolean\(componentProcess\)/,
-  );
   assert.match(experience, /resolveComponentProcessDefinition\(targetId\)/);
   assert.match(experience, /setProcessPlaying\(false\)/);
   assert.match(experience, /restoreComponentReplayTransport/);
   assert.match(experience, /startTalking\(\)/);
+  assert.match(experience, /SPOTLIGHT_INTRODUCTION_CUE/);
+  assert.match(experience, /SPOTLIGHT_INTERACTION_CUE/);
+  assert.match(experience, /requestResponse\(\{/);
+  assert.match(experience, /event\.type === "output_audio_buffer\.stopped"/);
+  assert.match(experience, /event\.type === "input_audio_buffer\.speech_started"/);
+  assert.match(experience, /event\.type === "response\.cancelled"/);
+  assert.match(experience, /spotlightInterruptFocusRef/);
+  assert.match(experience, /replacingUnfocusedVoiceTurn/);
+  assert.match(experience, /VOICE_SPOTLIGHT_HARD_TIMEOUT_MS/);
+  assert.doesNotMatch(
+    experience,
+    /setTimeout\(\s*(?:tryFallback|finishWithoutNarration)\s*,\s*1_000\s*\)/,
+  );
+  assert.match(
+    experience,
+    /componentProcess\s*\?\s*beginComponentSpotlight/,
+  );
+  assert.match(
+    experience,
+    /componentProcess\s*\?\s*"solo-introduction"\s*:\s*null/,
+  );
+  assert.match(experience, /advanceSpotlightToInteraction/);
+  assert.match(experience, /spotlightFocusToken/);
+  assert.match(experience, /assistantFocusPhase=\{spotlightPhase\}/);
+  assert.match(
+    experience,
+    /assistantFocusDismissGeneration=\{\s*assistantFocusDismissGeneration\s*\}/,
+  );
+  assert.match(experience, /processPhaseLabel=/);
   assert.doesNotMatch(
     experience,
     /ASSISTANT_APP_TOOLS|onToolCall|handleAssistantToolCall|assistantAppTools/,
@@ -1021,12 +1321,28 @@ test("voice guide keeps a private, low-latency audio-only Realtime flow", async 
   assert.match(canvas, /new THREE\.Raycaster\(\)/);
   assert.match(canvas, /createAssistantController/);
   assert.match(canvas, /resolveAssistantTarget/);
-  assert.match(canvas, /componentProcessProgressAt/);
+  assert.match(canvas, /componentSpotlightPresentation/);
+  assert.match(
+    canvas,
+    /buildFocusReplica\(\s*focusSelectedRoots,\s*componentProcess === null/,
+  );
+  assert.match(canvas, /buildFocusReplica\(focusReplayRoots,\s*true\)/);
+  assert.match(canvas, /transitionFocusToInteraction/);
+  assert.match(
+    canvas,
+    /!componentProcess[\s\S]*?!isAncestorOf\(runtime\.exhibitRoot,\s*anchor\)[\s\S]*?return abortFocus\(\)/,
+  );
+  assert.match(canvas, /latest\.current\.assistantFocusToken !== focusToken/);
+  assert.match(
+    canvas,
+    /assistantFocusDismissGeneration !==\s*focusDismissGeneration/,
+  );
   assert.match(canvas, /focusReplayProgress/);
   assert.match(canvas, /findComponentProcessObjects/);
   assert.match(canvas, /findComponentProcessAuxiliaryObjects/);
   assert.match(canvas, /syncFocusStage/);
-  assert.match(canvas, /participantTargetIds/);
+  assert.match(canvas, /interaction\.targetIds/);
+  assert.match(canvas, /interaction\.auxiliarySceneKeys/);
   assert.match(canvas, /processLocked/);
   assert.match(
     experience,

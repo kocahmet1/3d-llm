@@ -1048,10 +1048,15 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     /const\s+chamberProcessMoving\s*=\s*!reduceProcessMotion\s*&&\s*state\.processPlaying/,
   );
   const runtimeDriver =
-    /stationRuntimes\.forEach\(\(runtime, index\) => \{[\s\S]*?\n\s*\}\);\n\s*if\s*\(focusActive\)\s*syncFocusStage\(\);/.exec(
+    /stationRuntimes\.forEach\(\(runtime, index\) => \{[\s\S]*?\n\s*\}\);\n\s*if\s*\(focusActive\s*&&\s*focusPhase\s*===\s*"interaction-replay"\)\s*\{\s*syncFocusStage\(\);\s*\}/.exec(
       canvas,
     )?.[0] ?? "";
   assert.ok(runtimeDriver.length > 0, "station runtime driver should be discoverable");
+  assert.match(
+    runtimeDriver,
+    /focusPhase\s*===\s*"interaction-replay"[\s\S]*?syncFocusStage\(\)/,
+    "the static solo introduction must not inherit the chamber animation before replay",
+  );
   assert.match(
     runtimeDriver,
     /index\s*===\s*1[\s\S]*?state\.dataPrepProgress[\s\S]*?index\s*===\s*currentStation[\s\S]*?chamberProcessProgress/,
