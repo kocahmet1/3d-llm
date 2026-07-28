@@ -4446,7 +4446,12 @@ const FOCUS_VEIL_RENDER_ORDER = 8000;
 const FOCUS_STAGE_RENDER_ORDER = 8100;
 const FOCUS_AVATAR_RENDER_ORDER = 8200;
 const FOCUS_LASER_RENDER_ORDER = 8300;
-const FOCUS_STAGE_DISTANCE = 2.7;
+/** Keep the isolated exhibit close enough for labels and small parts to read. */
+const FOCUS_STAGE_DISTANCE = 2.15;
+/** The replica's longest visible dimension occupies this much viewport height. */
+const FOCUS_STAGE_VIEW_COVERAGE = 0.58;
+/** The guide is supporting cast during an explanation, not the focal object. */
+const FOCUS_GUIDE_SCALE = 0.62;
 const FOCUS_VEIL_DISTANCE = 0.7;
 
 /**
@@ -5178,6 +5183,10 @@ export function TrainingWorldCanvas({
     const focusForward = new THREE.Vector3();
     const focusCameraWorld = new THREE.Vector3();
     const focusSphere = new THREE.Sphere();
+    const focusVisibleBounds = new THREE.Box3();
+    const focusObjectBounds = new THREE.Box3();
+    const focusObjectWorldPosition = new THREE.Vector3();
+    const focusObjectWorldScale = new THREE.Vector3();
     interface FocusStageBinding {
       source: THREE.Object3D;
       copy: THREE.Object3D;
@@ -5893,6 +5902,101 @@ export function TrainingWorldCanvas({
       });
     };
 
+    const setGuideFocusPresentation = (enabled: boolean) => {
+      setAvatarRenderOrder(enabled ? FOCUS_AVATAR_RENDER_ORDER : 0);
+      assistantController.group.scale.setScalar(
+        enabled ? FOCUS_GUIDE_SCALE : 1,
+      );
+    };
+
+    /**
+     * Box3.setFromObject includes invisible descendants and transparent pick
+     * helpers. Those helpers can be much larger than the artwork and used to
+     * make small components collapse into a tiny replica. Measure only pixels
+     * that can actually be seen on the isolated stage.
+     */
+    const measureVisibleFocusBounds = () => {
+      focusVisibleBounds.makeEmpty();
+      focusStage.updateWorldMatrix(true, true);
+      const expandVisibleObject = (object: THREE.Object3D) => {
+        const renderable = object as THREE.Object3D & {
+          geometry?: THREE.BufferGeometry;
+          material?: THREE.Material | THREE.Material[];
+          isSprite?: boolean;
+        };
+        const materials = renderable.material
+          ? Array.isArray(renderable.material)
+            ? renderable.material
+            : [renderable.material]
+          : [];
+        if (
+          materials.length > 0 &&
+          !materials.some((material) => {
+            const opacity = (material as THREE.Material & {
+              opacity?: number;
+            }).opacity;
+            return (
+              material.visible &&
+              (typeof opacity !== "number" || opacity > 0.01)
+            );
+          })
+        ) {
+          return;
+        }
+
+        if (renderable.geometry) {
+          if (!renderable.geometry.boundingBox) {
+            renderable.geometry.computeBoundingBox();
+          }
+          if (renderable.geometry.boundingBox) {
+            focusObjectBounds
+              .copy(renderable.geometry.boundingBox)
+              .applyMatrix4(object.matrixWorld);
+            focusVisibleBounds.union(focusObjectBounds);
+          }
+          return;
+        }
+
+        if (renderable.isSprite) {
+          object.getWorldPosition(focusObjectWorldPosition);
+          object.getWorldScale(focusObjectWorldScale);
+          focusObjectWorldScale.z = Math.max(
+            focusObjectWorldScale.x,
+            focusObjectWorldScale.y,
+            0.001,
+          );
+          focusObjectBounds.setFromCenterAndSize(
+            focusObjectWorldPosition,
+            focusObjectWorldScale,
+          );
+          focusVisibleBounds.union(focusObjectBounds);
+        }
+      };
+      // The container stays hidden while it is being assembled, so begin at
+      // its children and let each staged subtree's own visibility take over.
+      for (const child of focusStage.children) {
+        child.traverseVisible(expandVisibleObject);
+      }
+      return focusVisibleBounds;
+    };
+
+    /**
+     * The isolated exhibit is a camera-facing presentation layer. Recompute
+     * its world position every frame so looking around cannot leave it behind
+     * in the chamber or make it feel distant.
+     */
+    const placeFocusComposition = () => {
+      camera.updateMatrixWorld();
+      camera.getWorldPosition(focusCameraWorld);
+      camera.getWorldDirection(focusForward);
+      focusCenter
+        .copy(focusCameraWorld)
+        .addScaledVector(focusForward, FOCUS_STAGE_DISTANCE);
+      focusStage.position.copy(focusCenter);
+      focusPedestal.group.position.copy(focusCenter);
+      focusPedestal.group.position.y -= focusRadius * 1.18;
+    };
+
     const clearFocusReplica = () => {
       for (const child of [...focusStage.children]) focusStage.remove(child);
       focusStageBindings.length = 0;
@@ -5931,9 +6035,9 @@ export function TrainingWorldCanvas({
       }
       if (stagedRoots.length === 0) return false;
 
-      assistantTargetBounds.setFromObject(focusStage, true);
-      if (assistantTargetBounds.isEmpty()) return false;
-      assistantTargetBounds.getBoundingSphere(focusSphere);
+      measureVisibleFocusBounds();
+      if (focusVisibleBounds.isEmpty()) return false;
+      focusVisibleBounds.getBoundingSphere(focusSphere);
       focusSourceCenter.copy(focusSphere.center);
       for (const stagedRoot of stagedRoots) {
         stagedRoot.position.sub(focusSourceCenter);
@@ -5943,18 +6047,17 @@ export function TrainingWorldCanvas({
       const viewHeight =
         2 * Math.tan(fovRadians / 2) * FOCUS_STAGE_DISTANCE;
       const stageScale = THREE.MathUtils.clamp(
-        (viewHeight * 0.4) / Math.max(0.001, focusSphere.radius * 2),
+        (viewHeight * FOCUS_STAGE_VIEW_COVERAGE) /
+          Math.max(0.001, focusSphere.radius * 2),
         0.02,
         60,
       );
       focusStage.scale.setScalar(stageScale);
       focusRadius = focusSphere.radius * stageScale;
-      focusStage.position.copy(focusCenter);
+      placeFocusComposition();
       focusStage.visible = true;
 
       focusPedestal.group.visible = true;
-      focusPedestal.group.position.copy(focusCenter);
-      focusPedestal.group.position.y -= focusRadius * 1.18;
       focusPedestal.group.scale.setScalar(
         THREE.MathUtils.clamp(focusRadius * 1.05, 0.3, 3.2),
       );
@@ -5981,7 +6084,7 @@ export function TrainingWorldCanvas({
       focusStationIndex = -1;
       focusTravelPending = false;
       clearFocusStage();
-      setAvatarRenderOrder(0);
+      setGuideFocusPresentation(false);
       lastAssistantTravelTargetId = null;
       latest.current.onAssistantFocusChange?.(
         null,
@@ -6010,7 +6113,7 @@ export function TrainingWorldCanvas({
         focusStationIndex = -1;
         focusTravelPending = false;
         if (wasActive) {
-          setAvatarRenderOrder(0);
+          setGuideFocusPresentation(false);
           lastAssistantTravelTargetId = null;
           latest.current.onAssistantFocusChange?.(
             null,
@@ -6076,12 +6179,7 @@ export function TrainingWorldCanvas({
         focusReplayRoots = [anchor];
       }
 
-      camera.updateMatrixWorld();
-      camera.getWorldPosition(focusCameraWorld);
-      camera.getWorldDirection(focusForward);
-      focusCenter
-        .copy(focusCameraWorld)
-        .addScaledVector(focusForward, FOCUS_STAGE_DISTANCE);
+      placeFocusComposition();
       if (
         !buildFocusReplica(
           focusSelectedRoots,
@@ -6107,7 +6205,7 @@ export function TrainingWorldCanvas({
       focusDismissGeneration =
         latest.current.assistantFocusDismissGeneration;
       focusTravelPending = true;
-      setAvatarRenderOrder(FOCUS_AVATAR_RENDER_ORDER);
+      setGuideFocusPresentation(true);
       reportAssistantTarget(focusTargetId);
       assistantTargetWorld.copy(focusCenter);
       hasAssistantTargetWorld = true;
@@ -8386,6 +8484,7 @@ export function TrainingWorldCanvas({
         transitionVeil.mesh.scale.set(veilHeight * camera.aspect, veilHeight, 1);
       }
       if (focusActive) {
+        placeFocusComposition();
         // Gentle sway instead of a full turntable so flat exhibits such as
         // matrices never turn edge-on to the visitor.
         if (!reduceProcessMotion) {
@@ -8457,9 +8556,14 @@ export function TrainingWorldCanvas({
           lastAssistantTravelTargetId = focusTargetId;
           assistantController.travelTo(assistantTargetWorld, {
             arriveAs: "present",
-            presentationDistance: Math.max(1.1, focusRadius * 1.35 + 0.45),
-            presentationSideOffset: Math.max(0.55, focusRadius * 0.95 + 0.25),
-            presentationHeight: 0.08,
+            // Keep the guide at the exhibit's depth instead of pulling it
+            // toward the lens, where perspective made it fill the screen.
+            presentationDistance: Math.max(0.16, focusRadius * 0.16),
+            presentationSideOffset: Math.max(
+              0.82,
+              focusRadius * 1.05 + 0.42,
+            ),
+            presentationHeight: 0.12,
           });
         } else if (state.assistantStatus === "ready") {
           if (!focusActive && selectedTargetId !== lastAssistantTravelTargetId) {
