@@ -4449,10 +4449,12 @@ const FOCUS_LASER_RENDER_ORDER = 8300;
 /** Keep the isolated exhibit close enough for labels and small parts to read. */
 const FOCUS_STAGE_DISTANCE = 2.15;
 /** Fit the selected object to the safe center of the screen, not a loose sphere. */
-const FOCUS_STAGE_VIEW_HEIGHT_COVERAGE = 0.72;
-const FOCUS_STAGE_VIEW_WIDTH_COVERAGE = 0.62;
+const FOCUS_STAGE_VIEW_HEIGHT_COVERAGE = 0.62;
+const FOCUS_STAGE_VIEW_WIDTH_COVERAGE = 0.52;
 /** Lift the exhibit clear of the replay dial and bottom journey controls. */
-const FOCUS_STAGE_VERTICAL_OFFSET = 0.1;
+const FOCUS_STAGE_VERTICAL_OFFSET = 0.04;
+/** Leave the left HUD clear while reserving space for the supporting guide. */
+const FOCUS_STAGE_HORIZONTAL_OFFSET = 0.05;
 /** The guide is supporting cast during an explanation, not the focal object. */
 const FOCUS_GUIDE_SCALE = 0.42;
 const FOCUS_VEIL_DISTANCE = 0.7;
@@ -5196,6 +5198,7 @@ export function TrainingWorldCanvas({
     const focusCenter = new THREE.Vector3();
     const focusSourceCenter = new THREE.Vector3();
     const focusForward = new THREE.Vector3();
+    const focusRight = new THREE.Vector3();
     const focusCameraWorld = new THREE.Vector3();
     const focusSphere = new THREE.Sphere();
     const focusVisibleBounds = new THREE.Box3();
@@ -6034,6 +6037,12 @@ export function TrainingWorldCanvas({
         2 *
         Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) *
         FOCUS_STAGE_DISTANCE;
+      const viewWidth = viewHeight * camera.aspect;
+      focusRight.crossVectors(focusForward, WORLD_UP).normalize();
+      focusCenter.addScaledVector(
+        focusRight,
+        viewWidth * FOCUS_STAGE_HORIZONTAL_OFFSET,
+      );
       focusCenter.y += viewHeight * FOCUS_STAGE_VERTICAL_OFFSET;
       focusStage.position.copy(focusCenter);
       focusPedestal.group.position.copy(focusCenter);
