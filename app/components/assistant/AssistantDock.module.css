@@ -3,8 +3,8 @@
   --guide-mint: #7dffd7;
   position: absolute;
   z-index: 44;
-  bottom: 18px;
-  left: 18px;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  left: max(18px, env(safe-area-inset-left));
   width: min(318px, calc(100vw - 36px));
   padding: 12px;
   border: 1px solid rgba(111, 244, 255, 0.3);
@@ -394,22 +394,48 @@
 
 @media (max-width: 1020px) {
   .dock {
-    bottom: 132px;
+    bottom: calc(132px + env(safe-area-inset-bottom));
   }
 }
 
 @media (max-width: 720px) {
   .dock {
     bottom: calc(118px + env(safe-area-inset-bottom));
-    left: 8px;
-    width: min(292px, calc(100vw - 16px));
+    left: max(8px, env(safe-area-inset-left));
+    width: min(
+      292px,
+      calc(
+        100vw - max(8px, env(safe-area-inset-left)) -
+          max(8px, env(safe-area-inset-right))
+      )
+    );
     padding: 9px;
     border-radius: 15px;
   }
 
   .dockCollapsed {
-    width: auto;
+    width: 52px;
     padding: 0;
+  }
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .dockCollapsed {
+    bottom: calc(132px + env(safe-area-inset-bottom));
+    width: 52px;
+    padding: 0;
+    border-radius: 18px;
+  }
+
+  .dockCollapsed .enableButton {
+    width: 52px;
+    min-height: 52px;
+    justify-content: center;
+    padding: 7px;
+  }
+
+  .dockCollapsed .enableButton > span:last-child {
+    display: none;
   }
 }
 

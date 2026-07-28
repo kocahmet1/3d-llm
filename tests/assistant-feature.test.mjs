@@ -1326,7 +1326,10 @@ test("voice guide keeps a private, low-latency audio-only Realtime flow", async 
     canvas,
     /buildFocusReplica\(\s*focusSelectedRoots,\s*componentProcess === null/,
   );
-  assert.match(canvas, /buildFocusReplica\(focusReplayRoots,\s*true\)/);
+  assert.match(
+    canvas,
+    /buildFocusReplica\(\s*focusReplayRoots,\s*true(?:\s*,|\s*\))/,
+  );
   assert.match(canvas, /transitionFocusToInteraction/);
   assert.match(
     canvas,

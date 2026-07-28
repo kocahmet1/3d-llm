@@ -157,6 +157,30 @@ export function TrainingHUD({
 }: TrainingHUDProps) {
   const [fullCodeOpen, setFullCodeOpen] = useState(false);
   const [hudMinimized, setHudMinimized] = useState(false);
+  const [usesCoarsePointer, setUsesCoarsePointer] = useState(false);
+  const [deviceDefaultsReady, setDeviceDefaultsReady] = useState(false);
+  const hudPreferenceSetRef = useRef(false);
+
+  useEffect(() => {
+    const compactViewport = window.matchMedia("(max-width: 720px)");
+    const coarsePointer = window.matchMedia("(pointer: coarse)");
+    const syncDeviceDefaults = () => {
+      setUsesCoarsePointer(coarsePointer.matches);
+      if (!hudPreferenceSetRef.current) {
+        setHudMinimized(compactViewport.matches || coarsePointer.matches);
+      }
+      setDeviceDefaultsReady(true);
+    };
+
+    syncDeviceDefaults();
+    compactViewport.addEventListener("change", syncDeviceDefaults);
+    coarsePointer.addEventListener("change", syncDeviceDefaults);
+    return () => {
+      compactViewport.removeEventListener("change", syncDeviceDefaults);
+      coarsePointer.removeEventListener("change", syncDeviceDefaults);
+    };
+  }, []);
+
   // As soon as the visitor lands in a chamber (free roam), surface a short
   // prompt reminding them to left-click for mouse look before walking. It
   // auto-dismisses so it never lingers once they're moving.
@@ -473,8 +497,27 @@ export function TrainingHUD({
     safeProcessProgress * processDurationSeconds,
   );
   const processTotalLabel = formatProcessClock(processDurationSeconds);
-  const navigationStatus =
-    navigationMode === "machine-room"
+  const navigationStatus = usesCoarsePointer
+    ? navigationMode === "machine-room"
+      ? {
+          label: "Machine room",
+          hint: "Drag to look · movement pad to walk · tap a station to select it · pinch or use +/- to zoom",
+        }
+      : navigationMode === "free-roam"
+        ? {
+            label: "Free roam",
+            hint: "Drag to look · movement pad to walk · tap an exhibit to inspect · pinch or use +/- to zoom · Room returns here",
+          }
+        : navigationMode === "tunnel"
+          ? {
+              label: "Tunnel travel",
+              hint: "Drag to look · use the movement pad or +/- to travel",
+            }
+          : {
+              label: "Guided ride",
+              hint: "Tap or drag the scene to take control",
+            }
+    : navigationMode === "machine-room"
       ? {
           label: "Machine room",
           hint: "WASD to move · mouse to look · aim at any station and scroll to move in · Esc frees the mouse to use this panel · M returns here",
@@ -513,7 +556,9 @@ export function TrainingHUD({
     <div
       className={`${styles.root} ${
         detailMode === "code" ? styles.rootCode : ""
-      } ${hudMinimized ? styles.rootMinimized : ""}`}
+      } ${hudMinimized ? styles.rootMinimized : ""} ${
+        deviceDefaultsReady ? "" : styles.rootDevicePending
+      }`}
       aria-label="Inside one training step controls"
     >
       <nav
@@ -559,7 +604,7 @@ export function TrainingHUD({
           data-approaching={machineRoomCue.approaching}
           data-touring={introTour === "touring"}
         >
-          {introTour !== "touring" ? (
+          {introTour !== "touring" && !usesCoarsePointer ? (
             <span className={styles.scrollMouse} aria-hidden="true">
               <span className={styles.scrollWheel} />
             </span>
@@ -568,14 +613,22 @@ export function TrainingHUD({
             <strong>
               {introTour === "touring"
                 ? machineRoomCue.label
-                : machineRoomCue.approaching
-                  ? "Keep scrolling to move in"
-                  : "Choose a station and scroll to move in"}
+                : usesCoarsePointer
+                  ? machineRoomCue.approaching
+                    ? "Pinch or use + to move in"
+                    : "Tap a station to select it"
+                  : machineRoomCue.approaching
+                    ? "Keep scrolling to move in"
+                    : "Choose a station and scroll to move in"}
             </strong>
             <span>
               {introTour === "touring"
                 ? "One of the machine's 7 stations"
-                : `Enter ${machineRoomCue.label}`}
+                : usesCoarsePointer
+                  ? machineRoomCue.approaching
+                    ? `Enter ${machineRoomCue.label}`
+                    : "Then pinch or use + to zoom in"
+                  : `Enter ${machineRoomCue.label}`}
             </span>
           </span>
         </div>
@@ -585,7 +638,11 @@ export function TrainingHUD({
         <div className={styles.tourCue} role="status" aria-live="polite">
           <span className={styles.machineRoomCueCopy}>
             <strong>Guided tour</strong>
-            <span>Press any key or click to take control at any time</span>
+            <span>
+              {usesCoarsePointer
+                ? "Tap or drag the scene to take control at any time"
+                : "Press any key or click to take control at any time"}
+            </span>
           </span>
         </div>
       ) : null}
@@ -599,8 +656,9 @@ export function TrainingHUD({
           <span className={styles.machineRoomCueCopy}>
             <strong>You have the control now</strong>
             <span>
-              Move around with WASD and the mouse — or aim at one of the 7
-              stations and scroll in to zoom into it
+              {usesCoarsePointer
+                ? "Drag to look, use the movement pad to walk, tap a station to select it, then pinch or use +/- to zoom"
+                : "Move around with WASD and the mouse — or aim at one of the 7 stations and scroll in to zoom into it"}
             </span>
           </span>
         </div>
@@ -609,7 +667,8 @@ export function TrainingHUD({
       {navigationMode === "machine-room" &&
       !movementDiscovered &&
       introTour === null &&
-      !machineRoomCue ? (
+      !machineRoomCue &&
+      !usesCoarsePointer ? (
         <div className={styles.movementCue} role="status" aria-live="polite">
           <span className={styles.movementKeys} aria-label="W A S D keys">
             <kbd>W</kbd>
@@ -628,12 +687,22 @@ export function TrainingHUD({
           aria-live="polite"
           aria-atomic="true"
         >
-          <span className={styles.scrollMouse} aria-hidden="true">
-            <span className={styles.scrollWheel} />
-          </span>
+          {!usesCoarsePointer ? (
+            <span className={styles.scrollMouse} aria-hidden="true">
+              <span className={styles.scrollWheel} />
+            </span>
+          ) : null}
           <span className={styles.machineRoomCueCopy}>
-            <strong>Left-click, then walk with WASD</strong>
-            <span>Esc frees the mouse · M returns to the machine room</span>
+            <strong>
+              {usesCoarsePointer
+                ? "Drag to look · movement pad to walk"
+                : "Left-click, then walk with WASD"}
+            </strong>
+            <span>
+              {usesCoarsePointer
+                ? "Tap exhibits to inspect · pinch or use +/- to zoom · Room returns here"
+                : "Esc frees the mouse · M returns to the machine room"}
+            </span>
           </span>
         </div>
       ) : null}
@@ -648,6 +717,7 @@ export function TrainingHUD({
           type="button"
           className={`${styles.hudToggle} ${styles.interactive}`}
           onClick={() => {
+            hudPreferenceSetRef.current = true;
             setFullCodeOpen(false);
             setHudMinimized((current) => !current);
           }}
@@ -658,6 +728,7 @@ export function TrainingHUD({
           <span className={styles.hudToggleChevron} aria-hidden="true" />
         </button>
 
+        <div className={styles.stationPanelContents}>
         <div className={styles.stationEyebrow}>
           <span className={styles.phaseBadge} data-phase={station.phase}>
             <span className={styles.pulseDot} aria-hidden="true" />
@@ -818,6 +889,7 @@ export function TrainingHUD({
             ) : null}
           </>
         )}
+        </div>
       </section>
 
       {fullCodeVisible ? (
@@ -892,72 +964,103 @@ export function TrainingHUD({
       </aside>
 
       <details className={`${styles.keyHelp} ${styles.interactive}`}>
-        <summary aria-label="Show first-person navigation controls">
+        <summary
+          aria-label={
+            usesCoarsePointer
+              ? "Show touch navigation controls"
+              : "Show first-person navigation controls"
+          }
+        >
           <span className={styles.helpGlyph} aria-hidden="true">
             ?
           </span>
           <span>Controls</span>
         </summary>
         <div className={styles.keySheet}>
-          <p>First-person navigation</p>
-          <dl>
-            <div>
-              <dt>
-                <kbd>W</kbd> / <span className={styles.clickKey}>Click</span>
-              </dt>
-              <dd>Take control · capture mouse</dd>
-            </div>
-            <div>
-              <dt className={styles.mouseKey}>Mouse</dt>
-              <dd>Look around</dd>
-            </div>
-            <div>
-              <dt className={styles.mouseKey}>Wheel</dt>
-              <dd>Move toward / away</dd>
-            </div>
-            <div>
-              <dt>
-                <kbd>W</kbd> <kbd>S</kbd>
-              </dt>
-              <dd>Forward / back</dd>
-            </div>
-            <div>
-              <dt>
-                <kbd>A</kbd> <kbd>D</kbd>
-              </dt>
-              <dd>Strafe left / right</dd>
-            </div>
-            <div>
-              <dt>
-                <kbd>Shift</kbd>
-              </dt>
-              <dd>Sprint</dd>
-            </div>
-            <div>
-              <dt>
-                <kbd>Esc</kbd>
-              </dt>
-              <dd>Free mouse · use the panel</dd>
-            </div>
-            <div>
-              <dt>
-                <kbd>R</kbd>
-              </dt>
-              <dd>Return to overlook</dd>
-            </div>
-            <div>
-              <dt>
-                <kbd>Q</kbd> <kbd>E</kbd>
-              </dt>
-              <dd>Choose a branch</dd>
-            </div>
-            <div>
-              <dt>
-                <kbd>Space</kbd>
-              </dt>
-              <dd>Play / pause</dd>
-            </div>
-          </dl>
+          <p>{usesCoarsePointer ? "Touch navigation" : "First-person navigation"}</p>
+          {usesCoarsePointer ? (
+            <dl>
+              <div>
+                <dt>Drag</dt>
+                <dd>Look around</dd>
+              </div>
+              <div>
+                <dt>Movement pad</dt>
+                <dd>Walk and strafe</dd>
+              </div>
+              <div>
+                <dt>Tap</dt>
+                <dd>Select a station · inspect an exhibit</dd>
+              </div>
+              <div>
+                <dt>Pinch / + / -</dt>
+                <dd>Move and zoom in / out</dd>
+              </div>
+              <div>
+                <dt>Room</dt>
+                <dd>Return to the machine room</dd>
+              </div>
+            </dl>
+          ) : (
+            <dl>
+              <div>
+                <dt>
+                  <kbd>W</kbd> / <span className={styles.clickKey}>Click</span>
+                </dt>
+                <dd>Take control · capture mouse</dd>
+              </div>
+              <div>
+                <dt className={styles.mouseKey}>Mouse</dt>
+                <dd>Look around</dd>
+              </div>
+              <div>
+                <dt className={styles.mouseKey}>Wheel</dt>
+                <dd>Move toward / away</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>W</kbd> <kbd>S</kbd>
+                </dt>
+                <dd>Forward / back</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>A</kbd> <kbd>D</kbd>
+                </dt>
+                <dd>Strafe left / right</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>Shift</kbd>
+                </dt>
+                <dd>Sprint</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>Esc</kbd>
+                </dt>
+                <dd>Free mouse · use the panel</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>R</kbd>
+                </dt>
+                <dd>Return to overlook</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>Q</kbd> <kbd>E</kbd>
+                </dt>
+                <dd>Choose a branch</dd>
+              </div>
+              <div>
+                <dt>
+                  <kbd>Space</kbd>
+                </dt>
+                <dd>Play / pause</dd>
+              </div>
+            </dl>
+          )}
         </div>
       </details>
 

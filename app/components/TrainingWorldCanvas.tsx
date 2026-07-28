@@ -4448,10 +4448,13 @@ const FOCUS_AVATAR_RENDER_ORDER = 8200;
 const FOCUS_LASER_RENDER_ORDER = 8300;
 /** Keep the isolated exhibit close enough for labels and small parts to read. */
 const FOCUS_STAGE_DISTANCE = 2.15;
-/** The replica's longest visible dimension occupies this much viewport height. */
-const FOCUS_STAGE_VIEW_COVERAGE = 0.58;
+/** Fit the selected object to the safe center of the screen, not a loose sphere. */
+const FOCUS_STAGE_VIEW_HEIGHT_COVERAGE = 0.72;
+const FOCUS_STAGE_VIEW_WIDTH_COVERAGE = 0.62;
+/** Lift the exhibit clear of the replay dial and bottom journey controls. */
+const FOCUS_STAGE_VERTICAL_OFFSET = 0.1;
 /** The guide is supporting cast during an explanation, not the focal object. */
-const FOCUS_GUIDE_SCALE = 0.62;
+const FOCUS_GUIDE_SCALE = 0.42;
 const FOCUS_VEIL_DISTANCE = 0.7;
 
 /**
@@ -4871,6 +4874,12 @@ export function TrainingWorldCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fallbackRef = useRef<HTMLDivElement>(null);
   const trainingConsoleLinkRef = useRef<HTMLAnchorElement>(null);
+  const mobileMovePadRef = useRef<HTMLDivElement>(null);
+  const mobileMoveThumbRef = useRef<HTMLSpanElement>(null);
+  const mobileZoomInRef = useRef<HTMLButtonElement>(null);
+  const mobileZoomOutRef = useRef<HTMLButtonElement>(null);
+  const mobileInspectRef = useRef<HTMLButtonElement>(null);
+  const mobileRoomRef = useRef<HTMLButtonElement>(null);
   const [interactionHint, setInteractionHint] = useState<"focus" | null>(
     null,
   );
@@ -4975,6 +4984,12 @@ export function TrainingWorldCanvas({
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return undefined;
+    const mobileMovePad = mobileMovePadRef.current;
+    const mobileMoveThumb = mobileMoveThumbRef.current;
+    const mobileZoomIn = mobileZoomInRef.current;
+    const mobileZoomOut = mobileZoomOutRef.current;
+    const mobileInspect = mobileInspectRef.current;
+    const mobileRoom = mobileRoomRef.current;
 
     let renderer: THREE.WebGLRenderer;
     try {
@@ -5185,6 +5200,7 @@ export function TrainingWorldCanvas({
     const focusSphere = new THREE.Sphere();
     const focusVisibleBounds = new THREE.Box3();
     const focusObjectBounds = new THREE.Box3();
+    const focusBoundsSize = new THREE.Vector3();
     const focusObjectWorldPosition = new THREE.Vector3();
     const focusObjectWorldScale = new THREE.Vector3();
     interface FocusStageBinding {
@@ -5276,6 +5292,11 @@ export function TrainingWorldCanvas({
           z < blocker.maxZ,
       ) ?? false;
     const pressedKeys = new Set<string>();
+    let touchMoveForward = 0;
+    let touchMoveStrafe = 0;
+    let touchZoomIntent = 0;
+    let mobileMovePointer = -1;
+    let mobileZoomPointer = -1;
     let activeStationIndex = THREE.MathUtils.clamp(
       latest.current.stationIndex,
       0,
@@ -5300,6 +5321,20 @@ export function TrainingWorldCanvas({
     let pointerId = -1;
     let lastPointerX = 0;
     let lastPointerY = 0;
+    interface ActiveTouch {
+      clientX: number;
+      clientY: number;
+      startX: number;
+      startY: number;
+      startedAt: number;
+      moved: boolean;
+    }
+    const activeTouches = new Map<number, ActiveTouch>();
+    let touchGestureUsedPinch = false;
+    let lastPinchDistance = 0;
+    const TOUCH_TAP_SLOP_PX = 10;
+    const TOUCH_TAP_MAX_MS = 420;
+    const PINCH_DOLLY_PER_PIXEL = 0.055;
     let targetYaw = machineRoom.bounds.spawnYaw;
     let targetPitch = machineRoom.bounds.spawnPitch;
     let glanceYaw = targetYaw;
@@ -5528,6 +5563,7 @@ export function TrainingWorldCanvas({
      */
     const requestPointerLockIfClear = () => {
       if (
+        !window.matchMedia("(pointer: fine)").matches ||
         reportedTrainingConsoleNearby ||
         document.pointerLockElement === canvas ||
         typeof canvas.requestPointerLock !== "function"
@@ -5915,7 +5951,9 @@ export function TrainingWorldCanvas({
      * make small components collapse into a tiny replica. Measure only pixels
      * that can actually be seen on the isolated stage.
      */
-    const measureVisibleFocusBounds = () => {
+    const measureVisibleFocusBounds = (
+      roots: readonly THREE.Object3D[] = focusStage.children,
+    ) => {
       focusVisibleBounds.makeEmpty();
       focusStage.updateWorldMatrix(true, true);
       const expandVisibleObject = (object: THREE.Object3D) => {
@@ -5974,8 +6012,8 @@ export function TrainingWorldCanvas({
       };
       // The container stays hidden while it is being assembled, so begin at
       // its children and let each staged subtree's own visibility take over.
-      for (const child of focusStage.children) {
-        child.traverseVisible(expandVisibleObject);
+      for (const root of roots) {
+        root.traverseVisible(expandVisibleObject);
       }
       return focusVisibleBounds;
     };
@@ -5992,6 +6030,11 @@ export function TrainingWorldCanvas({
       focusCenter
         .copy(focusCameraWorld)
         .addScaledVector(focusForward, FOCUS_STAGE_DISTANCE);
+      const viewHeight =
+        2 *
+        Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) *
+        FOCUS_STAGE_DISTANCE;
+      focusCenter.y += viewHeight * FOCUS_STAGE_VERTICAL_OFFSET;
       focusStage.position.copy(focusCenter);
       focusPedestal.group.position.copy(focusCenter);
       focusPedestal.group.position.y -= focusRadius * 1.18;
@@ -6014,9 +6057,12 @@ export function TrainingWorldCanvas({
     const buildFocusReplica = (
       sourceRoots: readonly THREE.Object3D[],
       bindToSource: boolean,
+      framingRoots: readonly THREE.Object3D[] = sourceRoots,
     ) => {
       clearFocusReplica();
       const stagedRoots: THREE.Object3D[] = [];
+      const framingRootSet = new Set(framingRoots);
+      const stagedFramingRoots: THREE.Object3D[] = [];
       for (const sourceRoot of sourceRoots) {
         sourceRoot.updateWorldMatrix(true, false);
         const stagedRoot = cloneForStage(
@@ -6032,12 +6078,20 @@ export function TrainingWorldCanvas({
         );
         focusStage.add(stagedRoot);
         stagedRoots.push(stagedRoot);
+        if (framingRootSet.has(sourceRoot)) {
+          stagedFramingRoots.push(stagedRoot);
+        }
       }
       if (stagedRoots.length === 0) return false;
 
-      measureVisibleFocusBounds();
+      // During an interaction replay, size and center the selected component;
+      // partner objects remain staged around it without shrinking the subject.
+      measureVisibleFocusBounds(
+        stagedFramingRoots.length > 0 ? stagedFramingRoots : stagedRoots,
+      );
       if (focusVisibleBounds.isEmpty()) return false;
       focusVisibleBounds.getBoundingSphere(focusSphere);
+      focusVisibleBounds.getSize(focusBoundsSize);
       focusSourceCenter.copy(focusSphere.center);
       for (const stagedRoot of stagedRoots) {
         stagedRoot.position.sub(focusSourceCenter);
@@ -6046,9 +6100,14 @@ export function TrainingWorldCanvas({
       const fovRadians = THREE.MathUtils.degToRad(camera.fov);
       const viewHeight =
         2 * Math.tan(fovRadians / 2) * FOCUS_STAGE_DISTANCE;
+      const viewWidth = viewHeight * camera.aspect;
       const stageScale = THREE.MathUtils.clamp(
-        (viewHeight * FOCUS_STAGE_VIEW_COVERAGE) /
-          Math.max(0.001, focusSphere.radius * 2),
+        Math.min(
+          (viewHeight * FOCUS_STAGE_VIEW_HEIGHT_COVERAGE) /
+            Math.max(0.001, focusBoundsSize.y),
+          (viewWidth * FOCUS_STAGE_VIEW_WIDTH_COVERAGE) /
+            Math.max(0.001, focusBoundsSize.x),
+        ),
         0.02,
         60,
       );
@@ -6245,7 +6304,13 @@ export function TrainingWorldCanvas({
         );
       }
       focusProcessElapsed = 0;
-      if (!buildFocusReplica(focusReplayRoots, true)) {
+      if (
+        !buildFocusReplica(
+          focusReplayRoots,
+          true,
+          focusSelectedRoots,
+        )
+      ) {
         exitFocus();
         return false;
       }
@@ -6847,6 +6912,14 @@ export function TrainingWorldCanvas({
       );
     };
 
+    const queueDolly = (impulse: number) => {
+      pendingDollyDistance = THREE.MathUtils.clamp(
+        pendingDollyDistance + impulse,
+        -18,
+        18,
+      );
+    };
+
     const onWheel = (event: WheelEvent) => {
       if (event.ctrlKey || event.metaKey) return;
       event.preventDefault();
@@ -6864,11 +6937,7 @@ export function TrainingWorldCanvas({
         -7,
         7,
       );
-      pendingDollyDistance = THREE.MathUtils.clamp(
-        pendingDollyDistance + dollyImpulse,
-        -18,
-        18,
-      );
+      queueDolly(dollyImpulse);
     };
 
     const clientToNdc = (
@@ -6889,6 +6958,45 @@ export function TrainingWorldCanvas({
           1,
         ),
       );
+    };
+
+    /**
+     * Direct touch selection in the machine room. The desktop experience
+     * selects by crosshair aim; on a phone, tapping a miniature should make
+     * that choice explicit before a pinch or the + button moves toward it.
+     */
+    const selectMachineUnitAt = (ndc: THREE.Vector2): boolean => {
+      if (navigationRegion.kind !== "machine-room" || roomTransition) {
+        return false;
+      }
+      machineRoom.pickRoot.updateMatrixWorld(true);
+      assistantRaycaster.setFromCamera(ndc, camera);
+      const hits = assistantRaycaster.intersectObject(
+        machineRoom.pickRoot,
+        true,
+      );
+      for (const hit of hits) {
+        let cursor: THREE.Object3D | null = hit.object;
+        while (cursor && cursor !== machineRoom.pickRoot) {
+          const unitIndex = machineRoom.units.findIndex(
+            (unit) => unit.pickGroup === cursor,
+          );
+          if (unitIndex >= 0) {
+            const unit = machineRoom.units[unitIndex];
+            roomHoveredIndex = unitIndex;
+            roomZoomLockIndex = unitIndex;
+            roomZoomLockCooldown = 3;
+            reportMachineRoomCue({
+              unitId: unit.id,
+              label: unit.label,
+              approaching: true,
+            });
+            return true;
+          }
+          cursor = cursor.parent;
+        }
+      }
+      return false;
     };
 
     /**
@@ -6951,6 +7059,30 @@ export function TrainingWorldCanvas({
       return false;
     };
 
+    const currentPinchDistance = () => {
+      const touches = Array.from(activeTouches.values());
+      if (touches.length < 2) return 0;
+      return Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY,
+      );
+    };
+
+    const handleTouchTap = (event: PointerEvent) => {
+      if (tryOpenTrainingScreen(event)) return;
+      clientToNdc(event.clientX, event.clientY, pickNdc);
+      if (navigationRegion.kind === "machine-room") {
+        if (!selectMachineUnitAt(pickNdc)) {
+          roomHoveredIndex = -1;
+          roomZoomLockIndex = -1;
+          roomZoomLockCooldown = 0;
+          reportMachineRoomCue(null);
+        }
+        return;
+      }
+      spotlightUnderPointer(event);
+    };
+
     const onPointerDown = (event: PointerEvent) => {
       if (event.button === 2) {
         event.preventDefault();
@@ -6966,8 +7098,37 @@ export function TrainingWorldCanvas({
       // this works in FPS mode where the captured cursor can't reach the DOM
       // prompt link. Do this before grabbing pointer lock so the first click
       // on the screen navigates instead of only capturing the mouse.
-      if (tryOpenTrainingScreen(event)) {
+      if (event.pointerType !== "touch" && tryOpenTrainingScreen(event)) {
         event.preventDefault();
+        return;
+      }
+      if (event.pointerType === "touch") {
+        event.preventDefault();
+        if (activeTouches.size === 0) touchGestureUsedPinch = false;
+        activeTouches.set(event.pointerId, {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          startX: event.clientX,
+          startY: event.clientY,
+          startedAt: performance.now(),
+          moved: false,
+        });
+        try {
+          canvas.setPointerCapture(event.pointerId);
+        } catch {
+          // A browser may have ended the contact between dispatch and capture.
+        }
+        if (activeTouches.size === 1) {
+          dragging = true;
+          pointerId = event.pointerId;
+          lastPointerX = event.clientX;
+          lastPointerY = event.clientY;
+        } else {
+          touchGestureUsedPinch = true;
+          dragging = false;
+          pointerId = -1;
+          lastPinchDistance = currentPinchDistance();
+        }
         return;
       }
       if (
@@ -6994,6 +7155,46 @@ export function TrainingWorldCanvas({
       canvas.style.cursor = "grabbing";
     };
     const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType === "touch") {
+        const touch = activeTouches.get(event.pointerId);
+        if (!touch) return;
+        event.preventDefault();
+        const previousX = touch.clientX;
+        const previousY = touch.clientY;
+        touch.clientX = event.clientX;
+        touch.clientY = event.clientY;
+        if (
+          Math.hypot(
+            touch.clientX - touch.startX,
+            touch.clientY - touch.startY,
+          ) > TOUCH_TAP_SLOP_PX
+        ) {
+          touch.moved = true;
+        }
+        if (activeTouches.size >= 2) {
+          touchGestureUsedPinch = true;
+          const pinchDistance = currentPinchDistance();
+          if (lastPinchDistance > 0) {
+            queueDolly(
+              THREE.MathUtils.clamp(
+                (pinchDistance - lastPinchDistance) *
+                  PINCH_DOLLY_PER_PIXEL,
+                -2.4,
+                2.4,
+              ),
+            );
+          }
+          lastPinchDistance = pinchDistance;
+          return;
+        }
+        if (dragging && event.pointerId === pointerId) {
+          applyLookDelta(
+            event.clientX - previousX,
+            event.clientY - previousY,
+          );
+        }
+        return;
+      }
       if (!dragging || event.pointerId !== pointerId) return;
       const deltaX = event.clientX - lastPointerX;
       const deltaY = event.clientY - lastPointerY;
@@ -7002,9 +7203,42 @@ export function TrainingWorldCanvas({
       applyLookDelta(deltaX, deltaY);
     };
     const releasePointer = (event: PointerEvent) => {
+      if (event.pointerType === "touch") {
+        const touch = activeTouches.get(event.pointerId);
+        if (!touch) return;
+        const wasTap =
+          event.type === "pointerup" &&
+          activeTouches.size === 1 &&
+          !touchGestureUsedPinch &&
+          !touch.moved &&
+          performance.now() - touch.startedAt <= TOUCH_TAP_MAX_MS;
+        activeTouches.delete(event.pointerId);
+        if (canvas.hasPointerCapture(event.pointerId)) {
+          canvas.releasePointerCapture(event.pointerId);
+        }
+        if (activeTouches.size === 1) {
+          const [remainingId, remaining] = Array.from(
+            activeTouches.entries(),
+          )[0];
+          dragging = true;
+          pointerId = remainingId;
+          lastPointerX = remaining.clientX;
+          lastPointerY = remaining.clientY;
+          lastPinchDistance = 0;
+        } else if (activeTouches.size === 0) {
+          dragging = false;
+          pointerId = -1;
+          lastPinchDistance = 0;
+          touchGestureUsedPinch = false;
+        }
+        if (wasTap) handleTouchTap(event);
+        return;
+      }
       if (event.pointerId !== pointerId) return;
       dragging = false;
-      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
       pointerId = -1;
       canvas.style.cursor = "crosshair";
     };
@@ -7020,9 +7254,25 @@ export function TrainingWorldCanvas({
       canvas.style.cursor = locked ? "none" : "crosshair";
       if (locked) dragging = false;
     };
+    const resetTouchInput = () => {
+      touchMoveForward = 0;
+      touchMoveStrafe = 0;
+      touchZoomIntent = 0;
+      mobileMovePointer = -1;
+      mobileZoomPointer = -1;
+      activeTouches.clear();
+      touchGestureUsedPinch = false;
+      lastPinchDistance = 0;
+      dragging = false;
+      pointerId = -1;
+      mobileMovePad?.style.setProperty("--move-x", "0px");
+      mobileMovePad?.style.setProperty("--move-y", "0px");
+      mobileMoveThumb?.removeAttribute("data-active");
+    };
     const clearPressedKeys = () => {
       pressedKeys.clear();
       pendingDollyDistance = 0;
+      resetTouchInput();
     };
     const isTextEntryTarget = (target: EventTarget | null) => {
       const element = target instanceof HTMLElement ? target : null;
@@ -7107,6 +7357,132 @@ export function TrainingWorldCanvas({
     const onVisibilityChange = () => {
       if (document.hidden) clearPressedKeys();
     };
+
+    const takeTouchControl = () => {
+      cancelIntro();
+      cancelGalleryTour();
+      beginManualControl();
+    };
+
+    const updateMobileMove = (event: PointerEvent) => {
+      if (!mobileMovePad || event.pointerId !== mobileMovePointer) return;
+      const rect = mobileMovePad.getBoundingClientRect();
+      const radius = Math.max(1, Math.min(rect.width, rect.height) / 2 - 20);
+      const rawX = THREE.MathUtils.clamp(
+        (event.clientX - (rect.left + rect.width / 2)) / radius,
+        -1,
+        1,
+      );
+      const rawY = THREE.MathUtils.clamp(
+        (event.clientY - (rect.top + rect.height / 2)) / radius,
+        -1,
+        1,
+      );
+      const rawMagnitude = Math.min(1, Math.hypot(rawX, rawY));
+      const scaledMagnitude =
+        rawMagnitude <= 0.14 ? 0 : (rawMagnitude - 0.14) / 0.86;
+      const scale =
+        rawMagnitude > 0 ? scaledMagnitude / rawMagnitude : 0;
+      touchMoveStrafe = rawX * scale;
+      touchMoveForward = -rawY * scale;
+      mobileMovePad.style.setProperty(
+        "--move-x",
+        `${touchMoveStrafe * 28}px`,
+      );
+      mobileMovePad.style.setProperty(
+        "--move-y",
+        `${-touchMoveForward * 28}px`,
+      );
+      mobileMoveThumb?.toggleAttribute(
+        "data-active",
+        scaledMagnitude > 0,
+      );
+    };
+
+    const onMobileMoveDown = (event: PointerEvent) => {
+      if (!mobileMovePad || mobileMovePointer >= 0) return;
+      event.preventDefault();
+      takeTouchControl();
+      mobileMovePointer = event.pointerId;
+      try {
+        mobileMovePad.setPointerCapture(event.pointerId);
+      } catch {
+        // The contact can end before capture on older mobile browsers.
+      }
+      updateMobileMove(event);
+    };
+    const onMobileMove = (event: PointerEvent) => {
+      if (event.pointerId !== mobileMovePointer) return;
+      event.preventDefault();
+      updateMobileMove(event);
+    };
+    const releaseMobileMove = (event: PointerEvent) => {
+      if (!mobileMovePad || event.pointerId !== mobileMovePointer) return;
+      const releasedPointer = mobileMovePointer;
+      mobileMovePointer = -1;
+      touchMoveForward = 0;
+      touchMoveStrafe = 0;
+      mobileMovePad.style.setProperty("--move-x", "0px");
+      mobileMovePad.style.setProperty("--move-y", "0px");
+      mobileMoveThumb?.removeAttribute("data-active");
+      if (mobileMovePad.hasPointerCapture(releasedPointer)) {
+        mobileMovePad.releasePointerCapture(releasedPointer);
+      }
+    };
+
+    const beginMobileZoom = (
+      event: PointerEvent,
+      direction: -1 | 1,
+    ) => {
+      if (mobileZoomPointer >= 0) return;
+      event.preventDefault();
+      takeTouchControl();
+      mobileZoomPointer = event.pointerId;
+      touchZoomIntent = direction;
+      queueDolly(direction * 0.9);
+      try {
+        if (event.currentTarget instanceof Element) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }
+      } catch {
+        // Capture is a convenience; pointerup still clears the intent.
+      }
+    };
+    const onMobileZoomInDown = (event: PointerEvent) =>
+      beginMobileZoom(event, 1);
+    const onMobileZoomOutDown = (event: PointerEvent) =>
+      beginMobileZoom(event, -1);
+    const releaseMobileZoom = (event: PointerEvent) => {
+      if (event.pointerId !== mobileZoomPointer) return;
+      const target =
+        event.currentTarget instanceof Element ? event.currentTarget : null;
+      mobileZoomPointer = -1;
+      touchZoomIntent = 0;
+      if (target?.hasPointerCapture(event.pointerId)) {
+        target.releasePointerCapture(event.pointerId);
+      }
+    };
+
+    const inspectCenteredTarget = () => {
+      takeTouchControl();
+      pickNdc.set(0, 0);
+      if (navigationRegion.kind === "machine-room") {
+        selectMachineUnitAt(pickNdc);
+        return;
+      }
+      const pick = pickAssistantTarget(lastRenderedStation, pickNdc);
+      if (pick) {
+        flashLaser(pick.hitPoint, true);
+        enterFocus(lastRenderedStation, pick);
+      } else {
+        exitFocus();
+      }
+    };
+    const returnToMachineRoom = () => {
+      takeTouchControl();
+      beginReturnToRoom();
+    };
+
     canvas.style.cursor = "crosshair";
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
@@ -7120,6 +7496,18 @@ export function TrainingWorldCanvas({
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", clearPressedKeys);
+    mobileMovePad?.addEventListener("pointerdown", onMobileMoveDown);
+    mobileMovePad?.addEventListener("pointermove", onMobileMove);
+    mobileMovePad?.addEventListener("pointerup", releaseMobileMove);
+    mobileMovePad?.addEventListener("pointercancel", releaseMobileMove);
+    mobileZoomIn?.addEventListener("pointerdown", onMobileZoomInDown);
+    mobileZoomOut?.addEventListener("pointerdown", onMobileZoomOutDown);
+    mobileZoomIn?.addEventListener("pointerup", releaseMobileZoom);
+    mobileZoomOut?.addEventListener("pointerup", releaseMobileZoom);
+    mobileZoomIn?.addEventListener("pointercancel", releaseMobileZoom);
+    mobileZoomOut?.addEventListener("pointercancel", releaseMobileZoom);
+    mobileInspect?.addEventListener("click", inspectCenteredTarget);
+    mobileRoom?.addEventListener("click", returnToMachineRoom);
 
     /* ---------------------------------------------------------------- *
      * Demo-director API: a thin imperative surface over the existing
@@ -7313,6 +7701,9 @@ export function TrainingWorldCanvas({
       const delta = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
       elapsed += delta;
+      if (touchZoomIntent !== 0) {
+        queueDolly(touchZoomIntent * 9 * delta);
+      }
       const state = latest.current;
       const targetProgress = THREE.MathUtils.clamp(state.progress, 0, 1);
 
@@ -7737,21 +8128,34 @@ export function TrainingWorldCanvas({
 
         const movementStartX = roomPlayerPosition.x;
         const movementStartZ = roomPlayerPosition.z;
-        const forwardIntent =
+        const forwardIntent = THREE.MathUtils.clamp(
           (pressedKeys.has("KeyW") ? 1 : 0) -
-          (pressedKeys.has("KeyS") ? 1 : 0);
-        const strafeIntent =
+            (pressedKeys.has("KeyS") ? 1 : 0) +
+            touchMoveForward,
+          -1,
+          1,
+        );
+        const strafeIntent = THREE.MathUtils.clamp(
           (pressedKeys.has("KeyD") ? 1 : 0) -
-          (pressedKeys.has("KeyA") ? 1 : 0);
+            (pressedKeys.has("KeyA") ? 1 : 0) +
+            touchMoveStrafe,
+          -1,
+          1,
+        );
         if (forwardIntent !== 0 || strafeIntent !== 0) {
           verticalRoamEnabled = false;
+          const movementMagnitude = Math.min(
+            1,
+            Math.hypot(forwardIntent, strafeIntent),
+          );
           localForward.set(-Math.sin(glanceYaw), 0, -Math.cos(glanceYaw));
           localRight.set(Math.cos(glanceYaw), 0, -Math.sin(glanceYaw));
           localMove
             .copy(localForward)
             .multiplyScalar(forwardIntent)
             .addScaledVector(localRight, strafeIntent)
-            .normalize();
+            .normalize()
+            .multiplyScalar(movementMagnitude);
           const sprinting =
             pressedKeys.has("ShiftLeft") || pressedKeys.has("ShiftRight");
           const walkSpeed = sprinting ? 7.4 : 4.4;
@@ -8045,24 +8449,37 @@ export function TrainingWorldCanvas({
             }
           }
 
-          const forwardIntent =
+          const forwardIntent = THREE.MathUtils.clamp(
             (pressedKeys.has("KeyW") ? 1 : 0) -
-            (pressedKeys.has("KeyS") ? 1 : 0);
-          const strafeIntent =
+              (pressedKeys.has("KeyS") ? 1 : 0) +
+              touchMoveForward,
+            -1,
+            1,
+          );
+          const strafeIntent = THREE.MathUtils.clamp(
             (pressedKeys.has("KeyD") ? 1 : 0) -
-            (pressedKeys.has("KeyA") ? 1 : 0);
+              (pressedKeys.has("KeyA") ? 1 : 0) +
+              touchMoveStrafe,
+            -1,
+            1,
+          );
 
           if (
             navigationRegion.kind === "chamber" &&
             (forwardIntent !== 0 || strafeIntent !== 0)
           ) {
+            const movementMagnitude = Math.min(
+              1,
+              Math.hypot(forwardIntent, strafeIntent),
+            );
             localForward.set(-Math.sin(glanceYaw), 0, -Math.cos(glanceYaw));
             localRight.set(Math.cos(glanceYaw), 0, -Math.sin(glanceYaw));
             localMove
               .copy(localForward)
               .multiplyScalar(forwardIntent)
               .addScaledVector(localRight, strafeIntent)
-              .normalize();
+              .normalize()
+              .multiplyScalar(movementMagnitude);
             const sprinting =
               pressedKeys.has("ShiftLeft") || pressedKeys.has("ShiftRight");
             const movementSpeed = sprinting ? 22.5 : 12.75;
@@ -8102,9 +8519,13 @@ export function TrainingWorldCanvas({
           const travelDirection = Math.sign(
             tunnel.endProgress - tunnel.startProgress,
           );
-          const tunnelIntent =
+          const tunnelIntent = THREE.MathUtils.clamp(
             (pressedKeys.has("KeyW") ? 1 : 0) -
-            (pressedKeys.has("KeyS") ? 1 : 0);
+              (pressedKeys.has("KeyS") ? 1 : 0) +
+              touchMoveForward,
+            -1,
+            1,
+          );
           const sprinting =
             pressedKeys.has("ShiftLeft") || pressedKeys.has("ShiftRight");
           const tunnelSpeed = sprinting ? 39 : 24;
@@ -8540,6 +8961,22 @@ export function TrainingWorldCanvas({
 
         const selectedTargetId =
           state.assistantTargetId ?? reportedAssistantTargetId;
+        if (hasAssistantTargetWorld && focusActive && focusTravelPending) {
+          // Establish the spotlight pose before listening/speaking changes the
+          // animation state. Those states keep these placement values, so the
+          // guide cannot fall back to its near-camera default and loom.
+          focusTravelPending = false;
+          lastAssistantTravelTargetId = focusTargetId;
+          assistantController.travelTo(assistantTargetWorld, {
+            arriveAs: "present",
+            presentationDistance: Math.max(0.16, focusRadius * 0.12),
+            presentationSideOffset: Math.max(
+              0.9,
+              focusRadius * 0.9 + 0.38,
+            ),
+            presentationHeight: 0.12,
+          });
+        }
         if (!hasAssistantTargetWorld) {
           assistantController.follow();
           lastAssistantTravelTargetId = null;
@@ -8549,22 +8986,6 @@ export function TrainingWorldCanvas({
           assistantController.pointAt(assistantTargetWorld);
         } else if (state.assistantStatus === "speaking") {
           assistantController.speak(assistantTargetWorld);
-        } else if (focusActive && focusTravelPending) {
-          // Fly to the spotlighted replica and hover beside it, offset by
-          // its magnified size so the guide never overlaps the exhibit.
-          focusTravelPending = false;
-          lastAssistantTravelTargetId = focusTargetId;
-          assistantController.travelTo(assistantTargetWorld, {
-            arriveAs: "present",
-            // Keep the guide at the exhibit's depth instead of pulling it
-            // toward the lens, where perspective made it fill the screen.
-            presentationDistance: Math.max(0.16, focusRadius * 0.16),
-            presentationSideOffset: Math.max(
-              0.82,
-              focusRadius * 1.05 + 0.42,
-            ),
-            presentationHeight: 0.12,
-          });
         } else if (state.assistantStatus === "ready") {
           if (!focusActive && selectedTargetId !== lastAssistantTravelTargetId) {
             assistantController.travelTo(assistantTargetWorld, {
@@ -8662,6 +9083,19 @@ export function TrainingWorldCanvas({
       canvas.removeEventListener("pointercancel", releasePointer);
       canvas.removeEventListener("contextmenu", onContextMenu);
       canvas.removeEventListener("wheel", onWheel);
+      mobileMovePad?.removeEventListener("pointerdown", onMobileMoveDown);
+      mobileMovePad?.removeEventListener("pointermove", onMobileMove);
+      mobileMovePad?.removeEventListener("pointerup", releaseMobileMove);
+      mobileMovePad?.removeEventListener("pointercancel", releaseMobileMove);
+      mobileZoomIn?.removeEventListener("pointerdown", onMobileZoomInDown);
+      mobileZoomOut?.removeEventListener("pointerdown", onMobileZoomOutDown);
+      mobileZoomIn?.removeEventListener("pointerup", releaseMobileZoom);
+      mobileZoomOut?.removeEventListener("pointerup", releaseMobileZoom);
+      mobileZoomIn?.removeEventListener("pointercancel", releaseMobileZoom);
+      mobileZoomOut?.removeEventListener("pointercancel", releaseMobileZoom);
+      mobileInspect?.removeEventListener("click", inspectCenteredTarget);
+      mobileRoom?.removeEventListener("click", returnToMachineRoom);
+      resetTouchInput();
       if (document.pointerLockElement === canvas) document.exitPointerLock();
       assistantController.dispose();
       disposeScene(scene);
@@ -8694,7 +9128,7 @@ export function TrainingWorldCanvas({
         ref={canvasRef}
         role="application"
         tabIndex={0}
-        aria-label="First-person 3D training world. You begin in a room with the training machine on a pedestal and a custom-training console angled into a corner. Aim at its screen and click (or walk up and press E) to open the Train your own LLM panel, or aim at one of the machine chambers and scroll toward it to step inside. Press M at any time to return to the room. Click to capture the mouse, look with the mouse, move with W A S D, move toward or away along the current view with the mouse wheel, sprint with Shift, hold V to ask the voice guide about the centered target, right-click a component under the pointer or the center crosshair to spotlight it center stage and start the guide listening for your question, right-click empty space or press Escape to release the spotlight, and return to the chamber overlook with R."
+        aria-label="First-person 3D training world. On touch screens, drag the scene to look, drag the movement pad to walk, pinch or hold the plus and minus buttons to move toward or away, tap an object to inspect it, and use Room to return to the machine. With a mouse and keyboard, click to capture the mouse, look with the mouse, move with W A S D, use the wheel to move toward or away, press M to return to the room, and right-click a component to spotlight it."
         style={{
           display: "block",
           width: "100%",
@@ -8703,6 +9137,76 @@ export function TrainingWorldCanvas({
           outline: "none",
         }}
       />
+      <div
+        className={styles.mobileControls}
+        aria-label="Touch navigation controls"
+      >
+        <div
+          ref={mobileMovePadRef}
+          className={styles.mobileMovePad}
+          role="group"
+          aria-label="Movement pad. Drag to walk forward, backward, or sideways."
+        >
+          <span className={styles.mobileMoveArrows} aria-hidden="true">
+            <span>^</span>
+            <span>&lt;</span>
+            <span>&gt;</span>
+            <span>v</span>
+          </span>
+          <span
+            ref={mobileMoveThumbRef}
+            className={styles.mobileMoveThumb}
+            aria-hidden="true"
+          >
+            MOVE
+          </span>
+        </div>
+
+        <div
+          className={styles.mobileActionRail}
+          role="group"
+          aria-label="Zoom and object controls"
+        >
+          <button
+            ref={mobileZoomInRef}
+            className={styles.mobileActionButton}
+            type="button"
+            aria-label="Move or zoom in. Hold for continuous movement."
+          >
+            <span aria-hidden="true">+</span>
+          </button>
+          <button
+            ref={mobileInspectRef}
+            className={`${styles.mobileActionButton} ${styles.mobileInspectButton}`}
+            type="button"
+            aria-label="Inspect the object in the center of the view"
+          >
+            <span aria-hidden="true">O</span>
+            <small>Inspect</small>
+          </button>
+          <button
+            ref={mobileZoomOutRef}
+            className={styles.mobileActionButton}
+            type="button"
+            aria-label="Move or zoom out. Hold for continuous movement."
+          >
+            <span aria-hidden="true">-</span>
+          </button>
+          <button
+            ref={mobileRoomRef}
+            className={`${styles.mobileActionButton} ${styles.mobileRoomButton}`}
+            type="button"
+            aria-label="Return to the machine room"
+          >
+            <span aria-hidden="true">M</span>
+            <small>Room</small>
+          </button>
+        </div>
+
+        <p className={styles.mobileTouchHint} role="status">
+          Drag to look / pinch to zoom / tap to inspect
+        </p>
+      </div>
       {/* Persistent hidden link so the screen-click and E shortcut can navigate
           regardless of whether the proximity prompt is currently shown. */}
       <Link

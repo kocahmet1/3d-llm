@@ -666,6 +666,59 @@ test("semantic process lines stay lightweight while navigation avoids a visible 
   assert.match(hud, /styles\.rootMinimized/);
 });
 
+test("the mobile view starts compact and exposes first-class touch navigation", async () => {
+  const [
+    canvas,
+    canvasStyles,
+    hud,
+    hudStyles,
+    assistantStyles,
+    experienceStyles,
+    layout,
+  ] = await Promise.all([
+    readSource("app/components/TrainingWorldCanvas.tsx"),
+    readSource("app/components/TrainingWorldCanvas.module.css"),
+    readSource("app/components/TrainingHUD.tsx"),
+    readSource("app/components/TrainingHUD.module.css"),
+    readSource("app/components/assistant/AssistantDock.module.css"),
+    readSource("app/components/TrainingExperience.module.css"),
+    readSource("app/layout.tsx"),
+  ]);
+
+  assert.match(hud, /matchMedia\(\s*["']\(max-width:\s*720px\)["']\s*\)/);
+  assert.match(hud, /matchMedia\(\s*["']\(pointer:\s*coarse\)["']\s*\)/);
+  assert.match(
+    hud,
+    /setHudMinimized\(\s*compactViewport\.matches\s*\|\|\s*coarsePointer\.matches\s*\)/,
+  );
+  assert.match(hud, /deviceDefaultsReady/);
+  assert.match(hudStyles, /\.rootDevicePending/);
+  assert.match(hudStyles, /overflow-y:\s*auto/);
+
+  assert.match(canvas, /new Map<number,\s*ActiveTouch>\(\)/);
+  assert.match(canvas, /PINCH_DOLLY_PER_PIXEL/);
+  assert.match(canvas, /queueDolly\(/);
+  assert.match(canvas, /selectMachineUnitAt/);
+  assert.match(canvas, /handleTouchTap/);
+  assert.match(canvas, /touchMoveForward/);
+  assert.match(canvas, /touchMoveStrafe/);
+  assert.match(canvas, /mobileMovePadRef/);
+  assert.match(canvas, /Move or zoom in\. Hold for continuous movement\./);
+  assert.match(canvas, /Inspect the object in the center of the view/);
+  assert.match(canvas, /Return to the machine room/);
+  assert.match(
+    canvasStyles,
+    /@media\s*\(max-width:\s*720px\),\s*\(pointer:\s*coarse\)/,
+  );
+  assert.match(canvasStyles, /\.mobileMovePad/);
+  assert.match(canvasStyles, /\.mobileActionRail/);
+
+  assert.match(assistantStyles, /\.dockCollapsed\s+\.enableButton/);
+  assert.match(experienceStyles, /height:\s*100dvh/);
+  assert.match(experienceStyles, /min-height:\s*0/);
+  assert.match(layout, /viewportFit:\s*["']cover["']/);
+});
+
 test("the opening room starts walkable and teaches movement before contextual zoom", async () => {
   const [machineRoom, canvas, experience, hud, hudStyles, worldTypes] =
     await Promise.all([

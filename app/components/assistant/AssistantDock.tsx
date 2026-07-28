@@ -182,6 +182,8 @@ export function AssistantDock({
           className={styles.enableButton}
           type="button"
           onClick={() => setShowKeyEntry(true)}
+          aria-label="Meet your guide"
+          title="Meet your guide"
         >
           <span className={styles.guideGem} aria-hidden="true" />
           <span>

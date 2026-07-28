@@ -211,6 +211,10 @@
     background 180ms ease;
 }
 
+.stationPanelContents {
+  min-width: 0;
+}
+
 .hudToggle {
   position: absolute;
   top: 15px;
@@ -3065,6 +3069,130 @@
 
   .processDock {
     bottom: 116px;
+  }
+}
+
+@media (max-width: 720px), (pointer: coarse) and (max-width: 1020px) {
+  .rootDevicePending::before {
+    opacity: 0;
+  }
+
+  .rootDevicePending .phaseRail,
+  .rootDevicePending .legend,
+  .rootDevicePending .keyHelp,
+  .rootDevicePending .machineRoomCue,
+  .rootDevicePending .chamberEntryCue,
+  .rootDevicePending .movementCue,
+  .rootDevicePending .tourCue,
+  .rootDevicePending .navigationStatus,
+  .rootDevicePending .branchLayer,
+  .rootDevicePending .processDock,
+  .rootDevicePending .transport {
+    display: none;
+  }
+
+  .rootMinimized .stationPanel,
+  .rootDevicePending .stationPanel {
+    top: max(8px, env(safe-area-inset-top));
+    left: max(8px, env(safe-area-inset-left));
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+  }
+
+  .rootDevicePending .stationPanel > :not(.hudToggle) {
+    display: none;
+  }
+
+  .rootMinimized .hudToggle,
+  .rootDevicePending .hudToggle {
+    top: 6px;
+    right: 6px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .rootDevicePending .hudToggleChevron {
+    transform: rotate(135deg);
+  }
+
+  .root:not(.rootMinimized):not(.rootDevicePending) .stationPanel {
+    top: calc(max(8px, env(safe-area-inset-top)) + 49px);
+    right: max(8px, env(safe-area-inset-right));
+    left: max(8px, env(safe-area-inset-left));
+    display: block;
+    width: auto;
+    max-height: min(
+      64svh,
+      calc(
+        100svh - 190px - env(safe-area-inset-top) -
+          env(safe-area-inset-bottom)
+      )
+    );
+    padding: 0;
+    overflow: hidden;
+    border-radius: 18px;
+    background:
+      linear-gradient(140deg, rgba(14, 39, 38, 0.42), transparent 38%),
+      rgba(3, 15, 16, 0.94);
+    box-shadow:
+      0 28px 80px rgba(0, 0, 0, 0.48),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    pointer-events: auto;
+  }
+
+  @supports (height: 100dvh) {
+    .root:not(.rootMinimized):not(.rootDevicePending) .stationPanel {
+      max-height: min(
+        64dvh,
+        calc(
+          100dvh - 190px - env(safe-area-inset-top) -
+            env(safe-area-inset-bottom)
+        )
+      );
+    }
+  }
+
+  .root:not(.rootMinimized):not(.rootDevicePending) .stationPanelContents {
+    max-height: inherit;
+    padding: 13px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: rgba(121, 248, 207, 0.35) transparent;
+    scrollbar-width: thin;
+    touch-action: pan-y;
+  }
+
+  .root:not(.rootMinimized):not(.rootDevicePending) .hudToggle {
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    width: 36px;
+    height: 36px;
+    background: rgba(3, 15, 16, 0.9);
+  }
+
+  .root:not(.rootMinimized):not(.rootDevicePending) .stationEyebrow {
+    padding-right: 42px;
+  }
+
+  .root:not(.rootMinimized):not(.rootDevicePending) .legend,
+  .root:not(.rootMinimized):not(.rootDevicePending) .keyHelp,
+  .root:not(.rootMinimized):not(.rootDevicePending) .machineRoomCue,
+  .root:not(.rootMinimized):not(.rootDevicePending) .chamberEntryCue,
+  .root:not(.rootMinimized):not(.rootDevicePending) .movementCue,
+  .root:not(.rootMinimized):not(.rootDevicePending) .tourCue,
+  .root:not(.rootMinimized):not(.rootDevicePending) .navigationStatus,
+  .root:not(.rootMinimized):not(.rootDevicePending) .branchLayer,
+  .root:not(.rootMinimized):not(.rootDevicePending) .processDock,
+  .root:not(.rootMinimized):not(.rootDevicePending) .transport {
+    display: none;
+  }
+
+  .keySheet dl div {
+    grid-template-columns: minmax(74px, auto) 1fr;
+    gap: 8px;
   }
 }
 
