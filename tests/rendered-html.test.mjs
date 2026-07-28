@@ -831,11 +831,15 @@ test("the data-preparation chamber is a readable open observation arena", async 
   assert.match(canvas, /maxY:\s*arenaTopY\s*-\s*1/);
   assert.match(
     canvas,
-    /arenaCenterZ\s*\+\s*arenaSize\.y\s*\*\s*0\.35/,
+    /const\s+spawnZ\s*=\s*chamberEntranceZ\(entranceZ\)/,
   );
   assert.match(canvas, /portalMinY:\s*-4\.15/);
   assert.match(canvas, /portalMaxY:\s*3\.95/);
-  assert.match(canvas, /guidedViewDistance:\s*38/);
+  assert.match(canvas, /guidedViewDistance:\s*spawnZ/);
+  assert.match(
+    canvas,
+    /cameraProgress\s*-\s*guidedViewDistance\s*\/\s*routeLength/,
+  );
   assert.match(canvas, /arenaOutlineAt\(floorY\s*\+\s*arenaHeight\s*\*\s*level\)/);
   assert.match(corpusBuilder, /navigationBounds\.blockers/);
   assert.match(corpusBuilder, /const\s+maxY\s*=\s*8\.5/);
@@ -884,6 +888,7 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     learning,
     shared,
     orientation,
+    navigation,
   ] = await Promise.all([
     loadTrainingTrace(),
     readSource("app/components/TrainingWorldCanvas.tsx"),
@@ -893,6 +898,7 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     readSource("app/components/chambers/learningProcesses.ts"),
     readSource("app/components/chambers/processShared.ts"),
     readSource("app/components/chambers/orientationGallery.ts"),
+    readSource("app/lib/chamberNavigation.ts"),
   ]);
 
   const caseIds = (source) =>
@@ -1000,9 +1006,17 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     new Set(expectedIds),
     "every non-Corpus process must have a spacious shell specification",
   );
-  const shellDimensions = [...shellSpecs.matchAll(
-    /size:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]/g,
-  )].map((match) => match.slice(1).map(Number));
+  const volumeRecords = [...shellSpecs.matchAll(
+    /"([^"]+)":\s*\{(?:\s|\/\/[^\r\n]*(?:\r?\n))*size:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\]/g,
+  )].map((match) => ({
+    id: match[1],
+    width: Number(match[2]),
+    height: Number(match[3]),
+    depth: Number(match[4]),
+  }));
+  const shellDimensions = volumeRecords.map(
+    ({ width, height, depth }) => [width, height, depth],
+  );
   assert.equal(shellDimensions.length, expectedIds.length);
   assert.ok(
     shellDimensions.every(([width, height, depth]) =>
@@ -1018,21 +1032,34 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
   );
   assert.equal(countMatches(shellSpecs, /exhibitScale:/g), expectedIds.length);
   assert.equal(countMatches(shellSpecs, /guidedView:/g), expectedIds.length);
-  const volumeRecords = [...shellSpecs.matchAll(
-    /"([^"]+)":\s*\{(?:\s|\/\/[^\r\n]*(?:\r?\n))*size:\s*\[\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\][\s\S]*?guidedView:\s*\{\s*distance:\s*(\d+(?:\.\d+)?)/g,
-  )].map((match) => ({
-    id: match[1],
-    width: Number(match[2]),
-    height: Number(match[3]),
-    depth: Number(match[4]),
-    cameraDistance: Number(match[5]),
-  }));
+  assert.doesNotMatch(
+    shellSpecs,
+    /\bdistance\s*:/,
+    "chamber depth, not hand-tuned station data, should own the entry distance",
+  );
   assert.equal(volumeRecords.length, expectedIds.length);
+  const entryClearanceMatch =
+    /CHAMBER_ENTRY_CLEARANCE\s*=\s*(\d+(?:\.\d+)?)/.exec(navigation);
+  assert.ok(entryClearanceMatch, "the shared chamber entry clearance should be reviewable");
+  const entryClearance = Number(entryClearanceMatch[1]);
   assert.ok(
-    volumeRecords.every(({ depth, cameraDistance }) =>
-      cameraDistance <= depth / 2 - 2
-    ),
-    "each guided camera must sit at least two world units inside its chamber",
+    entryClearance >= 1 && entryClearance <= 2,
+    `entry should stay close to the tunnel threshold; received ${entryClearance}`,
+  );
+  assert.match(
+    navigation,
+    /return\s+maxZ\s*-\s*CHAMBER_ENTRY_CLEARANCE/,
+  );
+  assert.match(canvas, /const\s+entranceZ\s*=\s*chamberEntranceZ\(maxZ\)/);
+  assert.match(
+    canvas,
+    /spawn:\s*new\s+THREE\.Vector3\(\s*position\.x,\s*restEyeY,\s*entranceZ,\s*\)/,
+  );
+  assert.match(canvas, /guidedViewDistance:\s*entranceZ/);
+  assert.match(
+    canvas,
+    /const\s+guidedViewDistance\s*=\s*THREE\.MathUtils\.lerp\(/,
+    "guided travel should blend different chamber depths without a camera jump",
   );
   const volumeById = new Map(volumeRecords.map((record) => [record.id, record]));
   const minimumCorridorGap = TRAINING_STATIONS.slice(0, -1).reduce(
@@ -1323,7 +1350,7 @@ test("the spatial world uses isolated chambers, corridors, and one restrained be
   assert.match(canvas, /const\s+ceilingY\s*=\s*floorY\s*\+\s*chamberHeight/);
   assert.match(canvas, /const\s+verticalSpan\s*=\s*chamberHeight/);
   assert.match(canvas, /maxY:\s*ceilingY\s*-\s*1/);
-  assert.match(canvas, /const\s+spawnInset\s*=\s*Math\.max\(8,\s*depth\s*\*\s*0\.16\)/);
+  assert.match(canvas, /const\s+entranceZ\s*=\s*chamberEntranceZ\(maxZ\)/);
   assert.match(canvas, /function\s+getSurfaceReliefTexture\s*\(/);
   assert.match(canvas, /normalMap:\s*getSurfaceReliefTexture\("wall"\)/);
   assert.match(canvas, /normalMap:\s*getSurfaceReliefTexture\("floor"\)/);
@@ -1333,7 +1360,7 @@ test("the spatial world uses isolated chambers, corridors, and one restrained be
   assert.match(canvas, /new\s+THREE\.SpotLight\("#e9f1fb",\s*180,\s*68,\s*0\.72/);
   assert.match(canvas, /portalMinY:\s*doorBottom\s*\+\s*0\.55/);
   assert.match(canvas, /portalMaxY:\s*doorTop\s*-\s*0\.55/);
-  assert.match(canvas, /guidedView\.guidedViewDistance\s*\/\s*routeLength/);
+  assert.match(canvas, /guidedViewDistance\s*\/\s*routeLength/);
   assert.match(canvas, /lookProgress\s*=\s*THREE\.MathUtils\.clamp\(cameraProgress,\s*0,\s*1\)/);
   assert.match(canvas, /lookPoint\.addScaledVector\(up,\s*guidedView\.guidedFocusY\)/);
   assert.match(canvas, /const\s+corridorHeight\s*=\s*9\.4/);

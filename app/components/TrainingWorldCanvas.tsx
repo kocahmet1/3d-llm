@@ -32,6 +32,10 @@ import {
   isVisibleThroughAncestor,
   type FocusVisibilityLease,
 } from "../lib/focusVisibility";
+import {
+  chamberEntranceZ,
+  chamberExitZ,
+} from "../lib/chamberNavigation";
 import type {
   BranchSide,
   ComponentSpotlightPhase,
@@ -754,7 +758,6 @@ function addShell(
   position = new THREE.Vector3(),
   rotation = new THREE.Euler(),
   guidedView = {
-    distance: DEFAULT_GUIDED_VIEW_DISTANCE,
     focusY: 2.2,
     fov: 58,
   },
@@ -1144,7 +1147,9 @@ function addShell(
   }
 
   context.group.add(chamber);
-  const spawnInset = Math.max(8, depth * 0.16);
+  const minZ = position.z - depth / 2 + 0.65;
+  const maxZ = position.z + depth / 2 - 0.65;
+  const entranceZ = chamberEntranceZ(maxZ);
   // Rest the eye at the guided tour's viewing height so free-roam frames the
   // exhibits head-on, level with their vertical centre, rather than looking up
   // from the deck. Vertical roam (scroll) still lets the visitor drop to the
@@ -1155,13 +1160,13 @@ function addShell(
     maxX: position.x + width / 2 - 0.85,
     minY: navigationDeckY + 0.75,
     maxY: ceilingY - 1,
-    minZ: position.z - depth / 2 + 0.65,
-    maxZ: position.z + depth / 2 - 0.65,
+    minZ,
+    maxZ,
     walkY: restEyeY,
     spawn: new THREE.Vector3(
       position.x,
       restEyeY,
-      position.z + depth / 2 - spawnInset,
+      entranceZ,
     ),
     portalCenterX: position.x,
     portalHalfWidth: Math.min(
@@ -1170,7 +1175,7 @@ function addShell(
     ),
     portalMinY: doorBottom + 0.55,
     portalMaxY: doorTop - 0.55,
-    guidedViewDistance: guidedView.distance,
+    guidedViewDistance: entranceZ,
     guidedFocusY: guidedView.focusY,
     guidedFov: guidedView.fov,
   };
@@ -1190,6 +1195,7 @@ function addOpenCorpusArena(
   const arenaTopY = floorY + arenaHeight;
   const entranceZ = arenaCenterZ + halfDepth;
   const exitZ = arenaCenterZ - halfDepth;
+  const spawnZ = chamberEntranceZ(entranceZ);
   const floorMaterial = new THREE.MeshStandardMaterial({
     color: "#97a2b0",
     map: getMarbleTexture(4.2, 4.2),
@@ -1309,13 +1315,13 @@ function addOpenCorpusArena(
     spawn: new THREE.Vector3(
       0,
       -2.95,
-      arenaCenterZ + arenaSize.y * 0.35,
+      spawnZ,
     ),
     portalCenterX: 0,
     portalHalfWidth: CORRIDOR_WALKABLE_HALF_WIDTH,
     portalMinY: -4.15,
     portalMaxY: 3.95,
-    guidedViewDistance: 38,
+    guidedViewDistance: spawnZ,
     guidedFocusY: 1.5,
     guidedFov: 64,
   };
@@ -3672,7 +3678,6 @@ type DistinctChamberShellSpec = {
   exhibitScale: number;
   exhibitPosition: readonly [number, number, number];
   guidedView: {
-    distance: number;
     focusY: number;
     fov: number;
   };
@@ -3712,19 +3717,19 @@ const DISTINCT_CHAMBER_SHELL_SPECS = {
     size: [52, 56, 72], position: [0, 0, 0], spatialStyle: "panorama",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "gallery",
-    guidedView: { distance: 24, focusY: 2.4, fov: 58 },
+    guidedView: { focusY: 2.4, fov: 58 },
   },
   "token-stream-context": {
     size: [48, 52, 60], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 24, focusY: 3.2, fov: 60 },
+    guidedView: { focusY: 3.2, fov: 60 },
   },
   "batch-shifted-targets": {
     size: [48, 52, 66], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "embedding": {
     // Widened to 48: the contract suite requires every chamber to clear
@@ -3732,127 +3737,127 @@ const DISTINCT_CHAMBER_SHELL_SPECS = {
     size: [48, 54, 62], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "transformer-tower": {
     size: [48, 66, 66], position: [0, 0, 0], spatialStyle: "vertical-foundry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 4.4, fov: 62 },
+    guidedView: { focusY: 4.4, fov: 62 },
   },
   "transformer-block": {
     size: [50, 58, 72], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
+    guidedView: { focusY: 3.6, fov: 62 },
   },
   "multi-head-attention": {
     size: [52, 58, 70], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.8, fov: 62 },
+    guidedView: { focusY: 3.8, fov: 62 },
   },
   "one-head-qkv": {
     size: [52, 58, 78], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 29, focusY: 3.8, fov: 64 },
+    guidedView: { focusY: 3.8, fov: 64 },
   },
   "attention-scores": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "causal-mask": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "softmax-weighted-v": {
     size: [48, 56, 70], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
+    guidedView: { focusY: 3.6, fov: 62 },
   },
   "head-recombination": {
     size: [50, 56, 66], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "mlp": {
     size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
+    guidedView: { focusY: 3.6, fov: 62 },
   },
   "final-hidden-state": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "vocabulary-projection": {
     size: [48, 56, 66], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.6, fov: 62 },
+    guidedView: { focusY: 3.6, fov: 62 },
   },
   "logits": {
     size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
+    guidedView: { focusY: 3.6, fov: 62 },
   },
   "target-comparison": {
     size: [48, 54, 60], position: [0, 0, 0], spatialStyle: "observatory",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 24, focusY: 3.2, fov: 60 },
+    guidedView: { focusY: 3.2, fov: 60 },
   },
   "loss": {
     size: [48, 62, 66], position: [0, 0, 0], spatialStyle: "vertical-foundry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.8, fov: 62 },
+    guidedView: { focusY: 3.8, fov: 62 },
   },
   "output-backprop": {
     size: [50, 56, 66], position: [0, 0, 0], spatialStyle: "split-wing",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "backprop-through-tower": {
     size: [50, 66, 78], position: [0, 0, 0], spatialStyle: "vertical-foundry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 29, focusY: 4.4, fov: 64 },
+    guidedView: { focusY: 4.4, fov: 64 },
   },
   "parameter-matrix": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "adamw-state": {
     size: [50, 56, 72], position: [0, 0, 0], spatialStyle: "rail-gantry",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.6, fov: 62 },
+    guidedView: { focusY: 3.6, fov: 62 },
   },
   "weight-update": {
     size: [48, 54, 66], position: [0, 0, 0], spatialStyle: "microscope",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 26, focusY: 3.4, fov: 62 },
+    guidedView: { focusY: 3.4, fov: 62 },
   },
   "model-changed-next-step": {
     size: [52, 60, 72], position: [0, 0, 0], spatialStyle: "panorama",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "avenue",
-    guidedView: { distance: 27, focusY: 3.8, fov: 62 },
+    guidedView: { focusY: 3.8, fov: 62 },
   },
 } as const satisfies Readonly<Record<string, DistinctChamberShellSpec>>;
 
@@ -4066,9 +4071,9 @@ function buildGalleryFloor(
   if (context.navigationBounds) {
     context.navigationBounds.walkY = ORIENTATION_EYE_Y;
     context.navigationBounds.spawn.set(
-      0,
+      context.navigationBounds.portalCenterX,
       ORIENTATION_EYE_Y,
-      ORIENTATION_TOUR_STOPS[0].eye[2] + 4.5,
+      chamberEntranceZ(context.navigationBounds.maxZ),
     );
     // The bays are solid; the runway between them stays walkable from the
     // entrance all the way to the exit door.
@@ -8259,6 +8264,24 @@ export function TrainingWorldCanvas({
           0,
           TRAINING_STATIONS.length - 1,
         );
+        const viewFromStation = THREE.MathUtils.clamp(
+          Math.floor(stationFloat),
+          0,
+          stationRuntimes.length - 1,
+        );
+        const viewToStation = THREE.MathUtils.clamp(
+          Math.ceil(stationFloat),
+          0,
+          stationRuntimes.length - 1,
+        );
+        // Adjacent chambers can have different depths. Interpolating their
+        // entrance offsets keeps the guided camera continuous while it travels
+        // between them, then settles on the exact doorway landing at an anchor.
+        const guidedViewDistance = THREE.MathUtils.lerp(
+          stationRuntimes[viewFromStation].navigationBounds.guidedViewDistance,
+          stationRuntimes[viewToStation].navigationBounds.guidedViewDistance,
+          stationFloat - viewFromStation,
+        );
         activeStationIndex = currentStation;
         localPlayerPosition.copy(
           stationRuntimes[currentStation].navigationBounds.spawn,
@@ -8277,7 +8300,7 @@ export function TrainingWorldCanvas({
             0.07,
           );
           const routeArrivalProgress = THREE.MathUtils.clamp(
-            cameraProgress - DEFAULT_GUIDED_VIEW_DISTANCE / routeLength,
+            cameraProgress - guidedViewDistance / routeLength,
             0,
             1,
           );
@@ -8306,7 +8329,7 @@ export function TrainingWorldCanvas({
           const guidedView =
             stationRuntimes[currentStation].navigationBounds;
           const routeCameraProgress =
-            cameraProgress - guidedView.guidedViewDistance / routeLength;
+            cameraProgress - guidedViewDistance / routeLength;
           renderedRouteProgress = routeCameraProgress;
           if (routeCameraProgress < 0) {
             route.getPointAt(0, routePoint);
@@ -8596,13 +8619,13 @@ export function TrainingWorldCanvas({
               );
               if (arrivingAtDestination) {
                 localPlayerPosition.z = travelingForward
-                  ? destinationBounds.maxZ - 1.4
-                  : destinationBounds.minZ + 1.4;
+                  ? chamberEntranceZ(destinationBounds.maxZ)
+                  : chamberExitZ(destinationBounds.minZ);
                 targetYaw = travelingForward ? 0 : Math.PI;
               } else {
                 localPlayerPosition.z = travelingForward
-                  ? destinationBounds.minZ + 1.4
-                  : destinationBounds.maxZ - 1.4;
+                  ? chamberExitZ(destinationBounds.minZ)
+                  : chamberEntranceZ(destinationBounds.maxZ);
                 targetYaw = travelingForward ? Math.PI : 0;
               }
               localPlayerPosition.y = THREE.MathUtils.clamp(

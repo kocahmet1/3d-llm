@@ -9,6 +9,7 @@
  *   - `collide`  surfaces that physically intersect (always a bug),
  *   - `buried`   surfaces with no viewpoint on the walking path where they are
  *                both mostly unobstructed and large enough to read,
+ *   - `entry`    surfaces horizontally clipped in the initial free-roam frame,
  *   - `footprint` the space the exhibit actually occupies.
  *
  * Run:
@@ -86,7 +87,12 @@ const documentStub = {
 const { buildDistinctChamberProcess } = await import(
   "../app/components/chambers/index.ts"
 );
+const { AVENUE } = await import("../app/components/chambers/avenue.ts");
+const { ORIENTATION_EYE_Y } = await import(
+  "../app/components/chambers/orientationGallery.ts"
+);
 const { TRAINING_STATIONS } = await import("../app/lib/trainingTrace.ts");
+const { chamberEntranceZ } = await import("../app/lib/chamberNavigation.ts");
 
 /** Reads DISTINCT_CHAMBER_SHELL_SPECS out of the canvas module. */
 const SHELL = await (async () => {
@@ -106,13 +112,14 @@ const SHELL = await (async () => {
     { size: number[]; exhibitScale: number; exhibitPosition: number[] }
   > = {};
   const entry =
-    /"([a-z0-9-]+)":\s*\{(?:\s|\/\/[^\r\n]*(?:\r?\n))*size:\s*\[([^\]]+)\][\s\S]*?exhibitScale:\s*([\d.]+),\s*exhibitPosition:\s*\[([^\]]+)\]/g;
+    /^\s{2}(?:"([a-z0-9-]+)"|([a-z][a-z0-9-]*)):\s*\{(?:\s|\/\/[^\r\n]*(?:\r?\n))*size:\s*\[([^\]]+)\][\s\S]*?exhibitScale:\s*([\d.]+),\s*exhibitPosition:\s*\[([^\]]+)\]/gm;
   let match: RegExpExecArray | null;
   while ((match = entry.exec(block))) {
-    specs[match[1]] = {
-      size: match[2].split(",").map(Number),
-      exhibitScale: Number(match[3]),
-      exhibitPosition: match[4].split(",").map(Number),
+    const stationId = match[1] ?? match[2];
+    specs[stationId] = {
+      size: match[3].split(",").map(Number),
+      exhibitScale: Number(match[4]),
+      exhibitPosition: match[5].split(",").map(Number),
     };
   }
   return specs;
@@ -229,6 +236,42 @@ function intersectionArea(a: Rect, b: Rect) {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
+interface EntranceFrameClip {
+  name: string;
+  minX: number;
+  maxX: number;
+}
+
+/**
+ * Readable faces must fit horizontally in the first free-roam frame.
+ *
+ * This mirrors the chamber-local entry pose: the visitor stands on the shared
+ * portal landing, looks straight toward -z with no pitch/yaw offset, and uses
+ * the settled free-roam FOV. A fixed 16:9 aspect gives the audit the same
+ * desktop baseline used by its existing readability projections.
+ */
+function entranceFrameClips(
+  surfaces: readonly Surface[],
+  eye: THREE.Vector3,
+): EntranceFrameClip[] {
+  const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 3200);
+  camera.position.copy(eye);
+  camera.lookAt(eye.x, eye.y, eye.z - 1);
+  camera.updateMatrixWorld(true);
+  camera.updateProjectionMatrix();
+
+  const epsilon = 1e-6;
+  return surfaces.flatMap((surface) => {
+    const projected = surface.face.map((corner) =>
+      corner.clone().project(camera),
+    );
+    const minX = Math.min(...projected.map((point) => point.x));
+    const maxX = Math.max(...projected.map((point) => point.x));
+    if (minX >= -1 - epsilon && maxX <= 1 + epsilon) return [];
+    return [{ name: surface.name, minX, maxX }];
+  });
+}
+
 /**
  * How well a visitor standing at `eye` and looking down the avenue can read
  * `index`: 0 when fully hidden or too small, 1 when fully clear and comfortably
@@ -292,6 +335,7 @@ interface Report {
   buried: [string, number][];
   outside: [string, string][];
   intrusions: string[];
+  entranceClips: EntranceFrameClip[];
   detail: { name: string; center: number[]; size: number[]; best: number }[];
   surfaceList: Surface[];
   depth: number;
@@ -482,8 +526,13 @@ for (const station of stations) {
   // middle of the avenue from the spawn point to the exit, plus a stroll along
   // each side.
   const depth = spec.size[2];
-  const spawnZ = depth / 2 - Math.max(8, depth * 0.16);
-  const eyeY = 2.15;
+  const spawnZ = chamberEntranceZ(depth / 2 - 0.65);
+  const eyeY =
+    station.id === "training-complex" ? ORIENTATION_EYE_Y : AVENUE.eyeY;
+  const entranceClips = entranceFrameClips(
+    surfaces,
+    new THREE.Vector3(0, eyeY, spawnZ),
+  );
   const viewpoints: THREE.Vector3[] = [];
   for (let z = spawnZ; z > -depth / 2 + 4; z -= 2.5) {
     for (const x of [-3, 0, 3]) {
@@ -524,6 +573,7 @@ for (const station of stations) {
     buried,
     outside,
     intrusions: [...intrusions].map(([name, where]) => `${name}  @ ${where}`),
+    entranceClips,
     detail: surfaces
       .map((surface, index) => ({
         name: surface.name,
@@ -550,7 +600,7 @@ if (process.env.AUDIT_SVG) {
     const svgHeight = depth * scale;
     const px = (x: number) => (x + width / 2) * scale;
     const pz = (z: number) => (depth / 2 - z) * scale;
-    const spawnZ = depth / 2 - Math.max(8, depth * 0.16);
+    const spawnZ = chamberEntranceZ(depth / 2 - 0.65);
     const parts = [
       `<rect x="0" y="0" width="${svgWidth}" height="${svgHeight}" fill="#0b1018" stroke="#4a6076" stroke-width="3"/>`,
       `<line x1="${px(0)}" y1="${pz(spawnZ)}" x2="${px(0)}" y2="${pz(-depth / 2)}" stroke="#2a4a5e" stroke-width="2" stroke-dasharray="9 9"/>`,
@@ -664,3 +714,25 @@ console.log(
     String(totals.intrusions).padStart(8) +
     "\n",
 );
+
+const entranceClipCount = reports.reduce(
+  (total, report) => total + report.entranceClips.length,
+  0,
+);
+if (entranceClipCount > 0) {
+  console.error(
+    `ENTRY FRAME FAIL: ${entranceClipCount} readable surface${entranceClipCount === 1 ? "" : "s"} horizontally clipped`,
+  );
+  for (const report of reports) {
+    for (const clip of report.entranceClips) {
+      console.error(
+        `  ${report.id} · ${clip.name} · ndc x ${clip.minX.toFixed(2)} .. ${clip.maxX.toFixed(2)}`,
+      );
+    }
+  }
+  process.exitCode = 1;
+} else {
+  console.log(
+    `ENTRY FRAME PASS: ${reports.reduce((total, report) => total + report.surfaces, 0)} readable surfaces fit horizontally from the shared chamber landing`,
+  );
+}

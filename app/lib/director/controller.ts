@@ -22,6 +22,7 @@ import {
   type DirectorCanvasApi,
   type DirectorExperienceApi,
 } from "./registry";
+import { chamberEntranceZ } from "../chamberNavigation";
 import { downloadRecording, startDemoRecorder, type DemoRecorder } from "./recorder";
 import {
   DATA_PREP_STAGE_STARTS,
@@ -346,7 +347,7 @@ const writePose = (
 const arrivalPose = (bounds: DirectorBoundsSnapshot): Pose => ({
   x: bounds.portalCenterX,
   y: bounds.walkY,
-  z: bounds.maxZ - 1.4,
+  z: chamberEntranceZ(bounds.maxZ),
   yaw: 0,
   pitch: 0,
 });
