@@ -787,12 +787,12 @@ const PLACARD_H = (SLIDE_H / SLIDE_W) * PLACARD_W;
 /** Centre height of a placard face. */
 const PLACARD_Y = 2.2;
 /** How far each bay sits off the centre line. */
-const BAY_X = 8.6;
+const BAY_X = 10.5;
 /** z of the first bay, and the gap between consecutive bays. */
-const BAY_Z_START = 12;
-const BAY_Z_STEP = 5.8;
+const BAY_Z_START = 27;
+const BAY_Z_STEP = 9;
 /** How far downstream of its placard a viewing mark sits. */
-const VIEW_AHEAD = 5;
+const VIEW_AHEAD = 9.5;
 /**
  * How far the viewing mark steps off the centre line toward its placard.
  *
@@ -803,7 +803,7 @@ const VIEW_AHEAD = 5;
  * about 7.5 units out, where the placard fills roughly three quarters of the
  * view. The mark stays inside the runway, so the walkway is still a walkway.
  */
-const VIEW_LATERAL = 2.9;
+const VIEW_LATERAL = 3.6;
 /** Eye height in the gallery — a little below the placard centre. */
 const GALLERY_EYE_Y = 1.9;
 
@@ -858,6 +858,27 @@ export const ORIENTATION_TOUR_STOPS: readonly OrientationTourStop[] =
     };
   });
 
+/** Per-bay transforms (position, facing yaw, side, accent) so the crafted room
+ *  can seat an alcove housing exactly behind each screen. */
+export const ORIENTATION_BAYS = SLIDE_PAINTERS.map((_, index) => {
+  const placard = bayPosition(index);
+  return {
+    x: placard.x,
+    y: placard.y,
+    z: placard.z,
+    yaw: bayYaw(index),
+    side: baySide(index),
+    accent: SLIDE_ACCENTS[index],
+  };
+});
+
+/** Screen face dimensions, shared with the room so surrounds match exactly. */
+export const ORIENTATION_PLACARD = {
+  width: PLACARD_W,
+  height: PLACARD_H,
+  y: PLACARD_Y,
+} as const;
+
 /** Standing eye height the chamber shell should use for this gallery. */
 export const ORIENTATION_EYE_Y = GALLERY_EYE_Y;
 
@@ -869,7 +890,7 @@ export const ORIENTATION_EYE_Y = GALLERY_EYE_Y;
  */
 const EXIT_SIGN_H = 2.2;
 /** Just clear of the 4.5-high lintel, so the sign never crosses the opening. */
-const EXIT_SIGN_CENTER = new THREE.Vector3(0, 4.5 + 0.15 + EXIT_SIGN_H / 2, -34.6);
+const EXIT_SIGN_CENTER = new THREE.Vector3(0, 4.5 + 0.15 + EXIT_SIGN_H / 2, -40.6);
 const EXIT_SIGN_W = 13.5;
 
 /**
@@ -884,8 +905,12 @@ const EXIT_SIGN_W = 13.5;
  * leaves roughly four degrees of margin at both edges of a 60-degree frame.
  */
 export const ORIENTATION_EXIT_LOOK: readonly [number, number, number] = [
-  0, 1.5, -34.5,
+  0, 1.5, -40.5,
 ];
+
+/** Where the closing beat dollies the eye — a little back from the exit so the
+ *  whole doorway and its sign frame up rather than being read from far away. */
+export const ORIENTATION_EXIT_EYE_Z = -27;
 
 /**
  * Where the guided walk stands, and what it faces, at a given point in the
@@ -928,7 +953,7 @@ export function orientationTourPose(
   if (index === stops.length - 1) {
     const turn = THREE.MathUtils.smoothstep(withinStop, 0.72, 0.96);
     if (turn > 0) {
-      tourScratch.set(0, to.eye[1], to.eye[2]);
+      tourScratch.set(0, to.eye[1], ORIENTATION_EXIT_EYE_Z);
       eye.lerp(tourScratch, turn);
       tourScratch.set(
         ORIENTATION_EXIT_LOOK[0],
@@ -966,7 +991,6 @@ interface Placard {
   /** Face material, dimmed when the placard is not the one being read. */
   faceMaterial: THREE.MeshBasicMaterial;
   frameMaterial: THREE.MeshStandardMaterial;
-  beamMaterial: THREE.MeshBasicMaterial;
   poolMaterial: THREE.MeshBasicMaterial;
   numberMaterial: THREE.MeshBasicMaterial;
 }
@@ -991,9 +1015,10 @@ function createPlacard(index: number): Placard {
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.minFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
-  texture.generateMipmaps = false;
+  texture.anisotropy = 8;
+  texture.generateMipmaps = true;
 
   const accent = new THREE.Color(SLIDE_ACCENTS[index]);
   const group = new THREE.Group();
@@ -1002,17 +1027,17 @@ function createPlacard(index: number): Placard {
   // Frame: a dark slab a little larger than the face, so the panel reads as a
   // mounted object with a physical edge rather than a floating rectangle.
   const frameMaterial = new THREE.MeshStandardMaterial({
-    color: "#0b1119",
+    color: "#05080d",
     emissive: accent.clone().multiplyScalar(0.4),
     emissiveIntensity: 0.25,
-    roughness: 0.46,
-    metalness: 0.55,
+    roughness: 0.4,
+    metalness: 0.62,
   });
   const frame = new THREE.Mesh(
-    new THREE.BoxGeometry(PLACARD_W + 0.78, PLACARD_H + 0.78, 0.34),
+    new THREE.BoxGeometry(PLACARD_W + 0.44, PLACARD_H + 0.44, 0.24),
     frameMaterial,
   );
-  frame.position.z = -0.18;
+  frame.position.z = -0.14;
   group.add(frame);
 
   const faceMaterial = new THREE.MeshBasicMaterial({
@@ -1029,67 +1054,31 @@ function createPlacard(index: number): Placard {
   group.add(face);
   group.add(createNeonFrame(PLACARD_W, PLACARD_H, accent, 0.04));
 
-  // Stand: two slim posts down to a plinth on the floor.
+
+  // Base: a low metal pedestal + slim pylon the screen rises from, replacing
+  // the museum stand. In the crafted room an alcove housing wraps this so the
+  // screen reads as installed into a purpose-built bay rather than propped up.
   const postMaterial = new THREE.MeshStandardMaterial({
-    color: "#161d27",
-    roughness: 0.5,
-    metalness: 0.62,
+    color: "#10161f",
+    roughness: 0.42,
+    metalness: 0.7,
   });
-  const standTop = -PLACARD_H / 2 - 0.2;
-  const standHeight = standTop - (-4.7 - PLACARD_Y) - 0.24;
-  for (const side of [-1, 1]) {
-    const post = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.11, 0.13, standHeight, 10),
-      postMaterial,
-    );
-    post.position.set(side * (PLACARD_W * 0.3), standTop - standHeight / 2, -0.1);
-    group.add(post);
-  }
-  const plinth = new THREE.Mesh(
-    new THREE.BoxGeometry(PLACARD_W * 0.78, 0.24, 1.5),
+  const floorLocalY = -4.7 - PLACARD_Y;
+  const pylonTop = -PLACARD_H / 2 - 0.1;
+  const pylonHeight = pylonTop - floorLocalY - 0.34;
+  const pylon = new THREE.Mesh(
+    new THREE.BoxGeometry(PLACARD_W * 0.5, pylonHeight, 0.6),
     postMaterial,
   );
-  plinth.position.set(0, -4.7 - PLACARD_Y + 0.12, -0.1);
-  group.add(plinth);
-
-  // Fixture above the frame, angled down at the face.
-  const fixture = new THREE.Mesh(
-    new THREE.BoxGeometry(1.5, 0.34, 0.5),
-    new THREE.MeshStandardMaterial({
-      color: "#1b232e",
-      emissive: accent,
-      emissiveIntensity: 0.5,
-      roughness: 0.4,
-      metalness: 0.7,
-    }),
-  );
-  fixture.position.set(0, PLACARD_H / 2 + 1.25, 0.95);
-  fixture.rotation.x = -0.5;
-  group.add(fixture);
-  const arm = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.07, 0.07, 1.5, 8),
+  pylon.position.set(0, pylonTop - pylonHeight / 2, -0.12);
+  group.add(pylon);
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(PLACARD_W * 0.86, 0.42, 2.1),
     postMaterial,
   );
-  arm.position.set(0, PLACARD_H / 2 + 0.95, 0.5);
-  arm.rotation.x = 1.0;
-  group.add(arm);
+  base.position.set(0, floorLocalY + 0.21, -0.05);
+  group.add(base);
 
-  // The beam: a tapered translucent sheet from the fixture down the face.
-  const beamMaterial = new THREE.MeshBasicMaterial({
-    color: accent.clone().lerp(new THREE.Color("#ffffff"), 0.5),
-    transparent: true,
-    opacity: 0.06,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  const beamShape = new THREE.PlaneGeometry(PLACARD_W * 0.92, PLACARD_H + 2.4);
-  const beam = new THREE.Mesh(beamShape, beamMaterial);
-  beam.position.set(0, 0.1, 0.62);
-  beam.renderOrder = 11;
-  beam.userData.processDecal = true;
-  beam.userData.assistantNonInteractive = true;
-  group.add(beam);
 
   // Pool of light on the floor where the visitor stands to read.
   const poolMaterial = new THREE.MeshBasicMaterial({
@@ -1152,7 +1141,7 @@ function createPlacard(index: number): Placard {
   group.userData.processLabel = `${index + 1}. ${SLIDE_TITLES[index]}`;
   group.userData.processSurfaceSize = { width: PLACARD_W, height: PLACARD_H };
 
-  return { group, faceMaterial, frameMaterial, beamMaterial, poolMaterial, numberMaterial };
+  return { group, faceMaterial, frameMaterial, poolMaterial, numberMaterial };
 }
 
 /**
@@ -1313,9 +1302,9 @@ export function buildOrientationGallery(
         1,
       );
       const eased = focus * focus * (3 - 2 * focus);
+      // Screens hold rock-steady (no flicker/glitch, no overlay in front).
       placard.faceMaterial.opacity = 0.42 + eased * 0.58;
       placard.frameMaterial.emissiveIntensity = 0.2 + eased * 1.05;
-      placard.beamMaterial.opacity = 0.045 + eased * (0.1 + breathe * 0.03);
       placard.poolMaterial.opacity = 0.07 + eased * 0.2;
       placard.numberMaterial.opacity = 0.5 + eased * 0.5;
     });

@@ -1062,6 +1062,13 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
     "guided travel should blend different chamber depths without a camera jump",
   );
   const volumeById = new Map(volumeRecords.map((record) => [record.id, record]));
+  const stationSpacing = Number(
+    /const\s+STATION_SPACING\s*=\s*(\d+(?:\.\d+)?)/.exec(canvas)?.[1],
+  );
+  assert.ok(
+    Number.isFinite(stationSpacing),
+    "station spacing should remain readable when validating corridor clearance",
+  );
   const minimumCorridorGap = TRAINING_STATIONS.slice(0, -1).reduce(
     (minimum, station, index) => {
       const next = TRAINING_STATIONS[index + 1];
@@ -1071,7 +1078,7 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
       const toReach = next.id === "corpus-data-preparation"
         ? 54
         : volumeById.get(next.id).depth / 2 - 0.65;
-      return Math.min(minimum, 100 - fromReach - toReach);
+      return Math.min(minimum, stationSpacing - fromReach - toReach);
     },
     Number.POSITIVE_INFINITY,
   );
@@ -1332,11 +1339,79 @@ test("distinct chamber builders cover every non-Corpus station with trace-correc
 });
 
 test("the spatial world uses isolated chambers, corridors, and one restrained beacon", async () => {
-  const canvas = await readSource("app/components/TrainingWorldCanvas.tsx");
+  const [canvas, architecture, orientationCrafted] = await Promise.all([
+    readSource("app/components/TrainingWorldCanvas.tsx"),
+    readSource("app/components/chambers/chamberArchitecture.ts"),
+    readSource("app/components/chambers/orientationCrafted.ts"),
+  ]);
+  const { TRAINING_STATIONS } = await loadTrainingTrace();
+
+  const profileBlock =
+    /export const CHAMBER_ROOM_PROFILES = \{([\s\S]*?)\n\} as const satisfies/.exec(
+      architecture,
+    )?.[1] ?? "";
+  const profileIds = [
+    ...profileBlock.matchAll(
+      /^  (?:"([^"]+)"|([a-z][a-z0-9-]*)):\s*\{$/gm,
+    ),
+  ].map((match) => match[1] ?? match[2]);
+  assert.equal(
+    profileIds.length,
+    TRAINING_STATIONS.length,
+    "every station should own one explicit architecture profile",
+  );
+  assert.deepEqual(
+    new Set(profileIds),
+    new Set(TRAINING_STATIONS.map((station) => station.id)),
+    "architecture profiles should neither omit nor invent stations",
+  );
 
   assert.match(canvas, /function\s+createCorridorSystem\s*\(/);
   assert.match(canvas, /enclosed-station-corridors/);
-  assert.match(canvas, /opaque-chamber-/);
+  assert.match(canvas, /open-top-chamber-/);
+  assert.match(canvas, /buildCraftedChamberDetails\(chamber,\s*\{/);
+  assert.match(architecture, /chamber-architecture-open-top-wall-backing/);
+  assert.match(architecture, /chamber-architecture-open-sky-gradient/);
+  assert.match(
+    architecture,
+    /intentionally creates no ceiling/,
+    "the active shell builder should keep the sky open",
+  );
+  const activeShell =
+    /function\s+addShell\s*\([\s\S]*?\n}\s*\n\s*function\s+addOpenCorpusArena\s*\(/.exec(
+      canvas,
+    )?.[0] ?? "";
+  assert.ok(activeShell.length > 0, "the active addShell source should be discoverable");
+  assert.doesNotMatch(
+    activeShell,
+    /new\s+THREE\.Vector3\(\s*0,\s*ceilingY,\s*0\s*\)/,
+    "ceilingY is a navigation envelope, not a visible roof slab",
+  );
+  const corpusArena =
+    /function\s+addOpenCorpusArena\s*\([\s\S]*?\n}\s*\n\s*function\s+addInstancedBoxes\s*\(/.exec(
+      canvas,
+    )?.[0] ?? "";
+  assert.ok(corpusArena.length > 0, "the special Corpus arena should be discoverable");
+  assert.match(
+    corpusArena,
+    /buildCraftedChamberDetails\(architecture,\s*\{/,
+    "Corpus should share the same open-top architectural system",
+  );
+  assert.match(
+    canvas,
+    /buildOrientationRoom\(context\.group,\s*context\.palette,\s*\{\s*variant:\s*"crafted"/,
+    "the active orientation path should use the crafted open room",
+  );
+  assert.match(
+    orientationCrafted,
+    /chamber-architecture-open-sky-gradient/,
+    "the orientation chamber should terminate in an open sky dome",
+  );
+  assert.doesNotMatch(
+    orientationCrafted,
+    /box\(\s*add,\s*WIDTH,\s*WALL_T,\s*DEPTH,\s*0,\s*CEIL_Y/,
+    "the crafted orientation room must not regain a full-span roof slab",
+  );
   assert.match(
     canvas,
     /const\s+doorWidth\s*=\s*Math\.min\(\s*7\.2,\s*width\s*-\s*3\.2\s*\)/,
@@ -1355,8 +1430,7 @@ test("the spatial world uses isolated chambers, corridors, and one restrained be
   assert.match(canvas, /normalMap:\s*getSurfaceReliefTexture\("wall"\)/);
   assert.match(canvas, /normalMap:\s*getSurfaceReliefTexture\("floor"\)/);
   assert.match(canvas, /function\s+tileableValueNoise|const\s+tileableValueNoise/);
-  assert.match(canvas, /normalScale:\s*new\s+THREE\.Vector2\(0\.26,\s*0\.26\)/);
-  assert.match(canvas, /backWallMaterial\.normalScale\.set\(0\.1,\s*0\.1\)/);
+  assert.match(architecture, /normalMap:\s*wallNormal/);
   assert.match(canvas, /new\s+THREE\.SpotLight\("#e9f1fb",\s*180,\s*68,\s*0\.72/);
   assert.match(canvas, /portalMinY:\s*doorBottom\s*\+\s*0\.55/);
   assert.match(canvas, /portalMaxY:\s*doorTop\s*-\s*0\.55/);

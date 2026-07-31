@@ -53,6 +53,14 @@ import {
   ORIENTATION_TOUR_STOPS,
   orientationTourPose,
 } from "./chambers/orientationGallery";
+import { buildOrientationRoom } from "./chambers/orientationRoom";
+import { ORIENTATION_ENVIRONMENT } from "./chambers/orientationCrafted";
+import {
+  buildCraftedChamberDetails,
+  getChamberEnvironment,
+  getChamberRoomProfile,
+  type ChamberSpatialStyle,
+} from "./chambers/chamberArchitecture";
 
 /**
  * The orientation gallery is the first station. Named rather than written as a
@@ -86,7 +94,10 @@ import styles from "./TrainingWorldCanvas.module.css";
 
 const TAU = Math.PI * 2;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
-const STATION_SPACING = 100;
+// The orientation gallery and Corpus arena are the two deepest neighboring
+// rooms. Keep enough route between their unchanged footprints for a readable
+// open-sky transition instead of letting their portals overlap.
+const STATION_SPACING = 112;
 const CORRIDOR_WIDTH = 7.4;
 const CORRIDOR_WALKABLE_HALF_WIDTH = CORRIDOR_WIDTH / 2 - 0.65;
 const MIN_SPACIOUS_CHAMBER_SPAN = 48;
@@ -164,6 +175,8 @@ interface StationRuntime {
   group: THREE.Group;
   /** Contains process exhibits only; the chamber shell remains a sibling. */
   exhibitRoot: THREE.Group;
+  /** One open-sky dome, cross-faded independently while adjacent rooms overlap. */
+  architectureSkyDome: THREE.Mesh | null;
   phaseMaterials: THREE.MeshStandardMaterial[];
   navigationBounds: ChamberNavigationBounds;
   lightAnchors: StationLightAnchors;
@@ -752,7 +765,10 @@ function chamberEyeLift(cameraHint: TrainingStation["cameraHint"]): number {
   }
 }
 
-function addShell(
+// Retained as a measured fallback while the active rooms use the crafted
+// architecture system below.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function addLegacyShell(
   context: BuildContext,
   size: THREE.Vector3,
   position = new THREE.Vector3(),
@@ -856,11 +872,8 @@ function addShell(
     new THREE.Vector3(0, floorY, 0),
     floorMaterial,
   );
-  panel(
-    new THREE.Vector3(width, wallThickness, depth),
-    new THREE.Vector3(0, ceilingY, 0),
-    wallMaterial,
-  );
+  // Intentionally no ceiling mesh. `ceilingY` remains the invisible vertical
+  // navigation/content envelope, while the visible walls open to the sky.
   panel(
     new THREE.Vector3(wallThickness, verticalSpan, depth),
     new THREE.Vector3(-width / 2, chamberCenterY, 0),
@@ -1182,12 +1195,177 @@ function addShell(
   return chamber;
 }
 
+/**
+ * Active architectural shell for every non-orientation process chamber.
+ *
+ * The numeric envelope deliberately mirrors the former shell: only the room's
+ * visible floor, walls, portal surrounds, and atmosphere change. The process
+ * exhibit remains a sibling of this group, so its matrices, materials,
+ * animation, and assistant metadata are untouched.
+ */
+function addShell(
+  context: BuildContext,
+  size: THREE.Vector3,
+  position = new THREE.Vector3(),
+  rotation = new THREE.Euler(),
+  guidedView = {
+    focusY: 2.2,
+    fov: 58,
+  },
+  spatialStyle: ChamberSpatialStyle = "panorama",
+): THREE.Group {
+  const chamber = new THREE.Group();
+  chamber.name = `open-top-chamber-${String(context.index).padStart(2, "0")}`;
+  chamber.position.copy(position);
+  chamber.rotation.copy(rotation);
+  chamber.userData.assistantNonInteractive = true;
+
+  const width = Math.max(size.x, MIN_SPACIOUS_CHAMBER_SPAN);
+  const chamberHeight = Math.max(size.y, MIN_SPACIOUS_CHAMBER_SPAN);
+  const depth = Math.max(size.z, MIN_SPACIOUS_CHAMBER_DEPTH);
+  const navigationDeckY = -4.7;
+  const floorY = navigationDeckY - 0.18;
+  // Nominal vertical envelope only. There is intentionally no ceiling mesh.
+  const ceilingY = floorY + chamberHeight;
+  const verticalSpan = chamberHeight;
+  const doorWidth = Math.min(7.2, width - 3.2);
+  const doorHeight = Math.min(9.2, verticalSpan - 2.4);
+  const doorBottom = navigationDeckY;
+  const doorTop = doorBottom + doorHeight;
+
+  buildCraftedChamberDetails(chamber, {
+    width,
+    height: chamberHeight,
+    depth,
+    floorY,
+    doorWidth,
+    doorHeight,
+    doorBottom,
+    stationId: context.station.id,
+    stationIndex: context.index,
+    spatialStyle,
+  });
+
+  // Preserve the shared wayfinding grammar, but use the architecture-only
+  // room accent rather than changing the exhibit/process palette.
+  if (context.index < TRAINING_STATIONS.length - 1) {
+    const roomProfile = getChamberRoomProfile(context.station.id, spatialStyle);
+    const marquee = new THREE.Group();
+    marquee.name = "next-chamber-marquee";
+    // Sit just inside the deep portal surround instead of sharing its lintel
+    // volume; the sign and all three chevrons remain readable from the room.
+    const signZ = -depth / 2 + 1.62;
+    const neonColor = new THREE.Color(roomProfile.accent).lerp(
+      new THREE.Color("#ffffff"),
+      0.24,
+    );
+    const neonMaterial = new THREE.MeshBasicMaterial({
+      color: neonColor,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const chevronWidth = Math.min(2.4, doorWidth * 0.5);
+    const chevronHalfWidth = chevronWidth / 2;
+    const chevronHeight = 0.32;
+    const barThickness = 0.12;
+    const barLength = Math.hypot(chevronHalfWidth, chevronHeight);
+    const chevronTilt = Math.atan2(chevronHalfWidth, chevronHeight);
+    const chevronGap = 0.4;
+    const chevronRows = 3;
+    for (let row = 0; row < chevronRows; row += 1) {
+      const apexY = row * chevronGap;
+      for (const side of [-1, 1] as const) {
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(barThickness, barLength, barThickness),
+          neonMaterial,
+        );
+        bar.position.set(
+          (side * chevronHalfWidth) / 2,
+          apexY + chevronHeight / 2,
+          0,
+        );
+        bar.rotation.z = -side * chevronTilt;
+        marquee.add(bar);
+      }
+    }
+
+    const plateHeight = 0.85;
+    const plateWidth = Math.min(doorWidth + 1.2, width - 1.2);
+    const plate = createFacePanel(["NEXT CHAMBER"], {
+      width: plateWidth,
+      height: plateHeight,
+      color: "#f3f8ff",
+      borderColor: neonColor,
+      fontScale: 0.94,
+    });
+    const chevronStackTop =
+      (chevronRows - 1) * chevronGap + chevronHeight;
+    plate.position.set(
+      0,
+      chevronStackTop + 0.14 + plateHeight / 2,
+      0.02,
+    );
+    plate.renderOrder = 8;
+    marquee.add(plate);
+
+    const localTop = chevronStackTop + 0.14 + plateHeight;
+    const maxTop = ceilingY - 0.15;
+    let baseY = doorTop + 0.3;
+    if (baseY + localTop > maxTop) baseY = maxTop - localTop;
+    if (baseY < doorTop + 0.05) {
+      const available = maxTop - (doorTop + 0.05);
+      marquee.scale.setScalar(Math.max(0.55, available / localTop));
+      baseY = doorTop + 0.05;
+    }
+    marquee.position.set(0, baseY, signZ);
+    chamber.add(marquee);
+  }
+
+  context.group.add(chamber);
+  const minZ = position.z - depth / 2 + 0.65;
+  const maxZ = position.z + depth / 2 - 0.65;
+  const entranceZ = chamberEntranceZ(maxZ);
+  const restEyeY = chamberEyeLift(context.station.cameraHint);
+  context.navigationBounds = {
+    minX: position.x - width / 2 + 0.85,
+    maxX: position.x + width / 2 - 0.85,
+    minY: navigationDeckY + 0.75,
+    maxY: ceilingY - 1,
+    minZ,
+    maxZ,
+    walkY: restEyeY,
+    spawn: new THREE.Vector3(
+      position.x,
+      restEyeY,
+      entranceZ,
+    ),
+    portalCenterX: position.x,
+    portalHalfWidth: Math.min(
+      doorWidth / 2 - 0.45,
+      CORRIDOR_WALKABLE_HALF_WIDTH,
+    ),
+    portalMinY: doorBottom + 0.55,
+    portalMaxY: doorTop - 0.55,
+    guidedViewDistance: entranceZ,
+    guidedFocusY: guidedView.focusY,
+    guidedFov: guidedView.fov,
+  };
+  return chamber;
+}
+
 function addOpenCorpusArena(
   context: BuildContext,
   arenaSize: THREE.Vector2,
   arenaHeight: number,
 ) {
   const arenaCenterZ = 9;
+  const roomProfile = getChamberRoomProfile(
+    context.station.id,
+    "panorama",
+  );
   const halfWidth = arenaSize.x / 2;
   const halfDepth = arenaSize.y / 2;
   const floorY = -4.88;
@@ -1196,28 +1374,32 @@ function addOpenCorpusArena(
   const entranceZ = arenaCenterZ + halfDepth;
   const exitZ = arenaCenterZ - halfDepth;
   const spawnZ = chamberEntranceZ(entranceZ);
-  const floorMaterial = new THREE.MeshStandardMaterial({
-    color: "#97a2b0",
-    map: getMarbleTexture(4.2, 4.2),
-    roughness: 0.36,
-    metalness: 0.12,
-    emissive: context.palette.dark,
-    emissiveIntensity: 0.07,
+  const architecture = new THREE.Group();
+  architecture.name = "open-corpus-observation-architecture";
+  architecture.position.z = arenaCenterZ;
+  architecture.userData.assistantNonInteractive = true;
+  buildCraftedChamberDetails(architecture, {
+    // Put the wall relief just outside the arena's existing ±70 navigation
+    // bounds, preserving the full authored observation footprint.
+    width: arenaSize.x + 1.7,
+    height: arenaHeight,
+    depth: arenaSize.y,
+    floorY,
+    doorWidth: 10,
+    doorHeight: 9.2,
+    doorBottom: navigationDeckY,
+    stationId: context.station.id,
+    stationIndex: context.index,
+    spatialStyle: "panorama",
   });
-  const floor = new THREE.Mesh(
-    new THREE.BoxGeometry(arenaSize.x, 0.36, arenaSize.y),
-    floorMaterial,
-  );
-  floor.name = "open-corpus-observation-ground";
-  floor.position.set(0, floorY, arenaCenterZ);
-  context.group.add(floor);
+  context.group.add(architecture);
 
   // A wide neon ring inlaid at the arena's heart anchors the six tokenizer
   // stages the way the reference image anchors its exhibits.
   const arenaRing = new THREE.Mesh(
     new THREE.RingGeometry(17.6, 17.9, 96),
     new THREE.MeshBasicMaterial({
-      color: context.palette.phaseBase.clone().multiplyScalar(0.8),
+      color: new THREE.Color(roomProfile.accent).multiplyScalar(0.8),
       transparent: true,
       opacity: 0.3,
       blending: THREE.AdditiveBlending,
@@ -1227,6 +1409,7 @@ function addOpenCorpusArena(
   );
   arenaRing.rotation.x = -Math.PI / 2;
   arenaRing.position.set(0, navigationDeckY + 0.02, arenaCenterZ - 8);
+  arenaRing.userData.assistantNonInteractive = true;
   context.group.add(arenaRing);
 
   context.palette.structure.transparent = false;
@@ -1234,7 +1417,7 @@ function addOpenCorpusArena(
   context.palette.structure.depthWrite = true;
 
   const edgeMaterial = new THREE.MeshBasicMaterial({
-    color: context.palette.phaseBase,
+    color: roomProfile.trim,
     transparent: true,
     opacity: 0.18,
     depthWrite: false,
@@ -1249,14 +1432,14 @@ function addOpenCorpusArena(
   addLine(
     context.group,
     arenaOutlineAt(navigationDeckY + 0.03),
-    context.palette.phaseBase,
+    roomProfile.accent,
     0.2,
   );
   for (const level of [0.32, 0.64, 1]) {
     addLine(
       context.group,
       arenaOutlineAt(floorY + arenaHeight * level),
-      context.palette.phaseBase,
+      roomProfile.trim,
       level === 1 ? 0.18 : 0.08,
     );
   }
@@ -1269,13 +1452,14 @@ function addOpenCorpusArena(
     addLine(
       context.group,
       [new THREE.Vector3(x, navigationDeckY, z), new THREE.Vector3(x, arenaTopY, z)],
-      context.palette.phaseBase,
+      roomProfile.trim,
       0.12,
     );
   }
 
   const addPortal = (z: number, facesIntoArena: boolean, text: string) => {
     const frame = new THREE.Group();
+    frame.userData.assistantNonInteractive = true;
     const portalWidth = 10;
     const postGeometry = new THREE.BoxGeometry(0.22, 9.2, 0.28);
     const beamGeometry = new THREE.BoxGeometry(portalWidth, 0.22, 0.28);
@@ -1286,17 +1470,20 @@ function addOpenCorpusArena(
     rightPost.position.set(portalWidth / 2, -0.1, 0);
     topBeam.position.set(0, 4.5, 0);
     frame.add(leftPost, rightPost, topBeam);
-    frame.position.set(0, 0, z);
+    // The builder supplies the deep architectural surround. Keep this slim
+    // authored wayfinding frame just outside it so neither beam z-fights.
+    frame.position.set(0, 0, z + (facesIntoArena ? 0.25 : -0.25));
     context.group.add(frame);
 
     const sign = createFacePanel([text, "WALK THROUGH THE LINEAR TUNNEL"], {
       width: 8.4,
       height: 1.05,
       color: "#dceaff",
-      borderColor: context.palette.phaseBase,
+      borderColor: new THREE.Color(roomProfile.accent),
       fontScale: 0.72,
     });
-    sign.position.set(0, 5.45, z + (facesIntoArena ? -0.18 : 0.18));
+    // Pull the sign into the arena, clear of the surround's solid lintel.
+    sign.position.set(0, 5.45, z + (facesIntoArena ? -1.6 : 1.6));
     if (facesIntoArena) sign.rotation.y = Math.PI;
     context.group.add(sign);
   };
@@ -3668,13 +3855,7 @@ const STATION_BUILDERS: Array<
 type DistinctChamberShellSpec = {
   size: readonly [number, number, number];
   position: readonly [number, number, number];
-  spatialStyle:
-    | "panorama"
-    | "rail-gantry"
-    | "vertical-foundry"
-    | "split-wing"
-    | "microscope"
-    | "observatory";
+  spatialStyle: ChamberSpatialStyle;
   exhibitScale: number;
   exhibitPosition: readonly [number, number, number];
   guidedView: {
@@ -3714,7 +3895,7 @@ type DistinctChamberShellSpec = {
  */
 const DISTINCT_CHAMBER_SHELL_SPECS = {
   "training-complex": {
-    size: [52, 56, 72], position: [0, 0, 0], spatialStyle: "panorama",
+    size: [66, 56, 84], position: [0, 0, 0], spatialStyle: "panorama",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "gallery",
     guidedView: { focusY: 2.4, fov: 58 },
@@ -3870,7 +4051,14 @@ const DISTINCT_CHAMBER_SHELL_SPECS = {
  * the computation takes before setting off, and the navigation blockers follow
  * the plinths — leaving the whole runway free to walk down.
  */
-function buildAvenueFloor(context: BuildContext) {
+function buildAvenueFloor(
+  context: BuildContext,
+  spec: DistinctChamberShellSpec,
+) {
+  const roomProfile = getChamberRoomProfile(
+    context.station.id,
+    spec.spatialStyle,
+  );
   const stops =
     CHAMBER_PROCESS_STOPS[context.station.id] ?? DEFAULT_CHAMBER_PROCESS_STOPS;
   const firstZ = AVENUE.firstStopZ;
@@ -3883,15 +4071,20 @@ function buildAvenueFloor(context: BuildContext) {
   const laneOuter = avenueLaneX(stops - 1, true) + 3.4;
   const laneWidth = laneOuter - laneInner;
 
-  const stoneMaterial = new THREE.MeshStandardMaterial({
-    color: new THREE.Color("#aab4c1").lerp(context.palette.phaseBase, 0.04),
+  const stoneMaterial = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(roomProfile.floor).lerp(
+      new THREE.Color(roomProfile.trim),
+      0.16,
+    ),
     map: getMarbleTexture(1.5, 1.5),
-    roughness: 0.3,
-    metalness: 0.1,
+    roughness: 0.26,
+    metalness: 0.22,
+    clearcoat: 0.52,
+    clearcoatRoughness: 0.28,
     normalMap: getSurfaceReliefTexture("floor"),
     normalScale: new THREE.Vector2(0.1, 0.1),
-    emissive: context.palette.dark,
-    emissiveIntensity: 0.07,
+    emissive: new THREE.Color(roomProfile.floor).multiplyScalar(0.3),
+    emissiveIntensity: 0.08,
   });
 
   // The runway itself: a single polished strip the visitor walks along.
@@ -3917,11 +4110,12 @@ function buildAvenueFloor(context: BuildContext) {
     const rim = new THREE.Mesh(
       new THREE.BoxGeometry(0.14, 0.1, runwayDepth),
       new THREE.MeshBasicMaterial({
-        color: context.palette.bright,
+        color: roomProfile.trim,
         transparent: true,
-        opacity: 0.55,
+        opacity: 0.62,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        toneMapped: false,
       }),
     );
     rim.position.set(side * laneInner, -4.44, runwayCenterZ);
@@ -3934,11 +4128,12 @@ function buildAvenueFloor(context: BuildContext) {
     const marker = new THREE.Mesh(
       new THREE.BoxGeometry(laneInner * 2, 0.06, 0.2),
       new THREE.MeshBasicMaterial({
-        color: context.palette.phaseBase,
+        color: roomProfile.accent,
         transparent: true,
-        opacity: 0.42,
+        opacity: 0.5,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        toneMapped: false,
       }),
     );
     marker.position.set(0, -4.55, avenueZ(stop) + AVENUE.stopSpacing / 2);
@@ -3990,6 +4185,8 @@ function buildAvenueFloor(context: BuildContext) {
  * themselves are blocked, so the visitor walks the runway rather than through
  * the exhibits.
  */
+// Retained for reference; the orientation gallery now uses buildOrientationChamber.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildGalleryFloor(
   context: BuildContext,
   spec: DistinctChamberShellSpec,
@@ -4083,6 +4280,58 @@ function buildGalleryFloor(
   }
 }
 
+/**
+ * The orientation gallery gets its own crafted room (a light, high-craft
+ * cyberpunk hall with alcove-mounted screens) instead of the shared addShell.
+ * Its own lights live in the chamber group, so they are gated by the chamber's
+ * visibility and never leak into other stations. Navigation bounds mirror what
+ * addShell + buildGalleryFloor set for the current 66x56x84 hall.
+ */
+function buildOrientationChamber(
+  context: BuildContext,
+  spec: DistinctChamberShellSpec,
+) {
+  buildOrientationRoom(context.group, context.palette, {
+    variant: "crafted",
+    index: context.index,
+    totalStations: TRAINING_STATIONS.length,
+  });
+
+  const width = Math.max(spec.size[0], MIN_SPACIOUS_CHAMBER_SPAN);
+  const chamberHeight = Math.max(spec.size[1], MIN_SPACIOUS_CHAMBER_SPAN);
+  const depth = Math.max(spec.size[2], MIN_SPACIOUS_CHAMBER_DEPTH);
+  const position = new THREE.Vector3(...spec.position);
+  const navigationDeckY = -4.7;
+  const floorY = navigationDeckY - 0.18;
+  const ceilingY = floorY + chamberHeight;
+  const doorWidth = Math.min(7.2, width - 3.2);
+  const doorHeight = Math.min(9.2, chamberHeight - 2.4);
+  const doorBottom = navigationDeckY;
+  const doorTop = doorBottom + doorHeight;
+  const minZ = position.z - depth / 2 + 0.65;
+  const maxZ = position.z + depth / 2 - 0.65;
+  const entranceZ = chamberEntranceZ(maxZ);
+
+  context.navigationBounds = {
+    minX: position.x - width / 2 + 0.85,
+    maxX: position.x + width / 2 - 0.85,
+    minY: navigationDeckY + 0.75,
+    maxY: ceilingY - 1,
+    minZ,
+    maxZ,
+    walkY: ORIENTATION_EYE_Y,
+    spawn: new THREE.Vector3(position.x, ORIENTATION_EYE_Y, entranceZ),
+    portalCenterX: position.x,
+    portalHalfWidth: Math.min(doorWidth / 2 - 0.45, CORRIDOR_WALKABLE_HALF_WIDTH),
+    portalMinY: doorBottom + 0.55,
+    portalMaxY: doorTop - 0.55,
+    guidedViewDistance: entranceZ,
+    guidedFocusY: spec.guidedView.focusY,
+    guidedFov: spec.guidedView.fov,
+    blockers: ORIENTATION_BAY_BLOCKERS.map((blocker) => ({ ...blocker })),
+  };
+}
+
 function buildDistinctChamberShell(context: BuildContext) {
   // Widened to the interface: the const-asserted table gives each entry a
   // literal type that omits the optional keys it does not set, so `layout`
@@ -4094,21 +4343,22 @@ function buildDistinctChamberShell(context: BuildContext) {
   if (!spec) {
     throw new Error(`Missing distinct chamber shell spec for ${context.station.id}`);
   }
+  if (spec.layout === "gallery") {
+    buildOrientationChamber(context, spec);
+    return spec;
+  }
+
   addShell(
     context,
     new THREE.Vector3(...spec.size),
     new THREE.Vector3(...spec.position),
     new THREE.Euler(),
     spec.guidedView,
+    spec.spatialStyle,
   );
 
-  if (spec.layout === "gallery") {
-    buildGalleryFloor(context, spec);
-    return spec;
-  }
-
   if (spec.layout === "avenue") {
-    buildAvenueFloor(context);
+    buildAvenueFloor(context, spec);
     return spec;
   }
 
@@ -4704,11 +4954,16 @@ function buildSemanticWorld(
     group.traverse((child) => {
       const solid = child as THREE.Mesh;
       if (!solid.isMesh) return;
+      if (solid.userData.preserveShadowSettings) return;
       if (solid.material instanceof THREE.MeshStandardMaterial) {
         solid.castShadow = true;
         solid.receiveShadow = true;
       }
     });
+    const architectureSkyDome =
+      (group.getObjectByName(
+        "chamber-architecture-open-sky-gradient",
+      ) as THREE.Mesh | undefined) ?? null;
     const lightAnchors: StationLightAnchors = distinctShellSpec
       ? {
           spot: new THREE.Vector3(
@@ -4744,6 +4999,7 @@ function buildSemanticWorld(
     return {
       group,
       exhibitRoot: processGroup,
+      architectureSkyDome,
       phaseMaterials,
       lightAnchors,
       navigationBounds: context.navigationBounds ?? {
@@ -5030,6 +5286,61 @@ export function TrainingWorldCanvas({
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#090b10");
     scene.fog = new THREE.FogExp2("#090b10", 0.006);
+    // Per-chamber open-sky environment. The orientation room keeps its
+    // established atmosphere; every other chamber receives its architecture
+    // profile without changing the process/matrix palette.
+    const DEFAULT_BG = new THREE.Color("#090b10");
+    const DEFAULT_FOG = new THREE.Color("#090b10");
+    const chamberEnvironments = TRAINING_STATIONS.map((station, index) =>
+      index === ORIENTATION_STATION_INDEX
+        ? ORIENTATION_ENVIRONMENT
+        : getChamberEnvironment(station.id),
+    );
+    const environmentBackground = DEFAULT_BG.clone();
+    const environmentFog = DEFAULT_FOG.clone();
+    const environmentTargetBackground = DEFAULT_BG.clone();
+    const environmentTargetFog = DEFAULT_FOG.clone();
+    let environmentFogDensity = 0.006;
+    let environmentExposure = 1.02;
+    const updateChamberEnvironment = (
+      station: number | null,
+      delta: number,
+    ) => {
+      const target =
+        station === null
+          ? null
+          : chamberEnvironments[
+              THREE.MathUtils.clamp(
+                Math.round(station),
+                0,
+                chamberEnvironments.length - 1,
+              )
+            ];
+      environmentTargetBackground.set(target?.background ?? DEFAULT_BG);
+      environmentTargetFog.set(target?.fogColor ?? DEFAULT_FOG);
+      const blend = 1 - Math.exp(-3.2 * delta);
+      environmentBackground.lerp(environmentTargetBackground, blend);
+      environmentFog.lerp(environmentTargetFog, blend);
+      (scene.background as THREE.Color).copy(environmentBackground);
+      renderer.setClearColor(environmentBackground, 1);
+      if (scene.fog instanceof THREE.FogExp2) {
+        scene.fog.color.copy(environmentFog);
+        environmentFogDensity = THREE.MathUtils.damp(
+          environmentFogDensity,
+          target?.fogDensity ?? 0.006,
+          3.2,
+          delta,
+        );
+        scene.fog.density = environmentFogDensity;
+      }
+      environmentExposure = THREE.MathUtils.damp(
+        environmentExposure,
+        target?.exposure ?? 1.02,
+        3.2,
+        delta,
+      );
+      renderer.toneMappingExposure = environmentExposure;
+    };
     const camera = new THREE.PerspectiveCamera(58, 1, 0.045, 3200);
     camera.rotation.order = "YXZ";
 
@@ -5057,6 +5368,10 @@ export function TrainingWorldCanvas({
     chamberSpot.shadow.normalBias = 0.05;
     const warmSconceA = new THREE.PointLight("#edd3b8", 9, 15, 1.9);
     const warmSconceB = new THREE.PointLight("#edd3b8", 9, 15, 1.9);
+    const architectureKeyColor = new THREE.Color();
+    const architectureAccentColor = new THREE.Color();
+    const architectureTrimColor = new THREE.Color();
+    const architectureWhite = new THREE.Color("#f8fbff");
     scene.add(chamberSpot, chamberSpot.target, warmSconceA, warmSconceB);
 
     // Image-based lighting gives the dark slabs and pedestals soft studio
@@ -8809,6 +9124,17 @@ export function TrainingWorldCanvas({
             : navigationRegion.kind === "tunnel"
               ? index === navigationRegion.from || index === navigationRegion.to
               : index === activeStationIndex;
+        if (runtime.architectureSkyDome) {
+          // Adjacent station groups overlap during guided/tunnel travel. Fade
+          // their sky domes by route distance so opaque spheres never fight or
+          // snap based on material sort order.
+          const skyOpacity = THREE.MathUtils.clamp(1 - stationDistance, 0, 1);
+          runtime.architectureSkyDome.visible =
+            runtime.group.visible && skyOpacity > 0.01;
+          const skyMaterial = runtime.architectureSkyDome
+            .material as THREE.MeshBasicMaterial;
+          skyMaterial.opacity = skyOpacity;
+        }
         const localPulse = Math.exp(-stationDistance * 1.65);
         runtime.phaseMaterials.forEach((material, materialIndex) => {
           material.emissiveIntensity =
@@ -9060,6 +9386,16 @@ export function TrainingWorldCanvas({
       warmSconceB.position
         .copy(litRuntime.lightAnchors.warmB)
         .applyMatrix4(litRuntime.group.matrixWorld);
+      const lightProfile = getChamberRoomProfile(currentStationData.id);
+      const lightBlend = 1 - Math.exp(-4.2 * delta);
+      architectureKeyColor
+        .set(lightProfile.sky)
+        .lerp(architectureWhite, 0.66);
+      architectureAccentColor.set(lightProfile.accent);
+      architectureTrimColor.set(lightProfile.trim);
+      chamberSpot.color.lerp(architectureKeyColor, lightBlend);
+      warmSconceA.color.lerp(architectureAccentColor, lightBlend);
+      warmSconceB.color.lerp(architectureTrimColor, lightBlend);
 
       const beaconPhase = currentStationData.phase;
       const beaconColor = phaseColor(beaconPhase);
@@ -9081,6 +9417,14 @@ export function TrainingWorldCanvas({
       routeBeacon.material.opacity = 0.14 + flicker * 0.16;
       routeBeacon.light.intensity = 0.2 + flicker * 0.42;
 
+      updateChamberEnvironment(
+        navigationRegion.kind === "machine-room"
+          ? null
+          : navigationRegion.kind === "tunnel"
+            ? navigationRegion.to
+            : activeStationIndex,
+        delta,
+      );
       composer.render();
       frameHandle = window.requestAnimationFrame(renderFrame);
     };

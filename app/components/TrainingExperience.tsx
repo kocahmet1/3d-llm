@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TrainingHUD } from "./TrainingHUD";
 import { TrainingWorldCanvas } from "./TrainingWorldCanvas";
+import { IntroTitleCard } from "./IntroTitleCard";
 import { AssistantDock, useRealtimeAssistant } from "./assistant";
 import {
   chamberProcessDurationSeconds,
@@ -1483,6 +1484,7 @@ export function TrainingExperience() {
             : ` Showing the isolated interaction replay for ${activeComponentProcess.label}.`
           : null}
       </p>
+      <IntroTitleCard />
     </main>
   );
 }
