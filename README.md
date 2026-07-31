@@ -201,6 +201,13 @@ $env:OPENAI_API_KEY="your-api-key"
 npm run dev
 ```
 
+The voice route is explicitly pinned to `gpt-realtime-2.1`. There are no other
+hosted AI-generation API routes in the site today: the corpus endpoint and
+PyTorch training bridge are local application features, not calls to an AI
+provider. If a non-voice OpenAI generation route is added, its project default
+is `gpt-5.6-luna` with `reasoning.effort` set to `max` (the configuration
+referred to here as **GPT-5.6 Luna Max**).
+
 For a deployed build, configure `OPENAI_API_KEY` in the hosting provider's
 server-side secret settings. Do not put it in the JavaScript bundle or rename it
 to a public variable such as `NEXT_PUBLIC_OPENAI_API_KEY`.

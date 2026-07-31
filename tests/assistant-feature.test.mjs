@@ -999,6 +999,7 @@ test("Realtime route proxies SDP with a server-only bearer key", async () => {
     assert.equal(init.body.get("sdp"), validOffer);
     const session = JSON.parse(String(init.body.get("session")));
     assert.equal(session.type, "realtime");
+    assert.equal(session.model, "gpt-realtime-2.1");
     assert.deepEqual(session.output_modalities, ["audio"]);
     assert.deepEqual(session.reasoning, { effort: "low" });
     assert.deepEqual(session.tools, []);

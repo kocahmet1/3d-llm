@@ -1,11 +1,12 @@
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
+const REALTIME_VOICE_MODEL = "gpt-realtime-2.1";
 const MAX_SDP_BYTES = 256 * 1024;
 const UPSTREAM_TIMEOUT_MS = 20_000;
 const MAX_AUTHORIZATION_HEADER_CHARACTERS = 768;
 
 const REALTIME_SESSION_CONFIG = JSON.stringify({
   type: "realtime",
-  model: "gpt-realtime-2.1",
+  model: REALTIME_VOICE_MODEL,
   output_modalities: ["audio"],
   reasoning: {
     effort: "low",
