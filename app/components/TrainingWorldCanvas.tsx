@@ -106,6 +106,29 @@ const DEFAULT_GUIDED_VIEW_DISTANCE = 23;
 const CORPUS_ARENA_HEIGHT = 120;
 
 /**
+ * Corpus (data preparation) chamber only. Its six-stage exhibit arc and the
+ * visitor both ride a raised viewing deck above the glass tile floor, and the
+ * visitor arrives near the arc rather than at the far entrance wall. Every
+ * other chamber keeps its own floor-level framing, so these constants are
+ * deliberately not shared.
+ */
+const CORPUS_STATION_INDEX = 1;
+const CORPUS_DECK_LIFT = 3;
+/**
+ * The visitor rests above the deck the exhibit rides on, so the arc is read
+ * looking slightly down across it rather than straight on.
+ */
+const CORPUS_EYE_ABOVE_DECK = 1.4;
+/** Chamber-local eye height; the other chambers rest at -2.95. */
+const CORPUS_EYE_Y = -2.95 + CORPUS_DECK_LIFT + CORPUS_EYE_ABOVE_DECK;
+/**
+ * Chamber-local arrival z. The stage arc sits at z 0.35..3.6, so this lands
+ * the visitor about 24 units out — close enough to read the boards, far enough
+ * that all six stages stay inside the 64 degree guided frame.
+ */
+const CORPUS_VIEW_Z = 27;
+
+/**
  * The machine room (the opening scene) lives far above the station route so
  * neither environment ever leaks into the other's sightlines.
  */
@@ -154,6 +177,11 @@ interface ChamberNavigationBounds {
   guidedViewDistance: number;
   guidedFocusY: number;
   guidedFov: number;
+  /**
+   * Overrides the doorway landing for a chamber whose exhibit should be met
+   * from closer in than its entrance wall. Applies to every arrival route.
+   */
+  entryZ?: number;
   blockers?: ReadonlyArray<{
     minX: number;
     maxX: number;
@@ -1373,7 +1401,6 @@ function addOpenCorpusArena(
   const arenaTopY = floorY + arenaHeight;
   const entranceZ = arenaCenterZ + halfDepth;
   const exitZ = arenaCenterZ - halfDepth;
-  const spawnZ = chamberEntranceZ(entranceZ);
   const architecture = new THREE.Group();
   architecture.name = "open-corpus-observation-architecture";
   architecture.position.z = arenaCenterZ;
@@ -1498,18 +1525,21 @@ function addOpenCorpusArena(
     maxY: arenaTopY - 1,
     minZ: exitZ,
     maxZ: entranceZ,
-    walkY: -2.95,
-    spawn: new THREE.Vector3(
-      0,
-      -2.95,
-      spawnZ,
-    ),
+    // This chamber alone rides a raised deck, so its rest height, arrival
+    // point, and guided framing all shift together by CORPUS_DECK_LIFT.
+    walkY: CORPUS_EYE_Y,
+    spawn: new THREE.Vector3(0, CORPUS_EYE_Y, CORPUS_VIEW_Z),
     portalCenterX: 0,
     portalHalfWidth: CORRIDOR_WALKABLE_HALF_WIDTH,
+    // The tunnel mouths stay cut into the wall at floor level; only the
+    // visitor's resting height moves.
     portalMinY: -4.15,
     portalMaxY: 3.95,
-    guidedViewDistance: spawnZ,
-    guidedFocusY: 1.5,
+    entryZ: CORPUS_VIEW_Z,
+    // Measured back along the route from the chamber origin, so it matches the
+    // arrival z exactly and the guided shot settles where free roam begins.
+    guidedViewDistance: CORPUS_VIEW_Z,
+    guidedFocusY: 1.5 + CORPUS_DECK_LIFT,
     guidedFov: 64,
   };
 }
@@ -1745,8 +1775,9 @@ function buildCorpus(
   stationContext: BuildContext,
   exhibitRoot: THREE.Group,
 ) {
-  addStationHeading(stationContext, "SOURCE TEXT  >  CLEAN  >  PIECES + SPECIALS  >  VOCABULARY  >  TOKEN IDs");
   const openObservationArenaSize = new THREE.Vector2(140, 90);
+  // The arena must be built first: it is what populates navigationBounds, and
+  // the exhibit context below captures that object.
   addOpenCorpusArena(
     stationContext,
     openObservationArenaSize,
@@ -1756,6 +1787,9 @@ function buildCorpus(
     ...stationContext,
     group: exhibitRoot,
   };
+  // Headed through the exhibit context, not the chamber's, so the title rides
+  // the raised deck with the stage labels instead of hanging below them.
+  addStationHeading(context, "SOURCE TEXT  >  CLEAN  >  PIECES + SPECIALS  >  VOCABULARY  >  TOKEN IDs");
 
   // Compact assembly-line arc: all six tokenizer stages sit inside a single
   // camera view (x spans ±27 instead of ±51) in a shallow smile so the flow
@@ -1798,8 +1832,10 @@ function buildCorpus(
     context.navigationBounds.blockers = stageCenters.flatMap((center, index) => {
       const halfWidth = stageSizes[index][0] / 2 + 0.7;
       const halfDepth = stageSizes[index][1] / 2 + 0.7;
-      const minY = -4.7;
-      const maxY = 8.5;
+      // Blockers are expressed in chamber space, so they follow the exhibit
+      // onto the raised deck; otherwise the visitor would walk through stages.
+      const minY = -4.7 + CORPUS_DECK_LIFT;
+      const maxY = 8.5 + CORPUS_DECK_LIFT;
       const minZ = center.z - halfDepth;
       const maxZ = center.z + halfDepth;
       const minX = center.x - halfWidth;
@@ -1821,51 +1857,17 @@ function buildCorpus(
       return pieces;
     });
   }
-  const stageMaterials = DATA_PREP_STAGES.map(() => {
-    const material = context.palette.structure.clone();
-    material.color = new THREE.Color("#13233a");
-    material.emissive = context.palette.phaseBase.clone();
-    material.emissiveIntensity = 0.12;
-    material.transparent = false;
-    material.opacity = 1;
-    return material;
-  });
-
-  const stageTrimMaterial = new THREE.MeshBasicMaterial({
-    color: context.palette.phaseBase.clone().multiplyScalar(0.95),
-    transparent: true,
-    opacity: 0.6,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-  });
-  stageCenters.forEach((center, index) => {
-    const platform = new THREE.Mesh(
-      new THREE.BoxGeometry(stageSizes[index][0], 0.24, stageSizes[index][1]),
-      stageMaterials[index],
-    );
-    platform.position.set(center.x, -4.58, center.z);
-    context.group.add(platform);
-    // Neon edge rails outline every tokenizer stage like a lit museum plinth.
-    const [stageWidth, stageDepth] = stageSizes[index];
-    for (const [sx, sz, lx, lz] of [
-      [0, -stageDepth / 2, stageWidth + 0.2, 0.09],
-      [0, stageDepth / 2, stageWidth + 0.2, 0.09],
-      [-stageWidth / 2, 0, 0.09, stageDepth + 0.2],
-      [stageWidth / 2, 0, 0.09, stageDepth + 0.2],
-    ] as const) {
-      const rail = new THREE.Mesh(
-        new THREE.BoxGeometry(lx, 0.09, lz),
-        stageTrimMaterial,
-      );
-      rail.position.set(center.x + sx, -4.45, center.z + sz);
-      context.group.add(rail);
-    }
-    label(
+  // No plinths under the stages. The exhibit rides a raised deck, so a slab on
+  // the floor would float; the numbered header above each stage carries the
+  // "you are here" signal instead — see stageHeaderMaterials in the updater.
+  const stageHeaderMaterials = stageCenters.map((center, index) => {
+    const header = label(
       context,
       `${String(index + 1).padStart(2, "0")}  ${stageHeadings[index]}`,
       new THREE.Vector3(center.x, 5.3, center.z + 0.15),
       { width: Math.min(15, stageSizes[index][0] + 1), compact: true },
     );
+    return header.material;
   });
 
   stageCenters.slice(0, -1).forEach((center, index) => {
@@ -2281,9 +2283,14 @@ function buildCorpus(
       (current, stage, index) => (safeProgress >= stage.start ? index : current),
       0,
     );
-    stageMaterials.forEach((material, index) => {
-      material.emissiveIntensity =
-        index === stageIndex ? 1.15 : index < stageIndex ? 0.42 : 0.1;
+    // The headers read as the stage indicator: the active one burns at full
+    // texture brightness (enough to catch the bloom pass), finished stages stay
+    // legible but recede, and stages still to come sit dim.
+    stageHeaderMaterials.forEach((material, index) => {
+      const level =
+        index === stageIndex ? 1 : index < stageIndex ? 0.58 : 0.28;
+      material.color.setScalar(level);
+      material.opacity = index === stageIndex ? 1 : index < stageIndex ? 0.9 : 0.6;
     });
 
     sourcePanels.forEach((panel, row) =>
@@ -4928,6 +4935,11 @@ function buildSemanticWorld(
       const [exhibitX, exhibitY, exhibitZ] = distinctShellSpec.exhibitPosition;
       processGroup.position.set(exhibitX, exhibitY, exhibitZ);
       processGroup.scale.setScalar(distinctShellSpec.exhibitScale);
+    } else {
+      // Corpus only: the whole tokenizer arc rides a raised deck above the
+      // glass tile floor, and the visitor's rest height rises with it so the
+      // exhibit keeps its framing while the floor drops away below.
+      processGroup.position.y = CORPUS_DECK_LIFT;
     }
     group.add(processGroup);
     const authoredUpdate =
@@ -8603,7 +8615,7 @@ export function TrainingWorldCanvas({
         );
 
         const currentStationData = TRAINING_STATIONS[currentStation];
-        const isCorpusChamber = currentStation === 1;
+        const isCorpusChamber = currentStation === CORPUS_STATION_INDEX;
         const isCorpusOverlook =
           isCorpusChamber && state.dataPrepProgress < 0.999;
         if (isCorpusOverlook) {
@@ -8635,7 +8647,7 @@ export function TrainingWorldCanvas({
             corpusEntranceProgress,
             arrivalProgress,
           );
-          lookPoint.set(0, -0.8, 1);
+          lookPoint.set(0, -0.8 + CORPUS_DECK_LIFT, 1);
           corpusRuntime.group.localToWorld(lookPoint);
           up.copy(WORLD_UP).applyQuaternion(corpusRuntime.group.quaternion).normalize();
           cameraMatrix.lookAt(cameraPosition, lookPoint, up);
@@ -8657,7 +8669,7 @@ export function TrainingWorldCanvas({
           right.crossVectors(tangent, WORLD_UP).normalize();
           up.crossVectors(right, tangent).normalize();
           const cameraLift = isCorpusChamber
-            ? -2.95
+            ? CORPUS_EYE_Y
             : chamberEyeLift(currentStationData.cameraHint);
           const branchOffset =
             !isCorpusChamber && currentStationData.branch
@@ -8932,15 +8944,21 @@ export function TrainingWorldCanvas({
                 destinationBounds.minX + 0.45,
                 destinationBounds.maxX - 0.45,
               );
+              // A chamber may pull its forward landing in from the doorway so
+              // the visitor meets the exhibit at reading distance instead of
+              // from the back wall.
+              const forwardLandingZ =
+                destinationBounds.entryZ ??
+                chamberEntranceZ(destinationBounds.maxZ);
               if (arrivingAtDestination) {
                 localPlayerPosition.z = travelingForward
-                  ? chamberEntranceZ(destinationBounds.maxZ)
+                  ? forwardLandingZ
                   : chamberExitZ(destinationBounds.minZ);
                 targetYaw = travelingForward ? 0 : Math.PI;
               } else {
                 localPlayerPosition.z = travelingForward
                   ? chamberExitZ(destinationBounds.minZ)
-                  : chamberEntranceZ(destinationBounds.maxZ);
+                  : forwardLandingZ;
                 targetYaw = travelingForward ? Math.PI : 0;
               }
               localPlayerPosition.y = THREE.MathUtils.clamp(

@@ -197,8 +197,9 @@ export function buildCraftedRoom(
     new THREE.MeshStandardMaterial({
       color: new THREE.Color("#425e37"),
       transparent: true,
-      opacity: 0.62,
-      roughness: 0.28,
+      // The veil leaves 19% of the reflector visible (half the previous 38%).
+      opacity: 0.81,
+      roughness: 0.5,
       metalness: 0.22,
       depthWrite: false,
     }),
@@ -374,26 +375,6 @@ export function buildCraftedRoom(
     dome.position.set(0, FLOOR_Y, 0);
     dome.renderOrder = -1;
     add(dome);
-  }
-
-  // --- Glowing dot lattice on the shiny uniform floor (no cube tiles) -----
-  {
-    const dPos: THREE.Vector3[] = [];
-    const dScale: THREE.Vector3[] = [];
-    for (let x = -WIDTH / 2 + 3; x < WIDTH / 2; x += 3.4) {
-      for (let z = -DEPTH / 2 + 3; z < DEPTH / 2; z += 3.4) {
-        dPos.push(new THREE.Vector3(x, FLOOR_Y + WALL_T / 2 + 0.05, z));
-        dScale.push(new THREE.Vector3(0.28, 0.04, 0.28));
-      }
-    }
-    const dotMat = new THREE.MeshStandardMaterial({
-      color: "#0a1418",
-      emissive: new THREE.Color("#5fe6ff"),
-      emissiveIntensity: 1.5,
-      roughness: 0.5,
-      metalness: 0,
-    });
-    add(addInstancedBoxes(group, dPos, new THREE.Vector3(1, 1, 1), dotMat, undefined, dScale));
   }
 
   // --- Purpose-built cyberpunk alcoves behind each screen -----------------

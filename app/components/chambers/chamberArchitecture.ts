@@ -653,27 +653,141 @@ function addSkyDome(
   group.add(dome);
 }
 
+/**
+ * The one chamber that trades the polished veil for a raised tile deck. Data
+ * preparation is the chamber where raw material is sorted into discrete cells,
+ * so its floor is laid as half-transparent lavender panels with a scattering of
+ * quietly backlit ones.
+ */
+const GLASS_TILE_FLOOR_STATIONS: ReadonlySet<string> = new Set([
+  "corpus-data-preparation",
+]);
+
+/**
+ * Every panel is the same lavender; only its lit state separates the tiers.
+ * Unlit panels sit low and cool, lit panels rise toward a pale lavender with a
+ * matching emissive so they read as switched on rather than as a different
+ * material.
+ */
+const GLASS_TILE_TIERS = [
+  { name: "", color: "#5b4d7d", opacity: 0.44, emissive: null, intensity: 0 },
+  {
+    name: "-soft-lit",
+    color: "#a493d2",
+    opacity: 0.56,
+    emissive: "#c3b0ef",
+    intensity: 0.3,
+  },
+  {
+    name: "-lit",
+    color: "#ded4f6",
+    opacity: 0.68,
+    emissive: "#d5c6ff",
+    intensity: 0.6,
+  },
+] as const;
+
+/** Half-transparent lavender glass/hard-plastic panel deck. */
+function addGlassTileDeck(
+  group: THREE.Group,
+  width: number,
+  depth: number,
+  surfaceY: number,
+  seed: number,
+): number {
+  // Roughly three units across. Quartering the panel area from the first pass
+  // keeps the grid architectural while giving the lit scatter finer grain.
+  const targetSpan = 3.1;
+  const columns = Math.max(4, Math.round((width - 0.8) / targetSpan));
+  const rows = Math.max(4, Math.round((depth - 0.8) / targetSpan));
+  const spanX = (width - 0.8) / columns;
+  const spanZ = (depth - 0.8) / rows;
+  const seam = 0.12;
+  const thickness = 0.16;
+  const centerY = surfaceY + thickness / 2;
+
+  // Three passes rather than per-instance emissive: instanceColor only tints
+  // the diffuse term, so lit tiers need their own materials.
+  const batches = GLASS_TILE_TIERS.map(() => createBatch());
+  const tint = new THREE.Color("#8f7fc0");
+
+  for (let row = 0; row < rows; row += 1) {
+    const z = -depth / 2 + 0.4 + (row + 0.5) * spanZ;
+    for (let column = 0; column < columns; column += 1) {
+      const x = -width / 2 + 0.4 + (column + 0.5) * spanX;
+      const noise = seededUnit(seed, row * columns + column * 7 + 1);
+      // Deterministic scatter with a mild bias toward the chamber's spine, so
+      // the lit panels cluster along the walking line instead of speckling.
+      const spine = 1 - Math.min(1, Math.abs(x) / (width * 0.5));
+      const chance = noise * 0.78 + spine * 0.22;
+      const tier = chance > 0.86 ? 2 : chance > 0.72 ? 1 : 0;
+      pushBox(
+        batches[tier],
+        new THREE.Vector3(x, centerY, z),
+        new THREE.Vector3(spanX - seam, thickness, spanZ - seam),
+        // Per-panel drift within the same lavender, so a large deck does not
+        // read as one flat sheet.
+        new THREE.Color(GLASS_TILE_TIERS[tier].color).lerp(
+          tint,
+          seededUnit(seed, row * 31 + column * 3) * 0.28,
+        ),
+      );
+    }
+  }
+
+  GLASS_TILE_TIERS.forEach((tier, index) => {
+    addBoxBatch(
+      group,
+      `chamber-architecture-glass-tile-floor${tier.name}`,
+      batches[index],
+      new THREE.MeshPhysicalMaterial({
+        color: "#ffffff",
+        roughness: 0.14,
+        metalness: 0,
+        clearcoat: 0.9,
+        clearcoatRoughness: 0.08,
+        transparent: true,
+        opacity: tier.opacity,
+        vertexColors: true,
+        ...(tier.emissive
+          ? { emissive: tier.emissive, emissiveIntensity: tier.intensity }
+          : {}),
+      }),
+      false,
+      index < 2,
+    );
+  });
+
+  return surfaceY + thickness;
+}
+
 function addFloor(
   group: THREE.Group,
   width: number,
   depth: number,
   floorY: number,
+  seed: number,
+  stationId: string,
   profile: Readonly<ChamberRoomProfile>,
 ): number {
   const floorThickness = 0.4;
   const surfaceY = floorY + floorThickness / 2;
   const reliefMap = getSurfaceReliefTexture("floor");
+  const glassTiles = GLASS_TILE_FLOOR_STATIONS.has(stationId);
 
   const slab = new THREE.Mesh(
     new THREE.BoxGeometry(width, floorThickness, depth),
     new THREE.MeshStandardMaterial({
-      color: profile.floor,
+      // Under a translucent deck the slab becomes the shadow gap seen through
+      // and between the panels, so it is darkened rather than left as the
+      // chamber's own floor tone.
+      color: glassTiles ? toward(profile.floor, "#0d0917", 0.62) : profile.floor,
       roughness: 0.34,
       metalness: 0.2,
       normalMap: reliefMap,
       normalScale: new THREE.Vector2(0.09, 0.09),
       emissive: profile.floor,
-      emissiveIntensity: 0.12,
+      emissiveIntensity: glassTiles ? 0.06 : 0.12,
     }),
   );
   slab.name = "chamber-architecture-floor-slab";
@@ -681,6 +795,10 @@ function addFloor(
   slab.receiveShadow = true;
   slab.userData.preserveShadowSettings = true;
   group.add(slab);
+
+  if (glassTiles) {
+    return addGlassTileDeck(group, width, depth, surfaceY, seed);
+  }
 
   // A light-weight polished veil gives controlled highlights without a
   // Reflector, render target, or duplicate scene pass.
@@ -1465,7 +1583,15 @@ export function buildCraftedChamberDetails(
     0;
 
   addSkyDome(group, width, height, depth, floorY, profile);
-  const surfaceY = addFloor(group, width, depth, floorY, profile);
+  const surfaceY = addFloor(
+    group,
+    width,
+    depth,
+    floorY,
+    seed,
+    options.stationId,
+    profile,
+  );
   addFloorInlays(group, width, depth, surfaceY, seed, profile);
   addWallArchitecture(group, {
     width,

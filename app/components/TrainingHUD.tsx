@@ -25,6 +25,12 @@ import {
 } from "../lib/trainingTrace";
 import styles from "./TrainingHUD.module.css";
 
+/**
+ * The single chamber whose panels auto-hide on arrival. Kept as a station id
+ * rather than an index so reordering the journey cannot silently move it.
+ */
+const AUTO_MINIMIZED_HUD_STATION_ID = "corpus-data-preparation";
+
 const PHASES: ReadonlyArray<{
   id: TrainingPhase;
   label: string;
@@ -180,6 +186,37 @@ export function TrainingHUD({
       coarsePointer.removeEventListener("change", syncDeviceDefaults);
     };
   }, []);
+
+  /**
+   * The data preparation chamber alone reads as a wide observation deck, and
+   * its six-stage arc fills the frame edge to edge, so the panels step aside on
+   * arrival and return when the visitor moves on.
+   *
+   * A HUD the visitor hid themselves is never touched: it was already hidden
+   * going in, so there is nothing to restore on the way out. Toggling by hand
+   * while inside the chamber likewise cancels the automatic restore.
+   */
+  const hudMinimizedRef = useRef(hudMinimized);
+  const autoHiddenForChamberRef = useRef(false);
+  useEffect(() => {
+    hudMinimizedRef.current = hudMinimized;
+  }, [hudMinimized]);
+
+  const currentStationId =
+    stations[
+      Math.min(stations.length - 1, Math.max(0, Math.round(stationIndex)))
+    ]?.id;
+  useEffect(() => {
+    if (currentStationId === AUTO_MINIMIZED_HUD_STATION_ID) {
+      if (hudMinimizedRef.current) return;
+      autoHiddenForChamberRef.current = true;
+      setHudMinimized(true);
+      return;
+    }
+    if (!autoHiddenForChamberRef.current) return;
+    autoHiddenForChamberRef.current = false;
+    setHudMinimized(false);
+  }, [currentStationId]);
 
   // As soon as the visitor lands in a chamber (free roam), surface a short
   // prompt reminding them to left-click for mouse look before walking. It
@@ -718,6 +755,9 @@ export function TrainingHUD({
           className={`${styles.hudToggle} ${styles.interactive}`}
           onClick={() => {
             hudPreferenceSetRef.current = true;
+            // A deliberate toggle outranks the chamber's automatic hide, so
+            // leaving the chamber will not undo it.
+            autoHiddenForChamberRef.current = false;
             setFullCodeOpen(false);
             setHudMinimized((current) => !current);
           }}
