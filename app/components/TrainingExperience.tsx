@@ -203,6 +203,13 @@ export function TrainingExperience() {
   // First-visit guided tour: "touring" while the canvas drives the camera,
   // "handoff" briefly after it releases control (auto-dismissed below).
   const [introTour, setIntroTour] = useState<IntroTourState>(null);
+  /**
+   * True while a director flight is filming. The HUD's coaching cues are
+   * addressed to someone who just arrived and is about to press a key; in a
+   * recorded walkthrough there is nobody to teach, and the flight enters
+   * enough chambers that the prompts would fire almost continuously.
+   */
+  const [presenting, setPresenting] = useState(false);
   const [assistantTargetId, setAssistantTargetId] = useState<string | null>(
     null,
   );
@@ -938,6 +945,7 @@ export function TrainingExperience() {
       },
       setDetailMode: (mode) => setDetailMode(mode),
       getVoice: () => voiceStateRef.current,
+      setPresenting: (active) => setPresenting(active),
     };
     registerDirectorExperience(api);
     return () => unregisterDirectorExperience(api);
@@ -1428,6 +1436,7 @@ export function TrainingExperience() {
         machineRoomCue={machineRoomCue}
         movementDiscovered={movementDiscovered}
         introTour={introTour}
+        presenting={presenting}
         stations={TRAINING_STATIONS}
         dataPrepProgress={dataPrepProgress}
         processProgress={dialProgress}

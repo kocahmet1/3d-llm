@@ -3,8 +3,21 @@
  * for the competition video lives here, so pacing tweaks never touch the
  * controller's machinery.
  *
- * Target running time ≈ 2:30 before the custom-training finale's live
- * segment, which depends on the local trainer.
+ * The route, in four zooms and a closing beat:
+ *
+ *   1. Machine room overview → dive into the ORIENTATION gallery: read the
+ *      first placard, then walk the length of the hall and out through the
+ *      doorway on foot into the data wing — Corpus & Data Preparation, then
+ *      Token Stream & Context.
+ *   2. Transformer Tower → the tower hall, then Block 0, then the Multi-Head
+ *      Attention Hall, where five of its weight matrices are spotlighted one
+ *      at a time with the visitor's own right-click tool.
+ *   3. Backprop Return → the output backprop hall, the tower backprop hall,
+ *      then a sprint through everything remaining to the final chamber.
+ *   4. Back in the machine room, straight to the custom-training console and
+ *      into the panel itself, then out and done.
+ *
+ * Target running time ≈ 2:00.
  */
 
 /* ------------------------------------------------------------------ *
@@ -26,15 +39,24 @@ export const PACING = {
   roomReturnHoldSeconds: 0.5,
   /** Glance + drift from the risen overlook toward the next unit. */
   roomGlanceSeconds: 1.15,
+
+  /* -- orientation gallery (the first zoom) -- */
+  /** Walk from the dive landing to the first placard's reading mark. */
+  orientationApproachSeconds: 2.2,
+  /** Hold square-on to the first placard, reading it. */
+  orientationPanelSeconds: 3,
   /**
-   * Driven duration of the WATCHED part of data preparation — the first
-   * four stages (source → clean → split → vocabulary lookup).
+   * Read the first placard, then walk the length of the hall and out.
+   *
+   * About 72 units from the reading mark to the threshold, so at the app's own
+   * 12.75/s walk this is what a normal pace costs — no stopping, but no
+   * skating either. The other four placards slide past on alternating sides on
+   * the way, which is the tour: the room introduces itself while you leave it.
+   * It ends slow and close to the door, which keeps transitTo's half-second
+   * step to the portal from reading as a lurch.
    */
-  dataPrepSeconds: 13,
-  /** Data-prep progress at which the camera stops watching stage by stage. */
-  dataPrepLeaveAt: 0.8,
-  /** Quick sprint of the remaining stages before walking out. */
-  dataPrepFinishSeconds: 0.8,
+  orientationExitSeconds: 5.6,
+
   /** A chamber's full process is compressed to this many seconds. */
   processSeconds: 4,
   /** Standard visit: leave once the process reaches the halfway mark. */
@@ -46,21 +68,49 @@ export const PACING = {
    * a transit may fly through an intermediate chamber (e.g. 22 → 24).
    */
   transitTimeoutSeconds: 9,
+  /**
+   * Cap for an express transit, which deliberately runs through several
+   * chambers without stopping. 20 → 24 crosses three halls of roughly 66
+   * depth at the 22.5/s sprint plus four corridors at 39/s — about fourteen
+   * seconds. The cap is loose on purpose: overrunning it snaps the camera.
+   */
+  expressTimeoutSeconds: 22,
   /** Spotlight hold when the voice guide is live (ask + answer window). */
   spotlightLiveSeconds: 10,
   /** Spotlight hold when the guide is offline (visual-only). */
   spotlightVisualSeconds: 6,
-  /** Typing speed for the finale corpus, characters per second. */
-  finaleTypeCharsPerSecond: 1_800,
-  /**
-   * Hard cap on the typing animation regardless of corpus size (folder
-   * corpora can be large; the fill accelerates to fit).
+
+  /* -- named highlights (the right-click tool, driven by target id) -- *
+   *
+   * Paced like a person using it, not like a slideshow: the beam fires, the
+   * exhibit rises and holds for a beat, it drops, the chamber comes back, and
+   * only then does the beam pick the next one. Swapping straight from one to
+   * the next is faster but reads as a machine cycling through a list.
    */
-  finaleTypeMaxSeconds: 3,
-  /** How long to watch the live training run before heading home. */
-  finaleWatchSeconds: 8,
-  /** Drift-and-hold on the machine room after returning for the ending. */
-  endHomeSeconds: 2.4,
+  /** Settle before the first exhibit is lifted onto the magnified stage. */
+  highlightLeadSeconds: 0.6,
+  /** How long each highlighted component holds the stage. */
+  highlightSeconds: 1,
+  /**
+   * Gap after one drops before the beam picks the next. Matched to the
+   * canvas's own 0.45s laser flash so the rhythm is the tool's, not ours.
+   */
+  highlightGapSeconds: 0.45,
+  /** Beat after the last one is released, before walking on. */
+  highlightReleaseSeconds: 0.5,
+
+  /* -- closing beat at the custom-training console -- */
+  /** Cross to the console. Brisk: the beat is the panel, not the walk. */
+  consoleApproachSeconds: 1.4,
+  /** Wait for the Custom Training chamber to mount after opening it. */
+  consoleOpenTimeoutSeconds: 8,
+  /** Hold on the real panel, open. */
+  consolePanelSeconds: 2.5,
+  /** Let the world rebuild after coming back before the closing hold. */
+  consoleReturnSettleSeconds: 0.8,
+
+  /** Hold on the machine room after returning, then the end card. */
+  endHomeSeconds: 1,
   /** End card hold before the recorder stops. */
   endCardSeconds: 4.0,
 } as const;
@@ -107,7 +157,11 @@ export const ROOM_PAN = {
   to: { lookX: 1.9, lookY: 0.9, lookZ: 0 },
 } as const;
 
-/** Where the camera drifts while aiming at the Data Preparation unit. */
+/**
+ * Where the camera drifts while aiming at the Data Preparation unit — the
+ * leftmost desk unit, and the miniature the opening dive drops through on its
+ * way to the orientation gallery.
+ */
 export const ROOM_AIM = {
   x: -1.35,
   y: 1.3,
@@ -117,32 +171,56 @@ export const ROOM_AIM = {
   lookZ: 0.35,
 } as const;
 
+/**
+ * The gallery has no desk miniature of its own — it is the prologue to the
+ * whole machine rather than one of its seven stages. The opening dive
+ * therefore aims at this unit's station and lands in the hall instead.
+ */
+export const OPENING_DIVE = { aimStation: 1, landStation: 0 } as const;
+
 /* ------------------------------------------------------------------ *
- * Data-preparation chamber watch (chamber-local coordinates)
+ * Orientation gallery (chamber-local coordinates)
+ *
+ * A processional hall, 64 x 84, five paper-white placards in bays that
+ * alternate left and right down a wide central promenade. Everything below
+ * mirrors the bay geometry in components/chambers/orientationGallery.ts:
+ * bays sit at x = ∓23.5, y = 2.2, z = 27, 12.5, −2, −16.5, −31 (left first),
+ * each with a reading mark 8.5 downstream and 8.5 off the centre line. The
+ * doorway to the data wing is the far wall at z ≈ −41.
  * ------------------------------------------------------------------ */
 
-/** Stage anchor starts mirrored from DATA_PREP_STAGES in trainingTrace. */
-export const DATA_PREP_STAGE_STARTS = [0, 0.16, 0.3, 0.48, 0.82, 0.94];
-
-/**
- * The exhibits progress left → right; the camera trucks with them.
- * Positions are fractions of the chamber's half-extents so the same plan
- * survives future chamber resizing.
- */
-export const DATA_PREP_TRACK = {
-  /** Camera x as a fraction of (minX..maxX) mapped over stage progress. */
-  xStartFraction: 0.24,
-  xEndFraction: 0.76,
+export const ORIENTATION = {
   /**
-   * Standing depth as a fraction of (minZ..maxZ). 0.8 read too distant on
-   * take 1, 0.55 too close on take 2 — 0.65 splits the difference.
+   * Reading mark for the first placard, square-on and close enough that the
+   * page fills the frame. Mirrors ORIENTATION_TOUR_STOPS[0].
    */
-  zFraction: 0.65,
-  yawStart: 0.32,
-  yawEnd: -0.36,
-  pitch: -0.02,
-  /** Outro push-in toward the finished matrix, chamber units. */
-  outroPush: 1.6,
+  panel: {
+    x: -8.5,
+    y: 1.9,
+    z: 35.5,
+    lookX: -23.5,
+    lookY: 2.2,
+    lookZ: 27,
+  },
+  /**
+   * Facing the doorway from a little back, so the opening and the invitation
+   * sign above it share the frame before the walk-out. Mirrors
+   * ORIENTATION_EXIT_EYE_Z / ORIENTATION_EXIT_LOOK.
+   */
+  exit: {
+    x: 0,
+    y: 1.9,
+    z: -27,
+    lookX: 0,
+    lookY: 1.5,
+    lookZ: -40.5,
+  },
+  /**
+   * The threshold itself. The walk-out carries on past the framing mark to
+   * here and slows, so the camera is already at the door when the transit
+   * hands over to the app's own portal and tunnel.
+   */
+  doorway: { x: 0, z: -36 },
 } as const;
 
 /* ------------------------------------------------------------------ *
@@ -157,7 +235,8 @@ export type ChoreoId =
   | "sweep-tilt" // side-to-side truck with a vertical look sweep
   | "orbit-behind" // circle all the way around and view the exhibits from behind
   | "extreme-close" // dolly all the way onto one matrix until it fills the frame
-  | "hold"; // locked-off shot
+  | "hold" // locked-off shot
+  | "landing"; // rooted on the arrival mark, exactly where a visitor lands
 
 export interface ChamberVisitSpec {
   station: number;
@@ -169,45 +248,57 @@ export interface ChamberVisitSpec {
    * passing glance (leave mid-process); showcases run the full sequence.
    */
   processCap: number;
-  /** Trigger the spotlight + voice-guide demo here. */
+  /** Trigger the aim-based spotlight + voice-guide demo here. */
   spotlight?: boolean;
   /** Cycle the HUD panel Story → Structure → Math → Code during the dwell. */
   detailTour?: boolean;
+  /**
+   * Assistant target ids to lift onto the magnified stage in turn once the
+   * dwell is over — the same tool a visitor drives by right-clicking, but
+   * addressed by name so the camera can stay put.
+   */
+  highlights?: readonly string[];
+  /**
+   * Drive the data-preparation transport across the dwell instead of the
+   * generic chamber process. Only station 1 has one.
+   */
+  dataPrep?: boolean;
+  /**
+   * Reach this chamber by sprinting through every chamber in between rather
+   * than stopping at each. Buys a longer transit budget.
+   */
+  express?: boolean;
 }
 
-const std = (station: number): ChamberVisitSpec => ({
-  station,
-  dwell: PACING.standardDwellSeconds,
-  choreo: "push",
-  processCap: 0.55,
-});
-
-const showcase = (
-  station: number,
-  choreo: ChoreoId,
-  dwell = 4.8,
-): ChamberVisitSpec => ({
+/**
+ * A rooted stop: land where a visitor walking in lands, and stay there. Used
+ * for the beats whose whole point is the arrival itself.
+ */
+const stop = (station: number, dwell: number): ChamberVisitSpec => ({
   station,
   dwell,
-  choreo,
+  choreo: "landing",
   processCap: 1,
 });
 
 /**
- * The journey is four zooms (machine-room dives), two dwelled chambers
- * each — the video shows the desk-miniature ↔ full-size relationship four
- * times instead of walking all 25 stations:
+ * The five exhibits lifted onto the magnified stage in the Multi-Head
+ * Attention Hall, in the order attention computes them: the normalized input
+ * that arrives, the three weight matrices it is multiplied by, and the split
+ * that hands the results to the heads.
  *
- *   1. Data Preparation → chambers 1 + 2
- *   2. Transformer Tower → chambers 6 + 7 (the dive lands in 5 and flies
- *      straight through — "into the tower's internals")
- *   3. Backprop Return  → chambers 19 + 20 (guide spotlight at 19)
- *   4. AdamW Optimizer  → chambers 22 + 24 (fly-through of 23)
- *
- * The two signature moves stay in the shown set: extreme-close in Block 0,
- * orbit-behind in the Multi-Head Attention Hall — back to back inside the
- * tower.
+ * The hall is the right room for this — these are the actual weight walls, so
+ * "highlighting the matrices" means something literal here in a way it does
+ * not one chamber earlier.
  */
+export const ATTENTION_HIGHLIGHTS: readonly string[] = [
+  "mha:normalized-input",
+  "mha:query-projection",
+  "mha:key-projection",
+  "mha:value-projection",
+  "mha:head-split",
+];
+
 export interface FlightLeg {
   /** Station whose desk unit receives the glance + dive. */
   diveStation: number;
@@ -215,9 +306,16 @@ export interface FlightLeg {
   visits: readonly ChamberVisitSpec[];
 }
 
-/** Tunnel continuation inside zoom one (the dive into 1 is the intro's). */
-export const LEG_ONE_VISITS: readonly ChamberVisitSpec[] = [
-  std(2), // Token Stream & Context Windows
+/**
+ * Zoom one continues on foot out of the gallery and down the data wing. The
+ * camera walks these; it never rides the HUD.
+ */
+export const OPENING_VISITS: readonly ChamberVisitSpec[] = [
+  // Corpus & Data Preparation — the exhibits run while the camera holds the
+  // arrival mark, which is exactly where the first-time visitor tour lands.
+  { ...stop(1, 4), dataPrep: true },
+  // Token Stream & Context Windows.
+  stop(2, 3),
 ];
 
 export const DIVE_LEGS: readonly FlightLeg[] = [
@@ -225,47 +323,33 @@ export const DIVE_LEGS: readonly FlightLeg[] = [
     diveStation: 5,
     label: "Transformer Tower",
     visits: [
-      // Lands in the tower hall (5) and immediately flies on — reads as
-      // diving into the tower and descending into its internals.
-      showcase(6, "extreme-close", 4.6), // Block 0 — dolly onto one matrix
-      showcase(7, "orbit-behind", 5.6), // Multi-Head Attention — circle to behind
+      // The tower hall itself — the dive lands here.
+      stop(5, 4),
+      // Inside Transformer Block 0 — a look at the block's shape, no more.
+      { station: 6, dwell: 3, choreo: "push", processCap: 1 },
+      // Multi-Head Attention Hall. A short dwell to take the room in, then
+      // the highlight sweep across its weight matrices, which is the beat.
+      {
+        station: 7,
+        dwell: 2.5,
+        choreo: "push",
+        processCap: 1,
+        highlights: ATTENTION_HIGHLIGHTS,
+      },
     ],
   },
   {
     diveStation: 19,
     label: "Backprop Return",
     visits: [
-      {
-        // Backpropagation Through the Output — spotlight + ask-the-guide demo
-        station: 19,
-        dwell: PACING.standardDwellSeconds,
-        choreo: "hold",
-        processCap: 1,
-        spotlight: true,
-      },
-      showcase(20, "sweep-tilt", 4.4), // Backprop Through the Tower
-    ],
-  },
-  {
-    diveStation: 22,
-    label: "AdamW Optimizer",
-    visits: [
-      {
-        // AdamW Optimizer State — the HUD cycles Story → Structure → Math →
-        // Code here (the voiceover's "synchronized from the runnable
-        // PyTorch trainer" beat).
-        ...std(22),
-        dwell: 3.8,
-        processCap: 1,
-        detailTour: true,
-      },
-      {
-        // The Model Has Changed — closing beat (flies through 23 to get here)
-        station: 24,
-        dwell: 2.6,
-        choreo: "hold",
-        processCap: 1,
-      },
+      // Backpropagation Through the Output — the dive lands here.
+      stop(19, 4),
+      // Backprop Through the Tower.
+      { station: 20, dwell: 3, choreo: "sweep-tilt", processCap: 1 },
+      // Then straight on to the end of the line, sprinting through the
+      // parameter matrix, the optimizer state, and the weight update without
+      // stopping: the return leg accelerating to the finish.
+      { ...stop(24, 2), express: true },
     ],
   },
 ];
@@ -273,25 +357,6 @@ export const DIVE_LEGS: readonly FlightLeg[] = [
 /* ------------------------------------------------------------------ *
  * Finale
  * ------------------------------------------------------------------ */
-
-const FINALE_PASSAGE = `The little model started with random weights and no idea what a sentence was.
-Every training step it read a small window of tokens and guessed the next one.
-Every guess was scored, every error flowed backward, and every weight moved a tiny bit.
-Step by step the guesses sharpened. That is all training is: one honest step, repeated.`;
-
-/**
- * Fallback corpus only: the finale first fetches real text files from the
- * local folder served by /api/director/corpus and uses this passage when
- * that folder is unavailable.
- *
- * The local trainer holds out five percent of a one-document corpus for
- * validation, and both splits must contain at least contextLength + 1 bytes.
- * Repeating the short passage keeps the default 128-byte context valid.
- */
-export const FINALE_CORPUS = Array.from(
-  { length: 16 },
-  () => FINALE_PASSAGE,
-).join("\n\n");
 
 export const END_CARD = {
   title: "Inside One Training Step",

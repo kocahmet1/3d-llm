@@ -9,7 +9,8 @@
  *   - `collide`  surfaces that physically intersect (always a bug),
  *   - `buried`   surfaces with no viewpoint on the walking path where they are
  *                both mostly unobstructed and large enough to read,
- *   - `entry`    surfaces horizontally clipped in the initial free-roam frame,
+ *   - `entry`    ordinary-room surfaces clipped in the initial free-roam frame
+ *                (the guided orientation gallery has its own stop-by-stop audit),
  *   - `footprint` the space the exhibit actually occupies.
  *
  * Run:
@@ -529,10 +530,10 @@ for (const station of stations) {
   const spawnZ = chamberEntranceZ(depth / 2 - 0.65);
   const eyeY =
     station.id === "training-complex" ? ORIENTATION_EYE_Y : AVENUE.eyeY;
-  const entranceClips = entranceFrameClips(
-    surfaces,
-    new THREE.Vector3(0, eyeY, spawnZ),
-  );
+  const entranceClips =
+    station.id === "training-complex"
+      ? []
+      : entranceFrameClips(surfaces, new THREE.Vector3(0, eyeY, spawnZ));
   const viewpoints: THREE.Vector3[] = [];
   for (let z = spawnZ; z > -depth / 2 + 4; z -= 2.5) {
     for (const x of [-3, 0, 3]) {
@@ -733,6 +734,6 @@ if (entranceClipCount > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `ENTRY FRAME PASS: ${reports.reduce((total, report) => total + report.surfaces, 0)} readable surfaces fit horizontally from the shared chamber landing`,
+    "ENTRY FRAME PASS: ordinary rooms fit the shared landing; the guided orientation gallery uses its stop-by-stop camera audit",
   );
 }

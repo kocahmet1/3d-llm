@@ -112,13 +112,13 @@ export const CHAMBER_ROOM_PROFILES = {
     relief: "blocks",
   },
   "corpus-data-preparation": {
-    wall: "#526750",
-    floor: "#17261e",
-    trim: "#bac7a8",
+    wall: "#33455f",
+    floor: "#131e2c",
+    trim: "#a9bccf",
     accent: "#ccef89",
-    sky: "#d7dfb4",
-    skyZenith: "#2a2139",
-    fog: "#a9bc91",
+    sky: "#8fb4d4",
+    skyZenith: "#141c38",
+    fog: "#7d9cbd",
     fogDensity: 0.003,
     exposure: 1.04,
     floorPattern: "arcs",
@@ -654,47 +654,210 @@ function addSkyDome(
 }
 
 /**
- * The one chamber that trades the polished veil for a raised tile deck. Data
- * preparation is the chamber where raw material is sorted into discrete cells,
- * so its floor is laid as half-transparent lavender panels with a scattering of
- * quietly backlit ones.
+ * The panel deck: the shared floor grammar for every chamber.
+ *
+ * Data preparation is the chamber where raw material is sorted into discrete
+ * cells, so its floor was first laid as half-transparent lavender panels with a
+ * scattering of quietly backlit ones. That deck now runs through the whole
+ * building — identical grid, seams, thickness, lit scatter and material recipe
+ * — with each room taking its own colourway.
  */
-const GLASS_TILE_FLOOR_STATIONS: ReadonlySet<string> = new Set([
-  "corpus-data-preparation",
-]);
+export interface PanelDeckTier {
+  /** Mesh-name suffix, so each lit state stays separately inspectable. */
+  name: string;
+  color: THREE.Color;
+  opacity: number;
+  emissive: THREE.Color | null;
+  intensity: number;
+}
+
+export interface PanelDeckPalette {
+  /** Unlit, soft-lit, lit. Ordered dark to bright. */
+  tiers: readonly PanelDeckTier[];
+  /** Per-panel drift target, so a large deck never reads as one flat sheet. */
+  tint: THREE.Color;
+}
+
+/** Thickness of the panel layer laid over the structural slab. */
+const PANEL_DECK_THICKNESS = 0.16;
+
+/** Structural slab: centred on the chamber floor datum, 0.4 deep. */
+const FLOOR_SLAB_THICKNESS = 0.4;
 
 /**
- * Every panel is the same lavender; only its lit state separates the tiers.
- * Unlit panels sit low and cool, lit panels rise toward a pale lavender with a
- * matching emissive so they read as switched on rather than as a different
- * material.
+ * The walking surface a chamber's panel deck presents, in chamber-local units.
+ *
+ * The slab is centred at -4.88 and is 0.4 deep, so the panels rest on -4.68 and
+ * their top face lands here. Anything else authored at floor level — lane
+ * plinths, viewing marks, wall seats — should sit on this rather than on the
+ * older -4.7 navigation datum, which is now under glass.
  */
-const GLASS_TILE_TIERS = [
-  { name: "", color: "#5b4d7d", opacity: 0.44, emissive: null, intensity: 0 },
+export const CHAMBER_PANEL_DECK_TOP_Y =
+  -4.88 + FLOOR_SLAB_THICKNESS / 2 + PANEL_DECK_THICKNESS;
+
+/**
+ * The pastel ladder every deck is laid on.
+ *
+ * The deck is deliberately *not* a restatement of the room it sits in. A floor
+ * that repeats the wall palette at wall brightness flattens the chamber: with
+ * nothing separating the ground plane from the massing standing on it, the eye
+ * loses the depth cue and the hall reads as one dark shell. So the deck runs
+ * pale and airy against the room's darker walls, plinths and reliefs — the room
+ * supplies only a hue, and only a whisper of it, while lightness is authored
+ * here and shared by every chamber.
+ *
+ * `lightness` is a target sRGB lightness for a neutral of that value; each hue
+ * is then solved to the same *luminance*, because matching HSL lightness across
+ * hues does not match brightness (a cyan at L=0.9 carries close to a third more
+ * light than a violet at L=0.9). Airy is a diffuse quality, not a bright one:
+ * the emissive strengths stay low so a lit panel reads as switched on rather
+ * than as a lamp competing with the matrices standing over it.
+ */
+const PANEL_DECK_LADDER = [
+  { name: "", lightness: 0.68, saturation: 0.18, opacity: 0.62, intensity: 0 },
   {
     name: "-soft-lit",
-    color: "#a493d2",
-    opacity: 0.56,
-    emissive: "#c3b0ef",
-    intensity: 0.3,
+    lightness: 0.81,
+    saturation: 0.24,
+    opacity: 0.7,
+    emissiveLightness: 0.88,
+    emissiveSaturation: 0.3,
+    intensity: 0.16,
   },
   {
     name: "-lit",
-    color: "#ded4f6",
-    opacity: 0.68,
-    emissive: "#d5c6ff",
-    intensity: 0.6,
+    lightness: 0.91,
+    saturation: 0.28,
+    opacity: 0.78,
+    emissiveLightness: 0.94,
+    emissiveSaturation: 0.34,
+    intensity: 0.34,
   },
 ] as const;
 
-/** Half-transparent lavender glass/hard-plastic panel deck. */
-function addGlassTileDeck(
+/** Per-panel drift within a tier, so a large deck is not one flat sheet. */
+const PANEL_DECK_TINT = { lightness: 0.74, saturation: 0.26 } as const;
+
+/**
+ * Hues written by hand rather than taken from the room profile.
+ *
+ * Data preparation's deck was authored as lavender, which is nothing to do with
+ * that chamber's slate-blue-and-lime palette — and is the better for it. Its hue
+ * is kept while the ladder above brings it up to the building's pastel.
+ */
+const PANEL_DECK_HUES: Readonly<Record<string, number>> = {
+  "corpus-data-preparation": 262 / 360,
+};
+
+/** Relative luminance of a colour, from its linear-light components. */
+function luminance(color: THREE.Color): number {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+}
+
+/**
+ * A colour of the requested hue and saturation, at whatever lightness lands on
+ * the luminance a neutral of the requested lightness would have.
+ *
+ * `setHSL` is monotonic in L at fixed hue and saturation and spans black to
+ * white, so a short bisection always converges.
+ */
+function toneAtLightness(
+  hue: number,
+  saturation: number,
+  lightness: number,
+): THREE.Color {
+  const color = new THREE.Color();
+  // sRGB explicitly: these are authored swatch numbers, and the working-space
+  // default would read them as linear light and blow the deck out.
+  const target = luminance(
+    color.setHSL(0, 0, lightness, THREE.SRGBColorSpace),
+  );
+  let low = 0;
+  let high = 1;
+  for (let step = 0; step < 16; step += 1) {
+    const mid = (low + high) / 2;
+    color.setHSL(hue, saturation, mid, THREE.SRGBColorSpace);
+    if (luminance(color) < target) low = mid;
+    else high = mid;
+  }
+  return color.setHSL(hue, saturation, (low + high) / 2, THREE.SRGBColorSpace);
+}
+
+/**
+ * A chamber's own colourway: the shared pastel ladder, tinted by the room.
+ *
+ * The room contributes hue only — its floor pulled toward its accent, so
+ * neighbouring chambers stay distinguishable underfoot — and the saturations in
+ * the ladder are low enough that the result is a tint rather than a restatement
+ * of the palette. Every chamber's deck therefore sits at the same lightness and
+ * the same distance from its walls, whether the room is a muted violet or a
+ * vivid cyan.
+ */
+function derivePanelDeck(
+  stationId: string,
+  profile: Readonly<ChamberRoomProfile>,
+): PanelDeckPalette {
+  const hsl = { h: 0, s: 0, l: 0 };
+  new THREE.Color(profile.floor)
+    .lerp(new THREE.Color(profile.accent), 0.55)
+    .getHSL(hsl, THREE.SRGBColorSpace);
+  const hue = PANEL_DECK_HUES[stationId] ?? hsl.h;
+
+  return {
+    tiers: PANEL_DECK_LADDER.map((step) => ({
+      name: step.name,
+      color: toneAtLightness(hue, step.saturation, step.lightness),
+      opacity: step.opacity,
+      emissive:
+        "emissiveLightness" in step
+          ? toneAtLightness(hue, step.emissiveSaturation, step.emissiveLightness)
+          : null,
+      intensity: step.intensity,
+    })),
+    tint: toneAtLightness(
+      hue,
+      PANEL_DECK_TINT.saturation,
+      PANEL_DECK_TINT.lightness,
+    ),
+  };
+}
+
+/** The bisection runs once per chamber and the result is reused. */
+const derivedPanelDecks = new Map<string, PanelDeckPalette>();
+
+/** The panel colourway a chamber's floor is laid in. */
+export function getChamberPanelDeck(
+  stationId: string,
+  spatialStyle: ChamberSpatialStyle | string = "panorama",
+): PanelDeckPalette {
+  const cached = derivedPanelDecks.get(stationId);
+  if (cached) return cached;
+  const derived = derivePanelDeck(
+    stationId,
+    getChamberRoomProfile(stationId, spatialStyle),
+  );
+  derivedPanelDecks.set(stationId, derived);
+  return derived;
+}
+
+/**
+ * Half-transparent glass/hard-plastic panel deck.
+ *
+ * Exported so the orientation hall, which builds its own room rather than going
+ * through `buildCraftedChamberDetails`, lays the identical floor.
+ */
+export function addChamberPanelDeck(
   group: THREE.Group,
-  width: number,
-  depth: number,
-  surfaceY: number,
-  seed: number,
+  options: {
+    width: number;
+    depth: number;
+    /** Top face of the structural slab the panels rest on. */
+    surfaceY: number;
+    seed: number;
+    deck: PanelDeckPalette;
+  },
 ): number {
+  const { width, depth, surfaceY, seed, deck } = options;
   // Roughly three units across. Quartering the panel area from the first pass
   // keeps the grid architectural while giving the lit scatter finer grain.
   const targetSpan = 3.1;
@@ -703,13 +866,12 @@ function addGlassTileDeck(
   const spanX = (width - 0.8) / columns;
   const spanZ = (depth - 0.8) / rows;
   const seam = 0.12;
-  const thickness = 0.16;
+  const thickness = PANEL_DECK_THICKNESS;
   const centerY = surfaceY + thickness / 2;
 
   // Three passes rather than per-instance emissive: instanceColor only tints
   // the diffuse term, so lit tiers need their own materials.
-  const batches = GLASS_TILE_TIERS.map(() => createBatch());
-  const tint = new THREE.Color("#8f7fc0");
+  const batches = deck.tiers.map(() => createBatch());
 
   for (let row = 0; row < rows; row += 1) {
     const z = -depth / 2 + 0.4 + (row + 0.5) * spanZ;
@@ -725,27 +887,29 @@ function addGlassTileDeck(
         batches[tier],
         new THREE.Vector3(x, centerY, z),
         new THREE.Vector3(spanX - seam, thickness, spanZ - seam),
-        // Per-panel drift within the same lavender, so a large deck does not
+        // Per-panel drift within the same colourway, so a large deck does not
         // read as one flat sheet.
-        new THREE.Color(GLASS_TILE_TIERS[tier].color).lerp(
-          tint,
-          seededUnit(seed, row * 31 + column * 3) * 0.28,
-        ),
+        deck.tiers[tier].color
+          .clone()
+          .lerp(deck.tint, seededUnit(seed, row * 31 + column * 3) * 0.28),
       );
     }
   }
 
-  GLASS_TILE_TIERS.forEach((tier, index) => {
+  deck.tiers.forEach((tier, index) => {
     addBoxBatch(
       group,
       `chamber-architecture-glass-tile-floor${tier.name}`,
       batches[index],
       new THREE.MeshPhysicalMaterial({
         color: "#ffffff",
-        roughness: 0.14,
+        // Softer than a polished mirror on purpose: a pale panel with a tight
+        // specular would answer every lamp in the room with a hotspot, and a
+        // light floor must not become a glaring one.
+        roughness: 0.22,
         metalness: 0,
-        clearcoat: 0.9,
-        clearcoatRoughness: 0.08,
+        clearcoat: 0.8,
+        clearcoatRoughness: 0.16,
         transparent: true,
         opacity: tier.opacity,
         vertexColors: true,
@@ -761,6 +925,44 @@ function addGlassTileDeck(
   return surfaceY + thickness;
 }
 
+/**
+ * The structural slab a panel deck rests on: what shows through the panels and
+ * along their seams, rather than a floor tone of its own.
+ *
+ * It is pulled most of the way to a cool mid-slate. A near-black slab under
+ * pale glass drags the whole deck back down and turns the seams into a grid of
+ * hard black lines; a slate one keeps the grid legible while the floor stays
+ * light, which is the entire point of the deck.
+ *
+ * Exported for the orientation hall, which has no slab of its own.
+ */
+export function addPanelDeckSlab(
+  group: THREE.Group,
+  width: number,
+  depth: number,
+  floorY: number,
+  floorTone: THREE.ColorRepresentation,
+): number {
+  const slab = new THREE.Mesh(
+    new THREE.BoxGeometry(width, FLOOR_SLAB_THICKNESS, depth),
+    new THREE.MeshStandardMaterial({
+      color: toward(floorTone, "#6d7488", 0.72),
+      roughness: 0.34,
+      metalness: 0.2,
+      normalMap: getSurfaceReliefTexture("floor"),
+      normalScale: new THREE.Vector2(0.09, 0.09),
+      emissive: new THREE.Color(floorTone),
+      emissiveIntensity: 0.06,
+    }),
+  );
+  slab.name = "chamber-architecture-floor-slab";
+  slab.position.y = floorY;
+  slab.receiveShadow = true;
+  slab.userData.preserveShadowSettings = true;
+  group.add(slab);
+  return floorY + FLOOR_SLAB_THICKNESS / 2;
+}
+
 function addFloor(
   group: THREE.Group,
   width: number,
@@ -769,60 +971,19 @@ function addFloor(
   seed: number,
   stationId: string,
   profile: Readonly<ChamberRoomProfile>,
+  spatialStyle: ChamberSpatialStyle,
 ): number {
-  const floorThickness = 0.4;
-  const surfaceY = floorY + floorThickness / 2;
-  const reliefMap = getSurfaceReliefTexture("floor");
-  const glassTiles = GLASS_TILE_FLOOR_STATIONS.has(stationId);
-
-  const slab = new THREE.Mesh(
-    new THREE.BoxGeometry(width, floorThickness, depth),
-    new THREE.MeshStandardMaterial({
-      // Under a translucent deck the slab becomes the shadow gap seen through
-      // and between the panels, so it is darkened rather than left as the
-      // chamber's own floor tone.
-      color: glassTiles ? toward(profile.floor, "#0d0917", 0.62) : profile.floor,
-      roughness: 0.34,
-      metalness: 0.2,
-      normalMap: reliefMap,
-      normalScale: new THREE.Vector2(0.09, 0.09),
-      emissive: profile.floor,
-      emissiveIntensity: glassTiles ? 0.06 : 0.12,
-    }),
-  );
-  slab.name = "chamber-architecture-floor-slab";
-  slab.position.y = floorY;
-  slab.receiveShadow = true;
-  slab.userData.preserveShadowSettings = true;
-  group.add(slab);
-
-  if (glassTiles) {
-    return addGlassTileDeck(group, width, depth, surfaceY, seed);
-  }
-
-  // A light-weight polished veil gives controlled highlights without a
-  // Reflector, render target, or duplicate scene pass.
-  const veil = new THREE.Mesh(
-    new THREE.PlaneGeometry(width - 0.36, depth - 0.36),
-    new THREE.MeshStandardMaterial({
-      color: toward(profile.floor, "#05080d", 0.2),
-      roughness: 0.2,
-      metalness: 0.42,
-      transparent: true,
-      opacity: 0.78,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-    }),
-  );
-  veil.name = "chamber-architecture-polished-floor-veil";
-  veil.rotation.x = -Math.PI / 2;
-  veil.position.y = surfaceY + 0.006;
-  veil.receiveShadow = true;
-  veil.userData.preserveShadowSettings = true;
-  veil.renderOrder = 2;
-  group.add(veil);
-  return surfaceY;
+  // The polished veil the other rooms used to wear is gone: every chamber now
+  // walks on the panel deck, and the slab beneath it is the shadow gap seen
+  // through the glass rather than a visible floor tone.
+  const surfaceY = addPanelDeckSlab(group, width, depth, floorY, profile.floor);
+  return addChamberPanelDeck(group, {
+    width,
+    depth,
+    surfaceY,
+    seed,
+    deck: getChamberPanelDeck(stationId, spatialStyle),
+  });
 }
 
 function addFloorInlays(
@@ -1591,6 +1752,7 @@ export function buildCraftedChamberDetails(
     seed,
     options.stationId,
     profile,
+    spatialStyle,
   );
   addFloorInlays(group, width, depth, surfaceY, seed, profile);
   addWallArchitecture(group, {

@@ -87,12 +87,12 @@ built on the OpenAI **Realtime API** (a realtime speech model), documented under
 The authored route contains 25 stations across six phases:
 
 1. **Orient** — an exhibition hall rather than a walk through a computation.
-   Eight lit placards stand in bays down the gallery, and arriving starts a
-   guided walk that stops square-on in front of each in turn; moving or looking
-   around hands control straight back. They introduce the project and the
-   specimen: the two-sentence corpus, all 2,080 parameters drawn dot by dot,
-   and how this model compares to GPT-2 and GPT-3 in parameters, training text,
-   weight-matrix size, context window, and vocabulary. After the last placard
+   Five warm-white infographic lightboxes sit in angled wall bays, and arriving
+   starts a guided walk that stops square-on in front of each in turn; moving
+   or looking around hands control straight back. They introduce the real GPT-style
+   specimen and its complete two-sentence corpus, open its decoder-only
+   architecture, draw all 2,080 parameters, and compare its context and scale
+   with GPT-2 and GPT-3. After the last placard
    the walk turns to the doorway, where an invitation lights over the lintel,
    and hands control back facing the way on.
 2. **Prepare** — turn source text into context windows, inputs, and separately

@@ -59,6 +59,7 @@ import {
   buildCraftedChamberDetails,
   getChamberEnvironment,
   getChamberRoomProfile,
+  CHAMBER_PANEL_DECK_TOP_Y,
   type ChamberSpatialStyle,
 } from "./chambers/chamberArchitecture";
 
@@ -67,6 +68,7 @@ import {
  * bare 0 because the guided placard walk keys off it in several places.
  */
 const ORIENTATION_STATION_INDEX = 0;
+const DEFAULT_BLOOM_STRENGTH = 0.18;
 import { AVENUE, avenueLaneX, avenueZ } from "./chambers/avenue";
 import {
   bindComponentProcessActor,
@@ -3881,7 +3883,7 @@ type DistinctChamberShellSpec = {
    * dial cannot drift apart.
    *
    * `gallery` is the orientation chamber alone: rather than distributing the
-   * steps of a computation along a walk, it hangs eight lit placards in bays
+   * steps of a computation along a walk, it hangs five lit placards in bays
    * either side of a processional runway and walks the camera to each in turn.
    * Its "stops" are placards.
    */
@@ -3902,7 +3904,7 @@ type DistinctChamberShellSpec = {
  */
 const DISTINCT_CHAMBER_SHELL_SPECS = {
   "training-complex": {
-    size: [66, 56, 84], position: [0, 0, 0], spatialStyle: "panorama",
+    size: [64, 56, 84], position: [0, 0, 0], spatialStyle: "panorama",
     exhibitScale: 1, exhibitPosition: [0, 0, 0],
     layout: "gallery",
     guidedView: { focusY: 2.4, fov: 58 },
@@ -4094,22 +4096,26 @@ function buildAvenueFloor(
     emissiveIntensity: 0.08,
   });
 
-  // The runway itself: a single polished strip the visitor walks along.
-  const runway = new THREE.Mesh(
-    new THREE.BoxGeometry(laneInner * 2, 0.16, runwayDepth),
-    stoneMaterial,
-  );
-  runway.position.set(0, -4.66, runwayCenterZ);
-  context.group.add(runway);
+  // The runway is no longer a stone strip of its own. Every chamber's floor is
+  // now the architecture's panel deck, so the corridor the visitor walks down
+  // *is* that deck — and the lit panels scatter along the spine, which is
+  // exactly where the walk goes. What stays here is the staging that sits on
+  // the deck: the two lane plinths the exhibits stand on, their rims, and a lit
+  // threshold at each stop.
+  const deckTop = CHAMBER_PANEL_DECK_TOP_Y;
+  // Deep enough to still meet the slab under the glass, so a plinth reads as a
+  // solid block set into the deck rather than a slice resting on it.
+  const plinthHeight = 0.42;
+  const plinthTop = deckTop + 0.16;
 
   for (const side of [-1, 1]) {
     const plinth = new THREE.Mesh(
-      new THREE.BoxGeometry(laneWidth, 0.3, runwayDepth),
+      new THREE.BoxGeometry(laneWidth, plinthHeight, runwayDepth),
       stoneMaterial,
     );
     plinth.position.set(
       side * (laneInner + laneWidth / 2),
-      -4.62,
+      plinthTop - plinthHeight / 2,
       runwayCenterZ,
     );
     context.group.add(plinth);
@@ -4125,11 +4131,34 @@ function buildAvenueFloor(
         toneMapped: false,
       }),
     );
-    rim.position.set(side * laneInner, -4.44, runwayCenterZ);
+    rim.position.set(side * laneInner, plinthTop + 0.03, runwayCenterZ);
     context.group.add(rim);
+
+    // Grounding for the lane mass, kept off the corridor: a shadow across the
+    // full avenue would wash out the panels the visitor actually walks over.
+    // Wider than the plinth it sits under, since only the halo that spreads
+    // past the plinth's own footprint is ever visible.
+    const laneShadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(laneWidth * 2, runwayDepth * 1.06),
+      new THREE.MeshBasicMaterial({
+        map: getContactShadowTexture(),
+        color: "#000000",
+        transparent: true,
+        opacity: 0.44,
+        depthWrite: false,
+      }),
+    );
+    laneShadow.rotation.x = -Math.PI / 2;
+    laneShadow.position.set(
+      side * (laneInner + laneWidth / 2),
+      deckTop + 0.012,
+      runwayCenterZ,
+    );
+    laneShadow.renderOrder = 1;
+    context.group.add(laneShadow);
   }
 
-  // A lit threshold across the runway at every stop, so the walk reads as a
+  // A lit threshold across the corridor at every stop, so the walk reads as a
   // numbered sequence of steps rather than an undifferentiated hall.
   for (let stop = 0; stop < stops; stop += 1) {
     const marker = new THREE.Mesh(
@@ -4143,24 +4172,13 @@ function buildAvenueFloor(
         toneMapped: false,
       }),
     );
-    marker.position.set(0, -4.55, avenueZ(stop) + AVENUE.stopSpacing / 2);
+    marker.position.set(
+      0,
+      deckTop + 0.04,
+      avenueZ(stop) + AVENUE.stopSpacing / 2,
+    );
     context.group.add(marker);
   }
-
-  const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(laneOuter * 2.1, runwayDepth * 1.12),
-    new THREE.MeshBasicMaterial({
-      map: getContactShadowTexture(),
-      color: "#000000",
-      transparent: true,
-      opacity: 0.5,
-      depthWrite: false,
-    }),
-  );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.set(0, -4.674, runwayCenterZ);
-  shadow.renderOrder = 1;
-  context.group.add(shadow);
 
   if (context.navigationBounds) {
     // An avenue is authored around one walking eye height, so it overrides the
@@ -4292,7 +4310,7 @@ function buildGalleryFloor(
  * cyberpunk hall with alcove-mounted screens) instead of the shared addShell.
  * Its own lights live in the chamber group, so they are gated by the chamber's
  * visibility and never leak into other stations. Navigation bounds mirror what
- * addShell + buildGalleryFloor set for the current 66x56x84 hall.
+ * addShell + buildGalleryFloor set for the current 64x56x84 hall.
  */
 function buildOrientationChamber(
   context: BuildContext,
@@ -5270,7 +5288,12 @@ export function TrainingWorldCanvas({
     try {
       renderer = new THREE.WebGLRenderer({
         canvas,
-        antialias: true,
+        // No MSAA on the default framebuffer: every frame goes through the
+        // EffectComposer, whose render target carries its own 4x samples, and
+        // the only thing drawn to the canvas is OutputPass's fullscreen quad.
+        // Asking for it here just allocates a multisampled buffer nothing
+        // reads.
+        antialias: false,
         alpha: false,
         powerPreference: "high-performance",
       });
@@ -5408,7 +5431,7 @@ export function TrainingWorldCanvas({
     const renderPass = new RenderPass(scene, camera);
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(1, 1),
-      0.18,
+      DEFAULT_BLOOM_STRENGTH,
       0.25,
       0.9,
     );
@@ -5557,17 +5580,36 @@ export function TrainingWorldCanvas({
 
     let width = 1;
     let height = 1;
+    /**
+     * While a director flight records, render one device pixel per CSS pixel.
+     * A 2x display would otherwise draw four times the pixels that reach the
+     * encoder, and the recorder captures at the backing-store size, so nothing
+     * is lost by matching them — the file becomes a 1:1 read of the
+     * framebuffer instead of a downscale of a needlessly larger one.
+     */
+    let captureSizing = false;
+    /** True only while the director's shader prewarm has the world unhidden. */
+    let prewarming = false;
     const resize = () => {
       const bounds = container.getBoundingClientRect();
       width = Math.max(1, Math.floor(bounds.width || window.innerWidth));
       height = Math.max(1, Math.floor(bounds.height || window.innerHeight));
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      const pixelRatio = captureSizing
+        ? 1
+        : Math.min(window.devicePixelRatio || 1, 2);
       renderer.setPixelRatio(pixelRatio);
       renderer.setSize(width, height, false);
       composer.setPixelRatio(pixelRatio);
       composer.setSize(width, height);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+    };
+    const surfaceSize = () => {
+      const ratio = renderer.getPixelRatio();
+      return {
+        width: Math.max(1, Math.round(width * ratio)),
+        height: Math.max(1, Math.round(height * ratio)),
+      };
     };
     resize();
     const resizeObserver = new ResizeObserver(resize);
@@ -5948,12 +5990,17 @@ export function TrainingWorldCanvas({
     };
 
     const reportMachineRoomCue = (cue: MachineRoomCue | null) => {
-      const cueKey = cue
-        ? `${cue.unitId}:${cue.approaching ? "approaching" : "ready"}`
+      // A flight aims across the desk constantly on its way between zooms;
+      // every pass would raise "Choose a station and scroll to move in" at a
+      // viewer who is not holding a mouse. Suppress at the source rather than
+      // in the HUD, so the cue never enters React state during a take.
+      const next = isDirectorDriving() ? null : cue;
+      const cueKey = next
+        ? `${next.unitId}:${next.approaching ? "approaching" : "ready"}`
         : null;
       if (reportedMachineRoomCueKey === cueKey) return;
       reportedMachineRoomCueKey = cueKey;
-      latest.current.onMachineRoomCueChange(cue);
+      latest.current.onMachineRoomCueChange(next);
     };
 
     const reportTrainingConsoleProximity = (nearby: boolean) => {
@@ -6061,6 +6108,68 @@ export function TrainingWorldCanvas({
       return {
         hitPoint: pickHitPoint,
         hitObject: hit.object,
+        targetId: resolution.target.id,
+        anchorObject,
+        anchorCenter: pickAnchorCenter,
+      };
+    };
+
+    /**
+     * The same pick a right-click produces, but addressed by target id rather
+     * than by where the crosshair happens to point.
+     *
+     * Only the director uses this. A visitor aims and right-clicks; the flight
+     * plan wants to name a matrix ("highlight the attention update") and have
+     * the camera stay wherever the choreography put it. Resolving the exhibit's
+     * canonical object name in the station's group and handing `enterFocus` a
+     * synthesized pick gets exactly the same magnified stage, guide travel, and
+     * React spotlight sequence as the manual gesture.
+     */
+    const pickAssistantTargetById = (
+      currentStation: number,
+      targetId: string,
+    ): AssistantPick | null => {
+      const station = TRAINING_STATIONS[currentStation];
+      const metadata = ASSISTANT_TARGET_WORLD_METADATA[targetId];
+      if (!metadata) return null;
+      const runtime = stationRuntimes[currentStation];
+      runtime.group.updateMatrixWorld(true);
+
+      // Several meshes may share a canonical name (the block's "attention
+      // output" is a plus sign, an equals sign, and a board). Take the first
+      // visible one; they are siblings on the same exhibit.
+      const wanted = new Set<string>([
+        metadata.matching.canonicalObjectName,
+        ...metadata.matching.exactObjectNames,
+      ]);
+      // A highlight sweep swaps straight from one exhibit to the next, so the
+      // lease the *current* focus took out has already hidden this chamber's
+      // exhibit root. Look through it: enterFocus restores the lease before it
+      // takes a new one, so the exhibit will be back by the time it matters.
+      const leasedRoot = focusSourceVisibilityLease?.root ?? null;
+      const matches: THREE.Object3D[] = [];
+      runtime.group.traverse((child) => {
+        if (!child.name || !wanted.has(child.name)) return;
+        if (child.userData.assistantNonInteractive) return;
+        if (!isVisibleThroughAncestor(child, runtime.group, leasedRoot)) return;
+        matches.push(child);
+      });
+      const anchorObject = matches[0];
+      if (!anchorObject) return null;
+
+      assistantTargetBounds.setFromObject(anchorObject, true);
+      if (assistantTargetBounds.isEmpty()) return null;
+      assistantTargetBounds.getCenter(pickAnchorCenter);
+      pickHitPoint.copy(pickAnchorCenter);
+
+      const resolution = resolveAssistantTarget({
+        stationId: station.id,
+        objectAncestryNames: [metadata.matching.canonicalObjectName],
+        explicitTargetId: targetId,
+      });
+      return {
+        hitPoint: pickHitPoint,
+        hitObject: anchorObject,
         targetId: resolution.target.id,
         anchorObject,
         anchorCenter: pickAnchorCenter,
@@ -6717,8 +6826,12 @@ export function TrainingWorldCanvas({
       // here: this is the funnel for "placed at a chamber's spawn" (the dive
       // from the machine room, HUD and voice navigation), whereas walking in
       // through the tunnel sets the pose directly. Someone who walked here on
-      // foot is already steering, and should not have the camera taken away.
-      galleryTourActive = activeStationIndex === ORIENTATION_STATION_INDEX;
+      // foot is already steering, and should not have the camera taken away —
+      // and neither should a director flight, which walks the hall to its own
+      // plan rather than the transport's.
+      galleryTourActive =
+        activeStationIndex === ORIENTATION_STATION_INDEX &&
+        !isDirectorDriving();
       galleryTourSettled = false;
     };
 
@@ -6973,16 +7086,28 @@ export function TrainingWorldCanvas({
       cameraLight.intensity = 1.0;
     };
 
-    /** Begin the zoom dive from the room into the aimed miniature chamber. */
-    const startRoomDive = (unitIndex: number) => {
+    /**
+     * Begin the zoom dive from the room into the aimed miniature chamber.
+     *
+     * `landStation` decouples where the dive *points* from where it *lands*.
+     * Visitors never pass one, but the director does: the orientation gallery
+     * is the prologue to the whole machine and has no miniature of its own, so
+     * the flight dives at the Data Preparation unit and surfaces in the hall.
+     */
+    const startRoomDive = (unitIndex: number, landStation?: number) => {
       if (roomTransition) return;
       const unit = machineRoom.units[unitIndex];
+      const targetStation = THREE.MathUtils.clamp(
+        landStation ?? unit.stationIndex,
+        0,
+        stationRuntimes.length - 1,
+      );
       clearPressedKeys();
       reportMachineRoomCue(null);
       exitFocus();
       if (reduceProcessMotion) {
         roomVeilOpacity = 1;
-        placeIntoChamber(unit.stationIndex);
+        placeIntoChamber(targetStation);
         roomTransition = { mode: "reveal", t: 0 };
         return;
       }
@@ -6996,7 +7121,7 @@ export function TrainingWorldCanvas({
       );
       roomTransition = {
         mode: "dive",
-        targetStation: unit.stationIndex,
+        targetStation,
         t: 0,
         fromPosition: camera.position.clone(),
         fromQuaternion: camera.quaternion.clone(),
@@ -7883,6 +8008,7 @@ export function TrainingWorldCanvas({
           spawnY: bounds.spawn.y,
           spawnZ: bounds.spawn.z,
           portalCenterX: bounds.portalCenterX,
+          entryZ: bounds.entryZ ?? chamberEntranceZ(bounds.maxZ),
         };
       },
       setRoomPose: (x, y, z, yaw, pitch, immediate = false) => {
@@ -7906,11 +8032,11 @@ export function TrainingWorldCanvas({
         pendingDollyDistance = 0;
         verticalRoamEnabled = true;
       },
-      startDive: (station) => {
+      startDive: (station, landStation) => {
         if (navigationRegion.kind !== "machine-room" || roomTransition) {
           return false;
         }
-        startRoomDive(machineRoom.unitIndexForStation(station));
+        startRoomDive(machineRoom.unitIndexForStation(station), landStation);
         return true;
       },
       poseChamber: (station, x, y, z, yaw, pitch, immediate = false) => {
@@ -7966,6 +8092,13 @@ export function TrainingWorldCanvas({
         flashLaser(pick.hitPoint, true);
         return enterFocus(lastRenderedStation, pick);
       },
+      spotlightTarget: (targetId) => {
+        if (navigationRegion.kind !== "chamber" || roomTransition) return false;
+        const pick = pickAssistantTargetById(lastRenderedStation, targetId);
+        if (!pick) return false;
+        flashLaser(pick.hitPoint, true);
+        return enterFocus(lastRenderedStation, pick);
+      },
       releaseSpotlight: () => {
         exitFocus();
       },
@@ -8007,6 +8140,54 @@ export function TrainingWorldCanvas({
           overlookZ: unit.overlookLocal.z,
         };
       },
+      prewarm: async () => {
+        // compileAsync walks the scene with traverseVisible, so anything
+        // currently hidden — every chamber but this one, every detail tier the
+        // HUD is not showing, the focus stage — would be skipped and left to
+        // compile mid-flight. Show the whole graph, compile, then put every
+        // flag back exactly as it was. The render loop holds its last frame
+        // throughout, so none of this reaches the screen.
+        const previousVisibility = new Map<THREE.Object3D, boolean>();
+        prewarming = true;
+        scene.traverse((object) => {
+          previousVisibility.set(object, object.visible);
+          object.visible = true;
+        });
+        try {
+          await renderer.compileAsync(scene, camera);
+        } catch {
+          // A compile failure is not worth aborting a take for: the flight
+          // still runs, it just pays the old per-chamber hitches.
+        } finally {
+          for (const [object, visible] of previousVisibility) {
+            object.visible = visible;
+          }
+          prewarming = false;
+        }
+      },
+      setCaptureSizing: (active) => {
+        captureSizing = active;
+        resize();
+        return surfaceSize();
+      },
+      getSurfaceSize: () => surfaceSize(),
+      getConsoleAnchor: () => {
+        const desk = machineRoom.trainingConsole;
+        return {
+          approachX: desk.approachLocal.x,
+          approachY: desk.approachLocal.y,
+          approachZ: desk.approachLocal.z,
+          screenX: desk.screenLocal.x,
+          screenY: desk.screenLocal.y,
+          screenZ: desk.screenLocal.z,
+        };
+      },
+      openTrainingConsole: () => {
+        const link = trainingConsoleLinkRef.current;
+        if (!link) return false;
+        link.click();
+        return true;
+      },
     };
     registerDirectorCanvas(directorApi);
 
@@ -8039,6 +8220,15 @@ export function TrainingWorldCanvas({
 
     const renderFrame = (now: number) => {
       if (disposed) return;
+      if (prewarming) {
+        // The prewarm pass makes the entire world visible so every program
+        // gets compiled. Drawing during it would show all twenty-five chambers
+        // stacked on top of each other, so hold the last good frame instead —
+        // the canvas simply does not repaint until visibility is restored.
+        lastTime = now;
+        frameHandle = window.requestAnimationFrame(renderFrame);
+        return;
+      }
       const delta = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
       elapsed += delta;
@@ -9435,14 +9625,20 @@ export function TrainingWorldCanvas({
       routeBeacon.material.opacity = 0.14 + flicker * 0.16;
       routeBeacon.light.intensity = 0.2 + flicker * 0.42;
 
-      updateChamberEnvironment(
+      const environmentStation =
         navigationRegion.kind === "machine-room"
           ? null
           : navigationRegion.kind === "tunnel"
             ? navigationRegion.to
-            : activeStationIndex,
-        delta,
-      );
+            : activeStationIndex;
+      updateChamberEnvironment(environmentStation, delta);
+      // White paper is information, not a light source. UnrealBloom is global,
+      // so turn it off only while Orientation is the rendered environment and
+      // restore the neon treatment everywhere else (including machine room).
+      bloomPass.strength =
+        environmentStation === ORIENTATION_STATION_INDEX
+          ? 0
+          : DEFAULT_BLOOM_STRENGTH;
       composer.render();
       frameHandle = window.requestAnimationFrame(renderFrame);
     };

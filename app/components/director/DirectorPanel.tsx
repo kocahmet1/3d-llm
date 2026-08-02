@@ -5,11 +5,14 @@
  * It only appears with `?director=1` in the URL (or Ctrl+Shift+D), lives in
  * the root layout so it survives the hop to /custom-training, and hides
  * itself completely while the take is rolling so the recording stays clean.
- * It also renders the closing end card.
+ * It also renders the flight's title sequence and closing end card — both
+ * belong here rather than in the experience, because the panel is the one
+ * thing that survives the route change to /custom-training.
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
+import { IntroTitleCard } from "../IntroTitleCard";
 import {
   abortFlight,
   setDirectorHooks,
@@ -53,6 +56,17 @@ export function DirectorPanel() {
   const [available, setAvailable] = useState(false);
   const [status, setStatus] = useState<DirectorStatus | null>(null);
   const [endCard, setEndCard] = useState(false);
+  /**
+   * The site's own title sequence, replayed over the flight's opening. Keyed
+   * by take so a second flight in the same session mounts a fresh card — the
+   * component self-unmounts when its timers finish and would not replay
+   * otherwise.
+   */
+  const [titleCard, setTitleCard] = useState(false);
+  const [take, setTake] = useState(0);
+  useEffect(() => {
+    if (titleCard) setTake((current) => current + 1);
+  }, [titleCard]);
 
   useEffect(() => {
     const check = () => {
@@ -76,6 +90,7 @@ export function DirectorPanel() {
     setDirectorHooks({
       onStatus: setStatus,
       showEndCard: setEndCard,
+      showTitleCard: setTitleCard,
       navigate: (path) => router.push(path),
     });
     return () => setDirectorHooks(null);
@@ -88,9 +103,24 @@ export function DirectorPanel() {
   const seconds = Math.floor((status?.elapsedSeconds ?? 0) % 60)
     .toString()
     .padStart(2, "0");
+  /**
+   * A handful of slow frames across two minutes is a browser hiccup, not a
+   * choppy take; the threshold is what a viewer would actually notice. The
+   * worst-frame figure is the honest one — a single 200ms stall reads as a
+   * jolt no matter how good the average is.
+   */
+  const smooth =
+    !!status &&
+    status.frames.totalFrames > 0 &&
+    status.frames.droppedFrames <= 3 &&
+    status.frames.worstFps >= 30;
 
   return (
     <>
+      {titleCard ? (
+        <IntroTitleCard key={`director-title-${take}`} interactive={false} />
+      ) : null}
+
       {endCard ? (
         <div
           style={{
@@ -155,7 +185,7 @@ export function DirectorPanel() {
                 style={buttonStyle}
                 onClick={() => void startFlight({ record: true })}
               >
-                ● Record &amp; fly (~2:45)
+                ● Record &amp; fly (~2:00)
               </button>
               <button
                 type="button"
@@ -165,12 +195,24 @@ export function DirectorPanel() {
                 ▶ Fly without recording
               </button>
               <span style={{ opacity: 0.7 }}>
-                Enable the voice guide first for the live Q&amp;A beat. Esc
-                aborts mid-flight.
-                {status && (phase === "done" || phase === "aborted")
-                  ? ` Last flight: ${status.label.toLowerCase()}.`
-                  : ""}
+                Runs entirely in the world — no trainer or mic needed. Esc
+                aborts mid-flight. Fly once without recording first and check
+                the frame numbers.
               </span>
+              {status && status.frames.totalFrames > 0 ? (
+                <span
+                  style={{
+                    font: "500 0.72rem/1.5 ui-monospace, monospace",
+                    color: smooth ? "#7ee7c4" : "#ffc46b",
+                  }}
+                >
+                  {smooth ? "SMOOTH" : "DROPPING FRAMES"} ·{" "}
+                  {status.frames.averageFps.toFixed(0)} fps avg · worst{" "}
+                  {status.frames.worstFps.toFixed(0)} · {status.frames.droppedFrames}{" "}
+                  slow {status.frames.droppedFrames === 1 ? "frame" : "frames"}
+                  {status.captureSummary ? ` · ${status.captureSummary}` : ""}
+                </span>
+              ) : null}
             </>
           )}
         </aside>

@@ -37,7 +37,7 @@ export interface OrientationRoomOptions {
 }
 
 /** Fixed footprint of the orientation hall (matches the app's shell spec). */
-export const ORIENTATION_ROOM_SIZE = { width: 66, height: 56, depth: 84 };
+export const ORIENTATION_ROOM_SIZE = { width: 64, height: 56, depth: 84 };
 
 function createFacePanelLite(
   text: string,

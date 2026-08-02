@@ -878,6 +878,155 @@ test("the data-preparation chamber is a readable open observation arena", async 
   );
 });
 
+test("the orientation gallery is a five-panel, paper-lightbox briefing", async () => {
+  const [
+    {
+      CHAMBER_PROCESS_STOPS,
+      chamberProcessDurationSeconds,
+      TRAINING_STATIONS,
+    },
+    orientation,
+    craftedRoom,
+    orientationRoom,
+    canvas,
+  ] = await Promise.all([
+    loadTrainingTrace(),
+    readSource("app/components/chambers/orientationGallery.ts"),
+    readSource("app/components/chambers/orientationCrafted.ts"),
+    readSource("app/components/chambers/orientationRoom.ts"),
+    readSource("app/components/TrainingWorldCanvas.tsx"),
+  ]);
+
+  const painterList =
+    /export const SLIDE_PAINTERS = \[([\s\S]*?)\] as const;/.exec(orientation)?.[1] ?? "";
+  const activePainters = painterList.match(/\bpaint[A-Z]\w+/g) ?? [];
+  assert.deepEqual(activePainters, [
+    "paintWelcome",
+    "paintArchitecture",
+    "paintModelSize",
+    "paintContextWindow",
+    "paintWhy",
+  ]);
+  assert.equal(CHAMBER_PROCESS_STOPS["training-complex"], 5);
+  assert.equal(chamberProcessDurationSeconds("training-complex"), 24);
+  assert.equal(
+    chamberProcessDurationSeconds("training-complex") / activePainters.length,
+    4.8,
+    "the first guided stop should own a 4.8-second slice",
+  );
+  assert.equal(
+    TRAINING_STATIONS.find((station) => station.id === "training-complex")
+      ?.scaleLabel,
+    "orientation briefing · 5 slides",
+  );
+
+  assert.match(orientation, /A REAL GPT-STYLE MODEL/);
+  assert.match(orientation, /ITS ENTIRE TRAINING CORPUS/);
+  assert.match(orientation, /ALL THE TEXT THIS MODEL TRAINS ON/);
+  assert.match(orientation, /MODEL AT A GLANCE/);
+  assert.match(orientation, /LEARNED[\s\S]{0,80}?PARAMETERS/);
+  assert.match(orientation, /CONTEXT[\s\S]{0,80}?WINDOW/);
+  assert.match(orientation, /TRANSFORMER[\s\S]{0,80}?LAYERS/);
+  assert.match(orientation, /ATTENTION[\s\S]{0,80}?HEADS/);
+  assert.match(orientation, /HIDDEN STATE/);
+  assert.match(orientation, /VOCABULARY/);
+  assert.doesNotMatch(orientation, /2 SENTENCES · 11 WORDS · 46 BYTES/);
+  assert.doesNotMatch(orientation, /TEXT → PREDICT → LOSS → BACKPROP → UPDATE/);
+
+  assert.match(orientation, /const PAPER = "#fbfaf6"/);
+  assert.match(orientation, /const INK = "#171a1f"/);
+  assert.match(orientation, /PARAMETER SCALE/);
+  assert.match(orientation, /LOGARITHMIC · EACH STEP = 10×/);
+  assert.match(orientation, /CONTEXT LENGTH · LINEAR SCALE/);
+  assert.match(orientation, /ATTENTION/);
+  assert.match(orientation, /CROSS-ENTROPY/);
+  assert.match(orientation, /BACKPROPAGATION/);
+  assert.match(orientation, /ADAMW/);
+  assert.match(orientation, /placard\.faceMaterial\.opacity = 1/);
+  assert.doesNotMatch(orientation, /placard\.faceMaterial\.opacity = 0\.42/);
+
+  const placardBlock = orientation.slice(
+    orientation.indexOf("function createPlacard"),
+    orientation.indexOf("function createInvitation"),
+  );
+  assert.equal(
+    placardBlock.match(/toneMapped: true/g)?.length,
+    2,
+    "both the paper face and number plate should participate in tone mapping",
+  );
+  assert.match(placardBlock, /color: "#efece4"/);
+  assert.match(placardBlock, /emissive: "#000000"[\s\S]{0,80}?emissiveIntensity: 0/);
+  assert.doesNotMatch(placardBlock, /AdditiveBlending|poolMaterial/);
+
+  const craftedLightboxBlock = craftedRoom.slice(
+    craftedRoom.indexOf("// --- Shallow museum lightboxes"),
+    craftedRoom.indexOf("// --- Exit:"),
+  );
+  assert.doesNotMatch(
+    craftedLightboxBlock,
+    /AdditiveBlending|PointLight|emissive:/,
+    "the panel housing should be fully matte",
+  );
+
+  assert.match(orientation, /const CYAN_TINT = "#cfe7e2"/);
+  assert.match(orientation, /const GOLD_TINT = "#eaddbb"/);
+  assert.match(orientation, /paint\.fillStyle = tintFor\(stage\.accent\)/);
+  assert.match(orientation, /const tokenColors = \[GOLD, CYAN, BLUE, GREEN, VIOLET, CYAN\]/);
+  assert.match(orientation, /paint\.fillStyle = tintFor\(tile\.color\)/);
+
+  assert.match(canvas, /const DEFAULT_BLOOM_STRENGTH = 0\.18/);
+  assert.match(
+    canvas,
+    /bloomPass\.strength =\s*environmentStation === ORIENTATION_STATION_INDEX\s*\? 0\s*: DEFAULT_BLOOM_STRENGTH/,
+    "orientation should disable bloom while every other environment restores it",
+  );
+
+  assert.match(orientation, /const PLACARD_W = 16/);
+  assert.match(orientation, /const BAY_X = 23\.5/);
+  assert.match(orientation, /const BAY_Z_START = 27/);
+  assert.match(orientation, /const BAY_Z_STEP = 14\.5/);
+  assert.match(orientation, /const VIEW_AHEAD = 8\.5/);
+  assert.match(orientation, /const VIEW_LATERAL = 8\.5/);
+  assert.match(orientation, /const inner = 16/);
+  const yawDegrees = Math.atan2(23.5 - 8.5, 8.5) * (180 / Math.PI);
+  const readingDistance = Math.hypot(23.5 - 8.5, 8.5);
+  const horizontalProjection =
+    8 / (readingDistance * Math.tan(Math.PI / 6) * (16 / 9));
+  assert.ok(yawDegrees > 60, "the panels should turn decisively toward the promenade");
+  assert.ok(horizontalProjection > 0.42, "a guided panel should fill at least 42% of frame width");
+  const wallInnerX = 64 / 2 - 0.4 / 2;
+  const housingOuterX =
+    23.5 +
+    ((16 + 1.4) / 2) * Math.cos((yawDegrees * Math.PI) / 180) +
+    (0.42 + 0.34 / 2) * Math.sin((yawDegrees * Math.PI) / 180);
+  const housingWallGap = wallInnerX - housingOuterX;
+  assert.ok(
+    housingWallGap >= 3 && housingWallGap <= 4,
+    "the bays should leave a visible air gap in front of the cube walls",
+  );
+  const deepestCubeReliefX = 64 / 2 - 1.9 - 0.4 - 0.15 - 0.31;
+  assert.ok(
+    deepestCubeReliefX - housingOuterX >= 0.75,
+    "the continuous cube relief should remain behind the panel housing",
+  );
+
+  assert.match(craftedRoom, /const WIDTH = 64/);
+  assert.match(craftedRoom, /behindPlacard/);
+  assert.match(craftedRoom, /behindExitPlacard/);
+  assert.doesNotMatch(craftedRoom, /if \(behind(?:Exit)?Placard\) continue/);
+  assert.equal(
+    craftedRoom.match(/\bcontinue;/g)?.length,
+    1,
+    "only the two real portal openings should interrupt the cube grid",
+  );
+  assert.match(craftedRoom, /if \(Math\.abs\(x\) < 7\.6 && y < 9\) continue/);
+  assert.match(craftedRoom, /behindPlacard \? 1\.55 \+ r \* 0\.35/);
+  assert.match(craftedRoom, /behindExitPlacard \? 1\.55 \+ r \* 0\.35/);
+  assert.match(craftedRoom, /cubes\.name = "orientation-wall-cubes"/);
+  assert.match(orientationRoom, /ORIENTATION_ROOM_SIZE = \{ width: 64, height: 56, depth: 84 \}/);
+  assert.match(canvas, /size: \[64, 56, 84\][\s\S]{0,80}?spatialStyle: "panorama"/);
+});
+
 test("distinct chamber builders cover every non-Corpus station with trace-correct operations", async () => {
   const [
     { TRAINING_STATIONS },

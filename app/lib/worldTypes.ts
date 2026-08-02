@@ -115,6 +115,13 @@ export interface TrainingHUDProps
   movementDiscovered: boolean;
   introTour: IntroTourState;
   /**
+   * Presentation mode: a director flight is filming, so suppress the HUD's
+   * coaching cues. They teach a visitor who has just arrived and is about to
+   * press something — in a recorded walkthrough there is nobody to teach, and
+   * the flight enters enough chambers that they would fire almost constantly.
+   */
+  presenting?: boolean;
+  /**
    * Still read, though the corpus chamber no longer has a transport of its own:
    * the journey button waits for data preparation to finish before it will
    * carry the visitor onward. The dial drives that sequence now.

@@ -40,17 +40,26 @@ export function createFocusVisibilityLease<T extends FocusVisibilityNode>(
   };
 }
 
-/** Three.js raycasting ignores `visible`, so picks need an explicit check. */
+/**
+ * Three.js raycasting ignores `visible`, so picks need an explicit check.
+ *
+ * `leasedRoot` opts one node out of the check. Pass the active lease's root
+ * when choosing what to magnify *next* while a focus is already up: the lease
+ * has hidden the exhibit container, but the exhibit is still there as far as
+ * picking a replacement target goes, and without this a spotlight could never
+ * be swapped for another — only released and re-taken.
+ */
 export function isVisibleThroughAncestor(
   node: FocusVisibilityNode,
   ancestorBoundary: FocusVisibilityNode,
+  leasedRoot?: FocusVisibilityNode | null,
 ): boolean {
   for (
     let cursor: FocusVisibilityNode | null = node;
     cursor;
     cursor = cursor.parent
   ) {
-    if (!cursor.visible) return false;
+    if (!cursor.visible && cursor !== leasedRoot) return false;
     if (cursor === ancestorBoundary) return true;
   }
   return false;

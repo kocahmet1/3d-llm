@@ -69,6 +69,8 @@ export interface MachineRoomTrainingConsoleRuntime {
   approachLocal: THREE.Vector3;
   /** Wake radius for the DOM call to action. */
   activationRadius: number;
+  /** Room-local center of the console's screen face — what a camera aims at. */
+  screenLocal: THREE.Vector3;
 }
 
 export interface MachineRoomRuntime {
@@ -1444,6 +1446,12 @@ export function createMachineRoom(): MachineRoomRuntime {
   const trainingConsole: MachineRoomTrainingConsoleRuntime = {
     approachLocal: new THREE.Vector3(5.05, bounds.walkY, -3.65),
     activationRadius: 2.55,
+    // Read off the screen mesh rather than restated by hand, so the cabinet can
+    // be moved or re-angled without stranding whatever aims at it.
+    screenLocal: consoleScreen.position
+      .clone()
+      .applyEuler(trainingConsoleGroup.rotation)
+      .add(trainingConsoleGroup.position),
   };
   let trainingConsoleWake = 0;
 

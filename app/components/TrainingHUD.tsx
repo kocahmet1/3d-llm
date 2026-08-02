@@ -144,6 +144,7 @@ export function TrainingHUD({
   machineRoomCue,
   movementDiscovered,
   introTour,
+  presenting = false,
   detailMode,
   branchSide,
   dataPrepProgress,
@@ -225,7 +226,7 @@ export function TrainingHUD({
   useEffect(() => {
     let timer: number | undefined;
     const frame = window.requestAnimationFrame(() => {
-      const enteringChamber = navigationMode === "free-roam";
+      const enteringChamber = navigationMode === "free-roam" && !presenting;
       setChamberEntryHint(enteringChamber);
       if (enteringChamber) {
         timer = window.setTimeout(() => setChamberEntryHint(false), 7000);
@@ -235,7 +236,7 @@ export function TrainingHUD({
       window.cancelAnimationFrame(frame);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [navigationMode]);
+  }, [navigationMode, presenting]);
   const fullCodeDialogId = useId();
   const fullCodeDialogTitleId = useId();
   const fullCodeDialogDescriptionId = useId();
@@ -705,6 +706,7 @@ export function TrainingHUD({
       !movementDiscovered &&
       introTour === null &&
       !machineRoomCue &&
+      !presenting &&
       !usesCoarsePointer ? (
         <div className={styles.movementCue} role="status" aria-live="polite">
           <span className={styles.movementKeys} aria-label="W A S D keys">
@@ -717,7 +719,7 @@ export function TrainingHUD({
         </div>
       ) : null}
 
-      {chamberEntryHint && introTour !== "touring" ? (
+      {chamberEntryHint && introTour !== "touring" && !presenting ? (
         <div
           className={styles.chamberEntryCue}
           role="status"

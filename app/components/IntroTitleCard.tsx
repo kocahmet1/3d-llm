@@ -11,13 +11,34 @@ const CREDIT_MS = 3_500; // "Built with GPT 5.6 Ultra & Codex"
 const CLOSE_MS = 950; // backdrop fade-out (matches the CSS transition)
 
 /**
- * A one-shot cinematic intro that plays on first page load: a beat of black,
- * the app title held for ~4s, the build credit for ~2s, then the backdrop
- * dissolves to reveal the 3D scene. Self-unmounts when finished; clicking or
- * pressing Esc/Enter skips ahead. Starts in "enter" (hidden) so the reveal
- * transition actually plays on the frame after mount.
+ * Total run time of the sequence.
+ *
+ * Exported for the director flight, which plays the same titles over its
+ * opening machine-room move. The overlay is transparent, so the two run
+ * concurrently and the titles cost the film nothing — but the opening has to
+ * be at least this long or the credit would still be on screen when the
+ * camera dives.
  */
-export function IntroTitleCard() {
+export const INTRO_TITLE_TOTAL_MS = TITLE_MS + CREDIT_MS + CLOSE_MS;
+
+export interface IntroTitleCardProps {
+  /**
+   * Show the Skip button and honour Esc/Enter. Off for the director flight:
+   * a "SKIP" pill in the corner of a finished video is a bug, and Esc belongs
+   * to the flight's own abort.
+   */
+  interactive?: boolean;
+}
+
+/**
+ * A one-shot cinematic intro that plays on first page load: the app title
+ * held for ~4s, the build credit for ~3.5s, then the last text dissolves. The
+ * overlay itself is transparent — the titles are drawn over the live 3D scene
+ * rather than over a card. Self-unmounts when finished; clicking or pressing
+ * Esc/Enter skips ahead. Starts in "enter" (hidden) so the reveal transition
+ * actually plays on the frame after mount.
+ */
+export function IntroTitleCard({ interactive = true }: IntroTitleCardProps = {}) {
   const [phase, setPhase] = useState<IntroPhase>("enter");
   const timers = useRef<number[]>([]);
 
@@ -60,12 +81,13 @@ export function IntroTitleCard() {
   }, [clearTimers]);
 
   useEffect(() => {
+    if (!interactive) return undefined;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" || event.key === "Enter") skip();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [skip]);
+  }, [interactive, skip]);
 
   if (phase === "done") return null;
 
@@ -86,14 +108,16 @@ export function IntroTitleCard() {
           </span>
         </div>
       </div>
-      <button
-        type="button"
-        className={styles.skip}
-        tabIndex={-1}
-        onClick={skip}
-      >
-        Skip
-      </button>
+      {interactive ? (
+        <button
+          type="button"
+          className={styles.skip}
+          tabIndex={-1}
+          onClick={skip}
+        >
+          Skip
+        </button>
+      ) : null}
     </div>
   );
 }

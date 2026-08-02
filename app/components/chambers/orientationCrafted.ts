@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { Reflector } from "three/examples/jsm/objects/Reflector.js";
 
 import {
   ORIENTATION_TOUR_STOPS,
@@ -7,6 +6,13 @@ import {
   ORIENTATION_PLACARD,
 } from "./orientationGallery";
 import { addInstancedBoxes } from "./roomKit";
+import {
+  addChamberPanelDeck,
+  addPanelDeckSlab,
+  getChamberPanelDeck,
+  CHAMBER_PANEL_DECK_TOP_Y,
+  CHAMBER_ROOM_PROFILES,
+} from "./chamberArchitecture";
 import type { RoomPalette, OrientationRoomOptions } from "./orientationRoom";
 
 /**
@@ -28,7 +34,7 @@ export const ORIENTATION_ENVIRONMENT = {
   exposure: 1.02,
 } as const;
 
-const WIDTH = 66;
+const WIDTH = 64;
 const HEIGHT = 56;
 const DEPTH = 84;
 const DECK_Y = -4.7;
@@ -183,31 +189,33 @@ export function buildCraftedRoom(
     roughness: 0.5,
     metalness: 0.45,
   });
-  // --- Floor: polished cool graphite with a real, tasteful reflection -----
-  const floor = new Reflector(new THREE.PlaneGeometry(WIDTH - WALL_T, DEPTH - WALL_T), {
-    textureWidth: 1024,
-    textureHeight: 1024,
-    color: new THREE.Color("#46693a"),
-  });
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = FLOOR_Y + WALL_T / 2 + 0.001;
-  add(floor);
-  const floorVeil = new THREE.Mesh(
-    new THREE.PlaneGeometry(WIDTH - WALL_T, DEPTH - WALL_T),
-    new THREE.MeshStandardMaterial({
-      color: new THREE.Color("#425e37"),
-      transparent: true,
-      // The veil leaves 19% of the reflector visible (half the previous 38%).
-      opacity: 0.81,
-      roughness: 0.5,
-      metalness: 0.22,
-      depthWrite: false,
-    }),
-  );
-  floorVeil.rotation.x = -Math.PI / 2;
-  floorVeil.position.y = FLOOR_Y + WALL_T / 2 + 0.006;
-  floorVeil.receiveShadow = true;
-  add(floorVeil);
+  // --- Floor: the building's panel deck, in the hall's own colourway ------
+  // The hall used to wear a mirror: a Reflector under a green veil. It now lays
+  // the same half-transparent panel deck every other chamber walks on, so the
+  // visitor's first floor is the floor they keep meeting. Its dark slab is what
+  // shows through and between the panels, and dropping the Reflector also drops
+  // a 1024x1024 render-target pass from the opening scene.
+  {
+    const deckGroup = new THREE.Group();
+    deckGroup.name = "orientation-panel-deck";
+    const surfaceY = addPanelDeckSlab(
+      deckGroup,
+      WIDTH - WALL_T,
+      DEPTH - WALL_T,
+      FLOOR_Y,
+      CHAMBER_ROOM_PROFILES["training-complex"].floor,
+    );
+    addChamberPanelDeck(deckGroup, {
+      width: WIDTH - WALL_T,
+      depth: DEPTH - WALL_T,
+      surfaceY,
+      // Fixed rather than derived: the hall is authored, so its lit panels
+      // must fall in the same places every visit.
+      seed: 0x0721e5,
+      deck: getChamberPanelDeck("training-complex"),
+    });
+    add(deckGroup);
+  }
 
   // No ceiling: the hall opens to a gradient sky (added below). The walls are
   // capped just above the cube towers so the top edge is ragged blocks, not a
@@ -240,11 +248,17 @@ export function buildCraftedRoom(
     for (const side of [-1, 1]) {
       for (let z = zStart; z <= zEnd; z += cell) {
         for (let y = yStart; y <= yEnd; y += cell) {
+          // Keep the cube grid continuous behind every panel. Cells directly
+          // behind a housing are shallower, leaving a real air gap without an
+          // empty patch of flat backing wall.
+          const behindPlacard = ORIENTATION_BAYS.some(
+            (bay) => bay.side === side && Math.abs(z - bay.z) < 11 && y < 10.5,
+          );
           const hash = Math.sin(z * 12.9898 + y * 78.233 + side * 37.719) * 43758.5453;
           const r = hash - Math.floor(hash);
           const t = THREE.MathUtils.clamp((y - yStart) / (yEnd - yStart), 0, 1);
-          const blockDepth = 1.5 + r * 1.4;
-          const protrude = 0.1 + r * 1.7;
+          const blockDepth = behindPlacard ? 1.55 + r * 0.35 : 1.5 + r * 1.4;
+          const protrude = behindPlacard ? 0.15 + r * 0.25 : 0.1 + r * 1.7;
           positions.push(
             new THREE.Vector3(side * (WIDTH / 2 - blockDepth / 2 - protrude), y, z),
           );
@@ -269,16 +283,22 @@ export function buildCraftedRoom(
     // occluded.
     const xStart = -WIDTH / 2 + cell / 2;
     const xEnd = WIDTH / 2 - cell / 2;
+    const lastBay = ORIENTATION_BAYS[ORIENTATION_BAYS.length - 1];
     for (const endZ of [-DEPTH / 2, DEPTH / 2]) {
       const dir = endZ < 0 ? 1 : -1;
       for (let x = xStart; x <= xEnd; x += cell) {
         for (let y = yStart; y <= yEnd; y += cell) {
           if (Math.abs(x) < 7.6 && y < 9) continue;
+          const behindExitPlacard =
+            endZ < 0 &&
+            lastBay !== undefined &&
+            Math.abs(x - lastBay.x) < 10.5 &&
+            y < 10.5;
           const hash = Math.sin(x * 26.51 + y * 78.233 + endZ * 0.137) * 43758.5453;
           const r = hash - Math.floor(hash);
           const t = THREE.MathUtils.clamp((y - yStart) / (yEnd - yStart), 0, 1);
-          const blockDepth = 1.5 + r * 1.4;
-          const protrude = 0.1 + r * 1.7;
+          const blockDepth = behindExitPlacard ? 1.55 + r * 0.35 : 1.5 + r * 1.4;
+          const protrude = behindExitPlacard ? 0.15 + r * 0.25 : 0.1 + r * 1.7;
           positions.push(
             new THREE.Vector3(x, y, endZ + dir * (blockDepth / 2 + protrude)),
           );
@@ -312,6 +332,7 @@ export function buildCraftedRoom(
       scales,
       colors,
     );
+    cubes.name = "orientation-wall-cubes";
     cubes.castShadow = true;
     cubes.receiveShadow = true;
     add(cubes);
@@ -377,26 +398,25 @@ export function buildCraftedRoom(
     add(dome);
   }
 
-  // --- Purpose-built cyberpunk alcoves behind each screen -----------------
-  // Each screen is seated in an angled housing aligned to its bay: a recessed
-  // backing with a metal surround, side fins for niche depth, a canopy hood and
-  // a solid base — plus a soft back-lit rim in that screen's accent, so the
-  // colour lives in the alcove while the hall stays neutral.
+  // --- Shallow museum lightboxes seated into the side-wall recesses --------
+  // The page is the visual object now: pale brushed metal and a narrow support
+  // replace the old black monitor housing. Nothing here emits or blooms.
   const W = ORIENTATION_PLACARD.width;
   const H = ORIENTATION_PLACARD.height;
   const housingMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color("#0d131b"),
-    roughness: 0.5,
-    metalness: 0.6,
+    color: new THREE.Color("#c9ced0"),
+    roughness: 0.58,
+    metalness: 0.24,
   });
   const surroundMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color("#8b98a7"),
-    roughness: 0.38,
-    metalness: 0.64,
+    color: new THREE.Color("#eeeae2"),
+    roughness: 0.46,
+    metalness: 0.3,
   });
   for (const bay of ORIENTATION_BAYS) {
-    const floorLocal = -4.7 - bay.y;
-    const accent = new THREE.Color(bay.accent);
+    // Measured from the deck the wall-seat lands on, not the older navigation
+    // datum, which is now under glass.
+    const floorLocal = CHAMBER_PANEL_DECK_TOP_Y - bay.y;
     const g = new THREE.Group();
     g.position.set(bay.x, bay.y, bay.z);
     g.rotation.y = bay.yaw;
@@ -408,38 +428,23 @@ export function buildCraftedRoom(
       g.add(m);
       return m;
     };
-    // Recessed backing slab.
-    bb(W + 2.8, H + 2.8, 0.5, 0, 0, -0.66, housingMat);
-    // Back-lit accent rim glowing around the screen.
-    const glow = new THREE.Mesh(
-      new THREE.PlaneGeometry(W + 1.8, H + 1.8),
-      new THREE.MeshBasicMaterial({
-        color: accent,
-        transparent: true,
-        opacity: 0.5,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      }),
-    );
-    glow.position.set(0, 0, -0.52);
-    glow.renderOrder = 6;
-    g.add(glow);
+    // Shallow backing slab tucked into the carved wall recess.
+    bb(W + 1.4, H + 1.4, 0.34, 0, 0, -0.42, housingMat);
     // Metal surround frame.
-    const t = 0.5;
-    bb(W + t * 2, t, 0.62, 0, H / 2 + t / 2, 0.06, surroundMat);
-    bb(W + t * 2, t, 0.62, 0, -H / 2 - t / 2, 0.06, surroundMat);
-    bb(t, H + t * 2, 0.62, -W / 2 - t / 2, 0, 0.06, surroundMat);
-    bb(t, H + t * 2, 0.62, W / 2 + t / 2, 0, 0.06, surroundMat);
-    // Side fins give the niche real depth.
-    bb(0.34, H + 2.4, 1.3, -(W / 2 + 1.05), 0, -0.2, housingMat);
-    bb(0.34, H + 2.4, 1.3, W / 2 + 1.05, 0, -0.2, housingMat);
-    // Canopy hood, tilted down over the screen.
-    const hood = bb(W + 1.6, 0.55, 1.6, 0, H / 2 + 1.0, 0.35, surroundMat);
-    hood.rotation.x = -0.18;
-    // Solid base wrapping the screen's pylon down to the floor.
+    const t = 0.28;
+    bb(W + t * 2, t, 0.34, 0, H / 2 + t / 2, 0.03, surroundMat);
+    bb(W + t * 2, t, 0.34, 0, -H / 2 - t / 2, 0.03, surroundMat);
+    bb(t, H + t * 2, 0.34, -W / 2 - t / 2, 0, 0.03, surroundMat);
+    bb(t, H + t * 2, 0.34, W / 2 + t / 2, 0, 0.03, surroundMat);
+    // Thin side returns and a shallow picture light finish the installation.
+    bb(0.2, H + 1.4, 0.72, -(W / 2 + 0.65), 0, -0.18, housingMat);
+    bb(0.2, H + 1.4, 0.72, W / 2 + 0.65, 0, -0.18, housingMat);
+    const hood = bb(W + 0.8, 0.28, 0.75, 0, H / 2 + 0.58, 0.16, surroundMat);
+    hood.rotation.x = -0.12;
+    // A narrow wall-seat reaches the floor without becoming a black plinth.
     const baseTop = -H / 2 - 0.25;
     const baseH = baseTop - floorLocal;
-    bb(W * 0.82, baseH, 2.1, 0, floorLocal + baseH / 2, -0.05, housingMat);
+    bb(W * 0.24, baseH, 0.8, 0, floorLocal + baseH / 2, -0.08, housingMat);
     add(g);
   }
 
@@ -495,7 +500,7 @@ export function buildCraftedRoom(
     metalness: 0.1,
     flatShading: true,
   });
-  for (const [z, side] of [[23.5, -1], [23.5, 1]] as const) {
+  for (const [z, side] of [[37, -1], [37, 1]] as const) {
     const gx = side * (WIDTH / 2 - 3.6);
     box(add, 2.2, 3.0, 2.2, gx, FLOOR_Y + 1.5, z, trimMat);
     const gem = new THREE.Mesh(new THREE.OctahedronGeometry(1.15, 0), gemMat);
@@ -515,14 +520,15 @@ export function buildCraftedRoom(
       new THREE.MeshBasicMaterial({
         color: new THREE.Color("#ffce8f"),
         transparent: true,
-        opacity: 0.3,
-        blending: THREE.AdditiveBlending,
+        opacity: 0.42,
+        blending: THREE.NormalBlending,
         depthWrite: false,
         side: THREE.DoubleSide,
       }),
     );
     mark.rotation.x = -Math.PI / 2;
-    mark.position.set(stop.eye[0], FLOOR_Y + WALL_T / 2 + 0.05, stop.eye[2]);
+    // On the panel deck, not on the slab beneath it.
+    mark.position.set(stop.eye[0], CHAMBER_PANEL_DECK_TOP_Y + 0.05, stop.eye[2]);
     add(mark);
   }
 
@@ -536,8 +542,8 @@ export function buildCraftedRoom(
   key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 1;
   key.shadow.camera.far = 96;
-  key.shadow.camera.left = -32;
-  key.shadow.camera.right = 32;
+  key.shadow.camera.left = -40;
+  key.shadow.camera.right = 40;
   key.shadow.camera.top = 42;
   key.shadow.camera.bottom = -12;
   key.shadow.bias = -0.0004;

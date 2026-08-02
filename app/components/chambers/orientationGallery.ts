@@ -8,6 +8,7 @@ import {
   TEACHING_MODEL,
   TEACHING_MODEL_PARAMETERS,
 } from "../../lib/trainingTrace";
+import { CHAMBER_PANEL_DECK_TOP_Y } from "./chamberArchitecture";
 import { createNeonFrame } from "./processShared";
 import type {
   ChamberProcessContext,
@@ -23,34 +24,47 @@ import type {
  * have no spatial shape. Laying them out along a runway like a computation
  * produced a crowded room where every exhibit competed for one sightline.
  *
- * So the room is an exhibition hall instead: eight lit placards in bays that
+ * So the room is an exhibition hall instead: five warm-white lightboxes in bays that
  * alternate down the gallery, each turned square-on to a viewing mark, and a
  * guided walk that takes the visitor to each in turn. The angle is what makes
- * it work — from any mark the placard being read fills about three quarters of
- * the view while its neighbours are steeply oblique. `.qa/verify-gallery-tour.mjs`
+ * it work — from any mark the page being read fills about 45% of the frame
+ * while its neighbours are steeply oblique. `.qa/verify-gallery-tour.mjs`
  * checks exactly that, stop by stop.
  *
  * Placard faces are drawn as full canvas compositions rather than assembled
- * from value boards, because a page wants typography and diagrams — a gold
- * speck inside GPT-2's weight matrix says more about scale than any label.
- * Every figure comes from `trainingTrace.ts`, so the gallery cannot drift from
- * the model it describes.
+ * from value boards, because a page wants typography and diagrams. Every
+ * figure comes from `trainingTrace.ts`, so the gallery cannot drift from the
+ * model it describes.
  */
 
-const INK = "rgba(244, 251, 255, 0.97)";
-const DIM_INK = "rgba(186, 212, 232, 0.82)";
-const FAINT_INK = "rgba(150, 178, 200, 0.7)";
-const CYAN = "#47d7ff";
-const BLUE = "#76a9ff";
-const VIOLET = "#b59cff";
-const GREEN = "#69efb6";
-const GOLD = "#ffd166";
-const MAGENTA = "#ff70d5";
+const PAPER = "#fbfaf6";
+const PAPER_ALT = "#f2efe7";
+const INK = "#171a1f";
+const DIM_INK = "#3f4954";
+const FAINT_INK = "#5f6872";
+const RULE = "#c4bcaf";
+// Saturated enough to organize a white page, dark enough to remain readable.
+const CYAN = "#14796f";
+const BLUE = "#285fab";
+const VIOLET = "#654c9d";
+const GREEN = "#267052";
+const GOLD = "#986500";
+const MAGENTA = "#a44769";
+
+// Opaque print tints: color should organize whole information regions, not
+// disappear into hairline rules. These remain pale enough for black body copy.
+const CYAN_TINT = "#cfe7e2";
+const BLUE_TINT = "#d7e2f2";
+const VIOLET_TINT = "#e0d9ee";
+const GREEN_TINT = "#d5e7da";
+const GOLD_TINT = "#eaddbb";
+const MAGENTA_TINT = "#e9d7df";
 
 /** Slide canvas resolution: 16:9, sharp enough to fill most of the view. */
 const SLIDE_W = 1024;
 const SLIDE_H = 576;
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
+const SANS = '"Segoe UI", Inter, Arial, sans-serif';
 
 function withThousands(value: number) {
   return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -65,6 +79,25 @@ function approximately(value: number) {
 }
 
 type Paint = CanvasRenderingContext2D;
+
+function tintFor(accent: string) {
+  switch (accent) {
+    case CYAN:
+      return CYAN_TINT;
+    case BLUE:
+      return BLUE_TINT;
+    case VIOLET:
+      return VIOLET_TINT;
+    case GREEN:
+      return GREEN_TINT;
+    case GOLD:
+      return GOLD_TINT;
+    case MAGENTA:
+      return MAGENTA_TINT;
+    default:
+      return PAPER_ALT;
+  }
+}
 
 /**
  * Greedy word wrap. The layout audit runs the builders against a stubbed
@@ -91,34 +124,49 @@ function wrapText(paint: Paint, text: string, maxWidth: number): string[] {
 
 function slideBackdrop(paint: Paint, accent: string) {
   const backdrop = paint.createLinearGradient(0, 0, 0, SLIDE_H);
-  backdrop.addColorStop(0, "rgba(9, 18, 32, 0.99)");
-  backdrop.addColorStop(0.55, "rgba(4, 10, 20, 0.99)");
-  backdrop.addColorStop(1, "rgba(6, 13, 24, 0.99)");
+  backdrop.addColorStop(0, "#fdfcf8");
+  backdrop.addColorStop(0.58, PAPER);
+  backdrop.addColorStop(1, "#f7f4ec");
   paint.fillStyle = backdrop;
   paint.fillRect(0, 0, SLIDE_W, SLIDE_H);
-  // A single accent hairline under the title keeps the deck feeling authored
-  // rather than like a stack of unrelated boards.
+
+  // A colored header field and deterministic paper fibres make the surface
+  // read as a printed museum sheet rather than a luminous dashboard.
+  paint.fillStyle = tintFor(accent);
+  paint.fillRect(24, 22, SLIDE_W - 48, 92);
   paint.fillStyle = accent;
-  paint.globalAlpha = 0.55;
-  paint.fillRect(64, 104, 150, 3);
-  paint.globalAlpha = 1;
+  paint.fillRect(24, 22, 9, SLIDE_H - 44);
+  paint.fillStyle = "rgba(23, 26, 31, 0.025)";
+  for (let fibre = 0; fibre < 28; fibre += 1) {
+    const x = 30 + ((fibre * 83) % 860);
+    const y = 128 + fibre * 14;
+    paint.fillRect(x, y, 54 + (fibre % 5) * 24, 1);
+  }
+
+  paint.strokeStyle = RULE;
+  paint.lineWidth = 1;
+  paint.strokeRect(24.5, 22.5, SLIDE_W - 49, SLIDE_H - 45);
+  paint.fillStyle = accent;
+  paint.fillRect(64, 108, 154, 4);
+  paint.fillStyle = RULE;
+  paint.fillRect(64, SLIDE_H - 54, SLIDE_W - 128, 1);
 }
 
 function drawTitle(paint: Paint, title: string, kicker: string) {
   paint.textAlign = "left";
   paint.textBaseline = "alphabetic";
   paint.fillStyle = FAINT_INK;
-  paint.font = `700 17px ${MONO}`;
+  paint.font = `700 16px ${SANS}`;
   paint.fillText(kicker, 64, 52, SLIDE_W - 200);
   paint.fillStyle = INK;
-  paint.font = `800 37px ${MONO}`;
+  paint.font = `800 40px ${SANS}`;
   paint.fillText(title, 64, 92, SLIDE_W - 128);
 }
 
 function drawFooter(paint: Paint, text: string, index: number, count: number) {
   paint.textAlign = "left";
   paint.fillStyle = FAINT_INK;
-  paint.font = `700 16px ${MONO}`;
+  paint.font = `650 15px ${SANS}`;
   paint.fillText(text, 64, SLIDE_H - 30, SLIDE_W - 220);
   paint.textAlign = "right";
   paint.fillText(`${index + 1} / ${count}`, SLIDE_W - 64, SLIDE_H - 30);
@@ -135,7 +183,7 @@ function drawBody(
 ) {
   paint.textAlign = "left";
   paint.fillStyle = color;
-  paint.font = `600 ${size}px ${MONO}`;
+  paint.font = `600 ${size}px ${SANS}`;
   const lines = wrapText(paint, text, maxWidth);
   lines.forEach((line, index) => {
     paint.fillText(line, x, y + index * (size * 1.5), maxWidth);
@@ -155,11 +203,41 @@ function drawStat(
 ) {
   paint.textAlign = "left";
   paint.fillStyle = color;
-  paint.font = `800 ${size}px ${MONO}`;
+  paint.font = `800 ${size}px ${SANS}`;
   paint.fillText(value, x, y, SLIDE_W - x - 48);
   paint.fillStyle = FAINT_INK;
-  paint.font = `700 15px ${MONO}`;
+  paint.font = `700 15px ${SANS}`;
   paint.fillText(caption, x, y + 24, SLIDE_W - x - 48);
+}
+
+/** One large, glance-readable specification tile on the opening placard. */
+function drawSpecCard(
+  paint: Paint,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  value: string,
+  labels: readonly string[],
+  accent: string,
+) {
+  paint.fillStyle = tintFor(accent);
+  paint.fillRect(x, y, width, height);
+  paint.strokeStyle = RULE;
+  paint.lineWidth = 1;
+  paint.strokeRect(x, y, width, height);
+  paint.fillStyle = accent;
+  paint.fillRect(x, y, width, 5);
+
+  paint.textAlign = "center";
+  paint.fillStyle = INK;
+  paint.font = `800 26px ${SANS}`;
+  paint.fillText(value, x + width / 2, y + 34, width - 14);
+  paint.fillStyle = DIM_INK;
+  paint.font = `700 12px ${SANS}`;
+  labels.forEach((label, labelIndex) => {
+    paint.fillText(label, x + width / 2, y + 57 + labelIndex * 15, width - 12);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -171,165 +249,205 @@ const gpt3 = PRODUCTION_SCALE_REFERENCES.gpt3;
 const P = TEACHING_MODEL_PARAMETERS;
 const M = BLOCK_MATRIX_COMPARISON;
 
-const CORPUS_BYTES =
-  DATA_PREP_TRACE.sources.reduce((sum, source) => sum + source.clean.length, 0) +
-  (DATA_PREP_TRACE.sources.length - 1);
-const CORPUS_WORDS = DATA_PREP_TRACE.sources.reduce(
-  (sum, source) => sum + source.clean.split(" ").length,
-  0,
-);
-
 /** Slide 1 — what this whole place is. */
 function paintWelcome(paint: Paint, index: number, count: number) {
   slideBackdrop(paint, CYAN);
-  drawTitle(paint, "INSIDE ONE TRAINING STEP", "WELCOME");
-  const afterIntro = drawBody(
-    paint,
-    "You are standing inside a language model. Everything past this room is one single training step: the model reads text, guesses the next word, measures how wrong it was, and adjusts itself once.",
+  drawTitle(paint, "A REAL GPT-STYLE MODEL", "MEET THE MODEL");
+
+  paint.textAlign = "left";
+  paint.fillStyle = GREEN;
+  paint.font = `800 17px ${SANS}`;
+  paint.fillText(
+    "TRAINABLE DECODER-ONLY TRANSFORMER · REAL TRAINING MATH",
     64,
-    166,
+    132,
     SLIDE_W - 128,
-    22,
-  );
-  drawBody(
-    paint,
-    "Real training repeats that step millions of times. You are about to walk through it once, slowly.",
-    64,
-    afterIntro + 24,
-    SLIDE_W - 128,
-    22,
-    "rgba(215, 236, 250, 0.9)",
   );
 
-  // The five phases as a strip, so the deck previews the shape of the journey.
-  const phases = ["PREPARE", "PREDICT", "MEASURE", "TRACE", "ADJUST"];
-  const colors = [BLUE, CYAN, GOLD, "#ff765f", GREEN];
-  const boxW = 152;
-  const gap = 20;
-  const startX = (SLIDE_W - (phases.length * boxW + (phases.length - 1) * gap)) / 2;
-  phases.forEach((phase, phaseIndex) => {
-    const x = startX + phaseIndex * (boxW + gap);
-    paint.fillStyle = colors[phaseIndex];
-    paint.globalAlpha = 0.16;
-    paint.fillRect(x, 372, boxW, 54);
-    paint.globalAlpha = 1;
-    paint.strokeStyle = colors[phaseIndex];
-    paint.lineWidth = 2;
-    paint.strokeRect(x, 372, boxW, 54);
-    paint.textAlign = "center";
-    paint.fillStyle = INK;
-    paint.font = `800 19px ${MONO}`;
-    paint.fillText(phase, x + boxW / 2, 406, boxW - 16);
-    if (phaseIndex < phases.length - 1) {
-      paint.fillStyle = FAINT_INK;
-      paint.font = `700 20px ${MONO}`;
-      paint.fillText(">", x + boxW + gap / 2, 406);
-    }
-  });
+  // The corpus owns the larger half of the page. The visitor should recognize
+  // both complete sentences before they have time to read any explanatory copy.
+  const corpusX = 64;
+  const corpusY = 158;
+  const corpusW = 528;
+  const corpusH = 334;
+  paint.fillStyle = GOLD_TINT;
+  paint.fillRect(corpusX, corpusY, corpusW, corpusH);
+  paint.strokeStyle = GOLD;
+  paint.lineWidth = 2;
+  paint.strokeRect(corpusX, corpusY, corpusW, corpusH);
+  paint.fillStyle = GOLD;
+  paint.font = `800 23px ${SANS}`;
+  paint.fillText("ITS ENTIRE TRAINING CORPUS", corpusX + 24, corpusY + 38, corpusW - 48);
 
-  drawFooter(paint, "Turn the dial, or press space, to continue", index, count);
-}
-
-/** Slide 2 — the two exact sentences, given the whole screen. */
-function paintCorpus(paint: Paint, index: number, count: number) {
-  slideBackdrop(paint, GOLD);
-  drawTitle(paint, "THIS IS THE ENTIRE TRAINING SET", "THE DATA");
-
-  const sentences = DATA_PREP_TRACE.sources.map((source) => source.clean);
-  sentences.forEach((sentence, sentenceIndex) => {
-    const y = 196 + sentenceIndex * 108;
+  DATA_PREP_TRACE.sources.forEach((source, sentenceIndex) => {
+    const cardY = corpusY + 62 + sentenceIndex * 94;
     const accent = sentenceIndex === 0 ? CYAN : BLUE;
+    paint.fillStyle = tintFor(accent);
+    paint.fillRect(corpusX + 24, cardY, corpusW - 48, 74);
     paint.fillStyle = accent;
-    paint.globalAlpha = 0.1;
-    paint.fillRect(64, y - 46, SLIDE_W - 128, 76);
-    paint.globalAlpha = 1;
-    paint.fillStyle = accent;
-    paint.fillRect(64, y - 46, 5, 76);
-    paint.textAlign = "left";
+    paint.fillRect(corpusX + 24, cardY, 5, 74);
     paint.fillStyle = INK;
-    paint.font = `800 33px ${MONO}`;
-    paint.fillText(`"${sentence}"`, 92, y, SLIDE_W - 250);
-    paint.fillStyle = FAINT_INK;
-    paint.font = `700 15px ${MONO}`;
-    paint.textAlign = "right";
+    paint.font = `800 30px ${MONO}`;
     paint.fillText(
-      `${sentence.split(" ").length} words`,
-      SLIDE_W - 84,
-      y,
+      `“${source.clean}”`,
+      corpusX + 48,
+      cardY + 47,
+      corpusW - 92,
     );
   });
 
-  drawStat(paint, 64, 432, `${CORPUS_WORDS} words`, "EVERY WORD IT WILL EVER READ", GOLD, 34);
-  drawStat(paint, 380, 432, `${CORPUS_BYTES} bytes`, "TOTAL CORPUS SIZE ON DISK", GOLD, 34);
-
-  drawBody(
-    paint,
-    "A real run reads billions of sentences. Two is enough to watch every number move.",
-    64,
-    504,
-    SLIDE_W - 128,
-    18,
+  paint.fillStyle = INK;
+  paint.font = `800 17px ${SANS}`;
+  paint.fillText(
+    "ALL THE TEXT THIS MODEL TRAINS ON",
+    corpusX + 24,
+    corpusY + corpusH - 28,
+    corpusW - 48,
   );
-  drawFooter(paint, "", index, count);
-}
 
-/** Slide 3 — how much text a real run would have read. */
-function paintCorpusScale(paint: Paint, index: number, count: number) {
-  slideBackdrop(paint, BLUE);
-  drawTitle(paint, "A REAL CORPUS IS UNIMAGINABLY BIGGER", "SCALE · TRAINING TEXT");
+  // The model facts are the second focal block, not footer trivia: six large
+  // cards with values and labels readable during the guided tour's first hold.
+  const specsX = 620;
+  const specsY = corpusY;
+  const specsW = 340;
+  const cardGap = 12;
+  const cardW = (specsW - cardGap) / 2;
+  const cardH = 82;
+  paint.fillStyle = CYAN;
+  paint.font = `800 23px ${SANS}`;
+  paint.fillText("MODEL AT A GLANCE", specsX, specsY + 38, specsW);
 
-  const rows = [
-    { label: "THIS DEMONSTRATION", value: CORPUS_BYTES, text: `${CORPUS_BYTES} bytes`, color: GREEN },
-    { label: gpt2.name, value: gpt2.trainingBytes, text: "~40 GB", color: BLUE },
-    { label: gpt3.name, value: gpt3.trainingBytes, text: "~570 GB", color: VIOLET },
-  ];
-  const barX = 300;
-  const barMax = SLIDE_W - barX - 180;
-  const maxLog = Math.log10(gpt3.trainingBytes);
-  rows.forEach((row, rowIndex) => {
-    const y = 186 + rowIndex * 76;
-    paint.textAlign = "left";
-    paint.fillStyle = DIM_INK;
-    paint.font = `700 18px ${MONO}`;
-    paint.fillText(row.label, 64, y + 22, 220);
-    const width = Math.max(6, (Math.log10(row.value) / maxLog) * barMax);
-    paint.fillStyle = row.color;
-    paint.globalAlpha = 0.22;
-    paint.fillRect(barX, y, barMax, 34);
-    paint.globalAlpha = 1;
-    paint.fillRect(barX, y, width, 34);
-    paint.fillStyle = INK;
-    paint.font = `800 20px ${MONO}`;
-    paint.fillText(row.text, barX + barMax + 18, y + 25, 160);
+  const specs = [
+    { value: withThousands(P.total), labels: ["LEARNED", "PARAMETERS"], accent: GREEN },
+    { value: `${TEACHING_MODEL.sequenceLength} TOKENS`, labels: ["CONTEXT", "WINDOW"], accent: CYAN },
+    { value: String(TEACHING_MODEL.transformerBlocks), labels: ["TRANSFORMER", "LAYERS"], accent: BLUE },
+    { value: String(TEACHING_MODEL.attentionHeads), labels: ["ATTENTION", "HEADS"], accent: GOLD },
+    { value: `WIDTH ${TEACHING_MODEL.modelWidth}`, labels: ["HIDDEN STATE"], accent: VIOLET },
+    { value: `${TEACHING_MODEL.vocabularySize} PIECES`, labels: ["VOCABULARY"], accent: GREEN },
+  ] as const;
+  specs.forEach((spec, specIndex) => {
+    const column = specIndex % 2;
+    const row = Math.floor(specIndex / 2);
+    drawSpecCard(
+      paint,
+      specsX + column * (cardW + cardGap),
+      specsY + 56 + row * (cardH + cardGap),
+      cardW,
+      cardH,
+      spec.value,
+      spec.labels,
+      spec.accent,
+    );
   });
 
-  paint.textAlign = "left";
-  paint.fillStyle = FAINT_INK;
-  paint.font = `700 14px ${MONO}`;
-  paint.fillText("bar length is log scale — a linear chart would need a bar 20 km long", barX, 156);
-
-  drawStat(
+  drawFooter(
     paint,
-    64,
-    468,
-    `${approximately(gpt2.trainingBytes / CORPUS_BYTES)} times`,
-    `MORE TEXT IN ${gpt2.name} THAN HERE`,
-    BLUE,
-    38,
+    "REAL COMPONENTS · REAL MATRICES · REAL GRADIENTS · REAL ADAMW UPDATE",
+    index,
+    count,
   );
-  drawStat(
-    paint,
-    520,
-    468,
-    `${approximately(gpt3.trainingBytes / CORPUS_BYTES)} times`,
-    `MORE TEXT IN ${gpt3.name} THAN HERE`,
-    VIOLET,
-    38,
-  );
-  drawFooter(paint, "Small data is the point: it keeps every value on screen", index, count);
 }
 
-/** Slide 4 — the model itself, every parameter drawn. */
+/** Slide 2 — the model's real decoder-only Transformer architecture. */
+function paintArchitecture(paint: Paint, index: number, count: number) {
+  slideBackdrop(paint, BLUE);
+  drawTitle(paint, "THE SAME CORE PARTS AS GPT", "THE ARCHITECTURE");
+
+  paint.textAlign = "left";
+  paint.fillStyle = DIM_INK;
+  paint.font = `650 17px ${SANS}`;
+  paint.fillText(
+    "TOKEN IDS BECOME VECTORS, CROSS TWO DECODER LAYERS, THEN BECOME NEXT-TOKEN SCORES.",
+    64,
+    136,
+    SLIDE_W - 128,
+  );
+
+  const stageY = 174;
+  const stageH = 286;
+  const stages = [
+    {
+      x: 64,
+      width: 142,
+      accent: GOLD,
+      title: "TOKEN IDs",
+      lines: ["BATCH 2 × 6", "16-PIECE", "VOCABULARY"],
+    },
+    {
+      x: 236,
+      width: 156,
+      accent: CYAN,
+      title: "EMBEDDINGS",
+      lines: ["TOKEN +", "POSITION", "SHAPE", "2 × 6 × 8"],
+    },
+    {
+      x: 422,
+      width: 316,
+      accent: BLUE,
+      title: "2 TRANSFORMER LAYERS",
+      lines: [
+        "LAYER NORM",
+        "2-HEAD CAUSAL ATTENTION",
+        "RESIDUAL ADD",
+        "LAYER NORM",
+        "GELU MLP  8 → 32 → 8",
+        "RESIDUAL ADD",
+      ],
+    },
+    {
+      x: 768,
+      width: 192,
+      accent: GREEN,
+      title: "OUTPUT",
+      lines: ["FINAL NORM", "VOCAB HEAD", "16 SCORES", "PER POSITION"],
+    },
+  ] as const;
+
+  stages.forEach((stage, stageIndex) => {
+    paint.fillStyle = tintFor(stage.accent);
+    paint.fillRect(stage.x, stageY, stage.width, stageH);
+    paint.strokeStyle = stage.accent;
+    paint.lineWidth = 2;
+    paint.strokeRect(stage.x, stageY, stage.width, stageH);
+    paint.textAlign = "center";
+    paint.fillStyle = stage.accent;
+    paint.font = `800 ${stageIndex === 2 ? 20 : 18}px ${SANS}`;
+    paint.fillText(stage.title, stage.x + stage.width / 2, stageY + 38, stage.width - 16);
+
+    const lineGap = stageIndex === 2 ? 31 : 38;
+    const startY = stageY + (stageIndex === 2 ? 82 : 96);
+    stage.lines.forEach((line, lineIndex) => {
+      paint.fillStyle = lineIndex % 2 === 0 ? INK : DIM_INK;
+      paint.font = `700 ${stageIndex === 2 ? 16 : 15}px ${SANS}`;
+      paint.fillText(
+        line,
+        stage.x + stage.width / 2,
+        startY + lineIndex * lineGap,
+        stage.width - 18,
+      );
+    });
+
+    if (stageIndex < stages.length - 1) {
+      const next = stages[stageIndex + 1];
+      paint.fillStyle = FAINT_INK;
+      paint.font = `800 27px ${SANS}`;
+      paint.fillText(
+        "→",
+        (stage.x + stage.width + next.x) / 2,
+        stageY + stageH / 2 + 8,
+      );
+    }
+  });
+
+  drawFooter(
+    paint,
+    "EVERY BOX RUNS · EVERY ARROW CARRIES A REAL TENSOR",
+    index,
+    count,
+  );
+}
+
+/** Slide 3 — the model itself, every parameter drawn. */
 function paintModelSize(paint: Paint, index: number, count: number) {
   slideBackdrop(paint, GREEN);
   drawTitle(paint, `THE WHOLE MODEL IS ${withThousands(P.total)} NUMBERS`, "SCALE · PARAMETERS");
@@ -346,9 +464,17 @@ function paintModelSize(paint: Paint, index: number, count: number) {
   let y = 150;
   const left = 64;
   for (const band of bands) {
+    const dotRows = Math.ceil(band.count / dotsPerRow);
+    paint.fillStyle = tintFor(band.color);
+    paint.fillRect(
+      left - 8,
+      y - 18,
+      dotsPerRow * pitch + 14,
+      dotRows * pitch + 31,
+    );
     paint.textAlign = "left";
     paint.fillStyle = band.color;
-    paint.font = `800 14px ${MONO}`;
+    paint.font = `800 14px ${SANS}`;
     paint.fillText(band.label, left, y, 340);
     paint.textAlign = "right";
     paint.fillStyle = DIM_INK;
@@ -362,40 +488,76 @@ function paintModelSize(paint: Paint, index: number, count: number) {
       paint.fillRect(left + column * pitch, y + row * pitch, pitch - 1.9, pitch - 1.9);
     }
     paint.globalAlpha = 1;
-    y += Math.ceil(band.count / dotsPerRow) * pitch + 14;
+    y += dotRows * pitch + 14;
   }
   paint.textAlign = "left";
   paint.fillStyle = FAINT_INK;
-  paint.font = `700 14px ${MONO}`;
+  paint.font = `700 14px ${SANS}`;
   paint.fillText("every dot is one learned number — all of them are drawn", left, y + 6);
 
   const panelX = 486;
-  paint.fillStyle = "rgba(255,255,255,0.04)";
-  paint.fillRect(panelX, 138, SLIDE_W - panelX - 64, 300);
-  drawStat(paint, panelX + 26, 196, withThousands(P.total), "THIS MODEL", GREEN, 42);
-  drawStat(paint, panelX + 26, 288, withThousands(gpt2.parameters), `${gpt2.name} · ${gpt2.year}`, BLUE, 34);
-  drawStat(paint, panelX + 26, 380, withThousands(gpt3.parameters), `${gpt3.name} · ${gpt3.year}`, VIOLET, 34);
+  const panelW = SLIDE_W - panelX - 64;
+  paint.fillStyle = GREEN_TINT;
+  paint.fillRect(panelX, 138, panelW, 312);
+  paint.strokeStyle = RULE;
+  paint.lineWidth = 1;
+  paint.strokeRect(panelX, 138, panelW, 312);
   paint.textAlign = "left";
-  paint.fillStyle = DIM_INK;
-  paint.font = `700 16px ${MONO}`;
+  paint.fillStyle = INK;
+  paint.font = `800 18px ${SANS}`;
+  paint.fillText("PARAMETER SCALE", panelX + 24, 169, panelW - 48);
+  paint.textAlign = "right";
+  paint.fillStyle = FAINT_INK;
+  paint.font = `700 13px ${SANS}`;
+  paint.fillText("LOGARITHMIC · EACH STEP = 10×", panelX + panelW - 24, 169);
+
+  const scaleRows = [
+    { label: "THIS MODEL", value: P.total, color: GREEN },
+    { label: `${gpt2.name} · ${gpt2.year}`, value: gpt2.parameters, color: BLUE },
+    { label: `${gpt3.name} · ${gpt3.year}`, value: gpt3.parameters, color: VIOLET },
+  ] as const;
+  const minLog = Math.log10(P.total);
+  const maxLog = Math.log10(gpt3.parameters);
+  const chartX = panelX + 24;
+  const chartW = panelW - 48;
+  scaleRows.forEach((row, rowIndex) => {
+    const labelY = 210 + rowIndex * 83;
+    paint.textAlign = "left";
+    paint.fillStyle = DIM_INK;
+    paint.font = `750 15px ${SANS}`;
+    paint.fillText(row.label, chartX, labelY, chartW * 0.62);
+    paint.textAlign = "right";
+    paint.fillStyle = INK;
+    paint.font = `800 17px ${MONO}`;
+    paint.fillText(withThousands(row.value), chartX + chartW, labelY);
+    paint.fillStyle = tintFor(row.color);
+    paint.fillRect(chartX, labelY + 15, chartW, 16);
+    const normalized = (Math.log10(row.value) - minLog) / (maxLog - minLog);
+    paint.fillStyle = row.color;
+    paint.fillRect(chartX, labelY + 15, 34 + normalized * (chartW - 34), 16);
+  });
+
+  paint.textAlign = "left";
+  paint.fillStyle = FAINT_INK;
+  paint.font = `650 14px ${SANS}`;
   paint.fillText(
-    `${approximately(gpt2.parameters / P.total)} times and ${approximately(gpt3.parameters / P.total)} times more`,
-    panelX + 26,
-    424,
-    SLIDE_W - panelX - 100,
+    `${approximately(gpt2.parameters / P.total)}× and ${approximately(gpt3.parameters / P.total)}× larger`,
+    chartX,
+    430,
+    chartW,
   );
 
   drawFooter(paint, "Same architecture, same math — fewer numbers", index, count);
 }
 
 /**
- * Slide 5 — one weight matrix, ours against GPT-2's.
+ * Archived reference painter — one weight matrix, ours against GPT-2's.
  *
  * The strongest image in the deck: GPT-2's projection drawn as a grid of
  * 96 × 96 tiles, each tile exactly the size of this model's entire matrix,
  * with one tile lit gold.
  */
-function paintMatrixScale(paint: Paint, index: number, count: number) {
+export function paintMatrixScale(paint: Paint, index: number, count: number) {
   slideBackdrop(paint, GOLD);
   drawTitle(paint, "ONE WEIGHT MATRIX, SIDE BY SIDE", "SCALE · INSIDE A BLOCK");
 
@@ -527,7 +689,7 @@ function paintMatrixScale(paint: Paint, index: number, count: number) {
   drawFooter(paint, "", index, count);
 }
 
-/** Slide 6 — how much text the model can hold in view at once. */
+/** Slide 4 — how much text the model can hold in view at once. */
 function paintContextWindow(paint: Paint, index: number, count: number) {
   slideBackdrop(paint, CYAN);
   drawTitle(paint, "IT CAN ONLY SEE SIX TOKENS AT A TIME", "SCALE · CONTEXT WINDOW");
@@ -537,13 +699,13 @@ function paintContextWindow(paint: Paint, index: number, count: number) {
   );
   const cellW = 128;
   const gap = 10;
+  const tokenColors = [GOLD, CYAN, BLUE, GREEN, VIOLET, CYAN] as const;
   tokens.forEach((token, tokenIndex) => {
     const x = 64 + tokenIndex * (cellW + gap);
-    paint.fillStyle = CYAN;
-    paint.globalAlpha = 0.2;
+    const tokenColor = tokenColors[tokenIndex] ?? CYAN;
+    paint.fillStyle = tintFor(tokenColor);
     paint.fillRect(x, 154, cellW, 60);
-    paint.globalAlpha = 1;
-    paint.strokeStyle = CYAN;
+    paint.strokeStyle = tokenColor;
     paint.lineWidth = 2;
     paint.strokeRect(x, 154, cellW, 60);
     paint.textAlign = "center";
@@ -553,7 +715,7 @@ function paintContextWindow(paint: Paint, index: number, count: number) {
   });
   paint.textAlign = "left";
   paint.fillStyle = GREEN;
-  paint.font = `800 20px ${MONO}`;
+  paint.font = `800 20px ${SANS}`;
   paint.fillText(
     `${TEACHING_MODEL.sequenceLength} tokens — one context window`,
     64,
@@ -561,55 +723,61 @@ function paintContextWindow(paint: Paint, index: number, count: number) {
     SLIDE_W - 128,
   );
 
-  // The giants' windows cannot be drawn to the same scale, so their bars run
-  // off the edge of the slide instead of pretending to end somewhere.
+  // An honest linear chart: GPT-3 owns the full width, GPT-2 exactly half,
+  // and this specimen remains a visible minimum marker at the origin.
+  paint.fillStyle = FAINT_INK;
+  paint.font = `700 14px ${SANS}`;
+  paint.fillText("CONTEXT LENGTH · LINEAR SCALE", 64, 278, SLIDE_W - 128);
+  const contextChartW = SLIDE_W - 128;
   [
-    { label: gpt2.name, length: gpt2.contextLength, color: BLUE, y: 288 },
-    { label: gpt3.name, length: gpt3.contextLength, color: VIOLET, y: 352 },
+    { label: gpt3.name, length: gpt3.contextLength, color: VIOLET, y: 304 },
+    { label: gpt2.name, length: gpt2.contextLength, color: BLUE, y: 366 },
+    { label: "THIS MODEL", length: TEACHING_MODEL.sequenceLength, color: CYAN, y: 428 },
   ].forEach((row) => {
-    const barWidth = SLIDE_W - 64;
-    const gradient = paint.createLinearGradient(64, 0, 64 + barWidth, 0);
-    gradient.addColorStop(0, row.color);
-    gradient.addColorStop(0.66, row.color);
-    gradient.addColorStop(1, "rgba(6, 13, 24, 0)");
-    paint.globalAlpha = 0.5;
-    paint.fillStyle = gradient;
-    paint.fillRect(64, row.y, barWidth, 42);
-    paint.globalAlpha = 1;
+    paint.fillStyle = tintFor(row.color);
+    paint.fillRect(64, row.y - 22, contextChartW, 58);
     paint.textAlign = "left";
+    paint.fillStyle = DIM_INK;
+    paint.font = `750 15px ${SANS}`;
+    paint.fillText(row.label, 64, row.y, contextChartW * 0.6);
+    paint.textAlign = "right";
     paint.fillStyle = INK;
-    paint.font = `800 20px ${MONO}`;
-    paint.fillText(
-      `${row.label}: ${withThousands(row.length)} tokens`,
-      80,
-      row.y + 28,
-      520,
+    paint.font = `800 16px ${MONO}`;
+    paint.fillText(`${withThousands(row.length)} TOKENS`, SLIDE_W - 64, row.y);
+    paint.fillStyle = "rgba(255, 255, 255, 0.72)";
+    paint.fillRect(64, row.y + 12, contextChartW, 18);
+    paint.fillStyle = row.color;
+    paint.fillRect(
+      64,
+      row.y + 12,
+      Math.max(12, (row.length / gpt3.contextLength) * contextChartW),
+      18,
     );
   });
 
   drawStat(
     paint,
     64,
-    468,
+    494,
     `${Math.round(gpt2.contextLength / TEACHING_MODEL.sequenceLength)} times`,
     `LONGER WINDOW IN ${gpt2.name}`,
     BLUE,
-    32,
+    28,
   );
   drawStat(
     paint,
     520,
-    468,
+    494,
     `${Math.round(gpt3.contextLength / TEACHING_MODEL.sequenceLength)} times`,
     `LONGER WINDOW IN ${gpt3.name}`,
     VIOLET,
-    32,
+    28,
   );
   drawFooter(paint, "Anything outside the window does not exist to the model", index, count);
 }
 
-/** Slide 7 — the complete vocabulary, against the one real models use. */
-function paintVocabulary(paint: Paint, index: number, count: number) {
+/** Archived reference painter — the complete vocabulary. */
+export function paintVocabulary(paint: Paint, index: number, count: number) {
   slideBackdrop(paint, MAGENTA);
   drawTitle(paint, `IT KNOWS EXACTLY ${TEACHING_MODEL.vocabularySize} WORD PIECES`, "SCALE · VOCABULARY");
 
@@ -689,47 +857,67 @@ function paintVocabulary(paint: Paint, index: number, count: number) {
   );
 }
 
-/** Slide 7 — why everything is small, and what to do next. */
+/** Slide 5 — why everything is small, and what to do next. */
 function paintWhy(paint: Paint, index: number, count: number) {
   slideBackdrop(paint, GREEN);
   drawTitle(paint, "SAME MATH, SPECIMEN SIZE", "WHY IT IS THIS SMALL");
 
-  drawBody(
-    paint,
-    "Nothing ahead is simplified. Attention, cross-entropy loss, backpropagation and the AdamW update are exactly what a production model runs. Only the sizes shrank — so every number fits on a wall and can be checked by hand.",
-    64,
-    168,
-    SLIDE_W - 128,
-    22,
-  );
-
-  const facts = [
-    { value: `${TEACHING_MODEL.transformerBlocks} blocks`, caption: `GPT-2 SMALL HAS ${gpt2.transformerBlocks}` },
-    { value: `${TEACHING_MODEL.attentionHeads} heads`, caption: `GPT-2 SMALL HAS ${gpt2.attentionHeads}` },
-    { value: `width ${TEACHING_MODEL.modelWidth}`, caption: `GPT-2 SMALL USES ${gpt2.modelWidth}` },
-  ];
-  facts.forEach((fact, factIndex) => {
-    drawStat(paint, 64 + factIndex * 316, 320, fact.value, fact.caption, CYAN, 30);
-  });
-
-  paint.fillStyle = GREEN;
-  paint.globalAlpha = 0.12;
-  paint.fillRect(64, 380, SLIDE_W - 128, 84);
-  paint.globalAlpha = 1;
-  paint.fillStyle = GREEN;
-  paint.fillRect(64, 380, 5, 84);
   paint.textAlign = "left";
   paint.fillStyle = INK;
-  paint.font = `800 22px ${MONO}`;
-  paint.fillText("Through the door, this batch starts moving:", 92, 414, SLIDE_W - 220);
+  paint.font = `800 22px ${SANS}`;
+  paint.fillText("NOTHING AHEAD IS SIMPLIFIED.", 64, 148, SLIDE_W - 128);
+
+  const proofTiles = [
+    { title: "ATTENTION", caption: "same causal softmax", color: CYAN },
+    { title: "CROSS-ENTROPY", caption: "same next-token loss", color: GOLD },
+    { title: "BACKPROPAGATION", caption: "same gradients", color: BLUE },
+    { title: "ADAMW", caption: "same optimizer update", color: GREEN },
+  ] as const;
+  const proofGap = 12;
+  const proofW = (SLIDE_W - 128 - proofGap * 3) / 4;
+  proofTiles.forEach((tile, tileIndex) => {
+    const x = 64 + tileIndex * (proofW + proofGap);
+    paint.fillStyle = tintFor(tile.color);
+    paint.fillRect(x, 168, proofW, 82);
+    paint.strokeStyle = RULE;
+    paint.lineWidth = 1;
+    paint.strokeRect(x, 168, proofW, 82);
+    paint.fillStyle = tile.color;
+    paint.fillRect(x, 168, proofW, 5);
+    paint.fillStyle = INK;
+    paint.font = `800 17px ${SANS}`;
+    paint.fillText(tile.title, x + 14, 202, proofW - 28);
+    paint.fillStyle = DIM_INK;
+    paint.font = `650 14px ${SANS}`;
+    paint.fillText(tile.caption, x + 14, 229, proofW - 28);
+  });
+
+  const facts = [
+    { value: `${TEACHING_MODEL.transformerBlocks} blocks`, caption: `GPT-2 SMALL HAS ${gpt2.transformerBlocks}`, color: CYAN },
+    { value: `${TEACHING_MODEL.attentionHeads} heads`, caption: `GPT-2 SMALL HAS ${gpt2.attentionHeads}`, color: BLUE },
+    { value: `width ${TEACHING_MODEL.modelWidth}`, caption: `GPT-2 SMALL USES ${gpt2.modelWidth}`, color: VIOLET },
+  ];
+  facts.forEach((fact, factIndex) => {
+    const x = 64 + factIndex * 316;
+    paint.fillStyle = tintFor(fact.color);
+    paint.fillRect(x, 274, 296, 74);
+    drawStat(paint, x + 16, 316, fact.value, fact.caption, fact.color, 30);
+  });
+
+  paint.fillStyle = GREEN_TINT;
+  paint.fillRect(64, 368, SLIDE_W - 128, 122);
+  paint.fillStyle = GREEN;
+  paint.fillRect(64, 368, 5, 122);
+  paint.textAlign = "left";
+  paint.fillStyle = INK;
+  paint.font = `800 19px ${SANS}`;
+  paint.fillText("NEXT · THROUGH THE DOOR, THIS BATCH STARTS MOVING", 92, 400, SLIDE_W - 220);
   paint.fillStyle = GOLD;
-  paint.font = `800 23px ${MONO}`;
-  paint.fillText(
-    DATA_PREP_TRACE.sources.map((source) => `"${source.clean}"`).join("   +   "),
-    92,
-    446,
-    SLIDE_W - 220,
-  );
+  paint.font = `800 21px ${MONO}`;
+  DATA_PREP_TRACE.sources.forEach((source, sourceIndex) => {
+    paint.fillStyle = sourceIndex === 0 ? CYAN : BLUE;
+    paint.fillText(`“${source.clean}”`, 92, 437 + sourceIndex * 34, SLIDE_W - 220);
+  });
 
   drawFooter(paint, "Walk around the stage to enter the data wing", index, count);
 }
@@ -740,30 +928,24 @@ function paintWhy(paint: Paint, index: number, count: number) {
  */
 export const SLIDE_PAINTERS = [
   paintWelcome,
-  paintCorpus,
-  paintCorpusScale,
+  paintArchitecture,
   paintModelSize,
-  paintMatrixScale,
   paintContextWindow,
-  paintVocabulary,
   paintWhy,
 ] as const;
 
 /** Canvas resolution each painter draws into. */
 export const SLIDE_PIXELS = { width: SLIDE_W, height: SLIDE_H } as const;
 
-/** Accent per placard, used for its frame, beam and floor pool. */
-const SLIDE_ACCENTS = [CYAN, GOLD, BLUE, GREEN, GOLD, CYAN, MAGENTA, GREEN] as const;
+/** Physical accents echo the darker print palette without emitting light. */
+const SLIDE_ACCENTS = ["#37c6c0", "#5f8de8", "#4cbf83", "#37c6c0", "#4cbf83"] as const;
 
 /** Short names, used by the layout audit's per-surface report. */
 const SLIDE_TITLES = [
-  "welcome",
-  "the corpus",
-  "corpus scale",
+  "meet the model",
+  "architecture",
   "model size",
-  "one weight matrix",
   "context window",
-  "vocabulary",
   "why so small",
 ] as const;
 
@@ -774,7 +956,7 @@ export const ORIENTATION_SLIDE_COUNT = SLIDE_PAINTERS.length;
 //
 // The hall is a processional gallery: placards stand in bays that alternate
 // left and right down the room, each turned to face a viewing mark on the
-// centre line a little downstream of it. That angle is what keeps the room
+// central promenade a little downstream of it. That angle is what keeps the room
 // readable — from any mark the placard being read is square-on and nearly
 // fills the view, while its neighbours are steeply oblique and read as thin
 // slivers. Everything below is derived from these five numbers so the
@@ -782,28 +964,25 @@ export const ORIENTATION_SLIDE_COUNT = SLIDE_PAINTERS.length;
 // ---------------------------------------------------------------------------
 
 /** Placard face width in chamber units; height follows the canvas aspect. */
-const PLACARD_W = 12;
+const PLACARD_W = 16;
 const PLACARD_H = (SLIDE_H / SLIDE_W) * PLACARD_W;
 /** Centre height of a placard face. */
 const PLACARD_Y = 2.2;
-/** How far each bay sits off the centre line. */
-const BAY_X = 10.5;
-/** z of the first bay, and the gap between consecutive bays. */
+/** Bay centre, pulled forward from the continuous cube wall behind it. */
+const BAY_X = 23.5;
+/** z of the first bay, and the generous gap between consecutive bays. */
 const BAY_Z_START = 27;
-const BAY_Z_STEP = 9;
+const BAY_Z_STEP = 14.5;
 /** How far downstream of its placard a viewing mark sits. */
-const VIEW_AHEAD = 9.5;
+const VIEW_AHEAD = 8.5;
 /**
  * How far the viewing mark steps off the centre line toward its placard.
  *
- * Standing in the middle of the hall is not how anyone reads a gallery, and it
- * does not work optically either: from the centre line a 12-unit placard spans
- * barely half the frame at this room's field of view, which is not the
- * "one thing dominates" the layout depends on. Stepping across puts the reader
- * about 7.5 units out, where the placard fills roughly three quarters of the
- * view. The mark stays inside the runway, so the walkway is still a walkway.
+ * The room's wide central promenade lets each reading mark move with its bay.
+ * The 17.2-unit reading distance keeps a 16-unit page large enough to study
+ * while leaving the continuous cube wall visible behind each installation.
  */
-const VIEW_LATERAL = 3.6;
+const VIEW_LATERAL = 8.5;
 /** Eye height in the gallery — a little below the placard centre. */
 const GALLERY_EYE_Y = 1.9;
 
@@ -968,42 +1147,37 @@ export function orientationTourPose(
 const tourScratch = new THREE.Vector3();
 
 /**
- * Lane blockers that keep the visitor on the central runway. Returned rather
- * than applied so the chamber shell stays the single owner of navigation.
+ * Per-bay blockers protect the angled lightboxes without fencing off the whole
+ * wall. Visitors can use the generous centre promenade and the gaps between
+ * installations, while still keeping about three units from each housing.
  */
-export const ORIENTATION_BAY_BLOCKERS = (() => {
-  const nearZ = BAY_Z_START + 5;
-  const farZ = BAY_Z_START - (SLIDE_PAINTERS.length - 1) * BAY_Z_STEP - 5;
-  const inner = 4.0;
+export const ORIENTATION_BAY_BLOCKERS = SLIDE_PAINTERS.map((_, index) => {
+  const side = baySide(index);
+  const z = BAY_Z_START - index * BAY_Z_STEP;
+  const inner = 16;
   const outer = BAY_X + 6;
-  return [-1, 1].map((side) => ({
+  const halfDepth = 10;
+  return {
     minX: side < 0 ? -outer : inner,
     maxX: side < 0 ? -inner : outer,
     minY: -4.7,
     maxY: 14,
-    minZ: farZ,
-    maxZ: nearZ,
-  }));
-})();
+    minZ: z - halfDepth,
+    maxZ: z + halfDepth,
+  };
+});
 
 interface Placard {
   group: THREE.Group;
-  /** Face material, dimmed when the placard is not the one being read. */
+  /** Opaque paper face; focus is communicated by the surround, never fading. */
   faceMaterial: THREE.MeshBasicMaterial;
   frameMaterial: THREE.MeshStandardMaterial;
-  poolMaterial: THREE.MeshBasicMaterial;
   numberMaterial: THREE.MeshBasicMaterial;
 }
 
 /**
- * One lit museum placard: a framed panel on a stand, a fixture above it
- * throwing a soft beam across the face, and a pool of light on the floor in
- * front of it.
- *
- * The beam and pool are additive geometry rather than real spotlights. Eight
- * shadow-casting lights in one room would dominate the frame budget for the
- * whole world, and because the face is self-lit (an emissive canvas texture)
- * the physical lights would not actually be doing the lighting anyone sees.
+ * One warm-white museum display in a slim brushed-metal support. The display
+ * has no emissive frame, halo, beam, or floor glow.
  */
 function createPlacard(index: number): Placard {
   const canvas = document.createElement("canvas");
@@ -1020,96 +1194,79 @@ function createPlacard(index: number): Placard {
   texture.anisotropy = 8;
   texture.generateMipmaps = true;
 
-  const accent = new THREE.Color(SLIDE_ACCENTS[index]);
   const group = new THREE.Group();
   group.name = `orientation-placard-${index + 1}`;
 
-  // Frame: a dark slab a little larger than the face, so the panel reads as a
-  // mounted object with a physical edge rather than a floating rectangle.
+  // A pale brushed surround lets the printed page, not a black monitor bezel,
+  // remain the object the visitor sees first.
   const frameMaterial = new THREE.MeshStandardMaterial({
-    color: "#05080d",
-    emissive: accent.clone().multiplyScalar(0.4),
-    emissiveIntensity: 0.25,
-    roughness: 0.4,
-    metalness: 0.62,
+    color: "#d8d4ca",
+    emissive: "#000000",
+    emissiveIntensity: 0,
+    roughness: 0.5,
+    metalness: 0.32,
   });
   const frame = new THREE.Mesh(
-    new THREE.BoxGeometry(PLACARD_W + 0.44, PLACARD_H + 0.44, 0.24),
+    new THREE.BoxGeometry(PLACARD_W + 0.34, PLACARD_H + 0.34, 0.18),
     frameMaterial,
   );
-  frame.position.z = -0.14;
+  frame.position.z = -0.11;
   group.add(frame);
 
   const faceMaterial = new THREE.MeshBasicMaterial({
     map: texture,
-    transparent: true,
-    depthWrite: false,
+    color: "#efece4",
+    transparent: false,
+    depthWrite: true,
     side: THREE.DoubleSide,
+    toneMapped: true,
   });
   const face = new THREE.Mesh(
     new THREE.PlaneGeometry(PLACARD_W, PLACARD_H),
     faceMaterial,
   );
+  face.name = `orientation-placard-face-${index + 1}`;
   face.renderOrder = 12;
   group.add(face);
-  group.add(createNeonFrame(PLACARD_W, PLACARD_H, accent, 0.04));
 
-
-  // Base: a low metal pedestal + slim pylon the screen rises from, replacing
-  // the museum stand. In the crafted room an alcove housing wraps this so the
-  // screen reads as installed into a purpose-built bay rather than propped up.
+  // A narrow support remains for the legacy room; the crafted room wraps it in
+  // an even shallower wall-seat. Both avoid the old full-width black pedestal.
   const postMaterial = new THREE.MeshStandardMaterial({
-    color: "#10161f",
-    roughness: 0.42,
-    metalness: 0.7,
+    color: "#aeb2b3",
+    roughness: 0.54,
+    metalness: 0.42,
   });
-  const floorLocalY = -4.7 - PLACARD_Y;
+  // The gallery's floor is the panel deck, so the support lands on the glass
+  // rather than on the slab that used to be the walking surface.
+  const floorLocalY = CHAMBER_PANEL_DECK_TOP_Y - PLACARD_Y;
   const pylonTop = -PLACARD_H / 2 - 0.1;
   const pylonHeight = pylonTop - floorLocalY - 0.34;
   const pylon = new THREE.Mesh(
-    new THREE.BoxGeometry(PLACARD_W * 0.5, pylonHeight, 0.6),
+    new THREE.BoxGeometry(PLACARD_W * 0.18, pylonHeight, 0.34),
     postMaterial,
   );
   pylon.position.set(0, pylonTop - pylonHeight / 2, -0.12);
   group.add(pylon);
   const base = new THREE.Mesh(
-    new THREE.BoxGeometry(PLACARD_W * 0.86, 0.42, 2.1),
+    new THREE.BoxGeometry(PLACARD_W * 0.44, 0.26, 1.2),
     postMaterial,
   );
-  base.position.set(0, floorLocalY + 0.21, -0.05);
+  base.position.set(0, floorLocalY + 0.13, -0.05);
   group.add(base);
 
 
-  // Pool of light on the floor where the visitor stands to read.
-  const poolMaterial = new THREE.MeshBasicMaterial({
-    color: accent,
-    transparent: true,
-    opacity: 0.1,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  const pool = new THREE.Mesh(new THREE.CircleGeometry(4.4, 40), poolMaterial);
-  pool.rotation.x = -Math.PI / 2;
-  pool.scale.set(1, 0.72, 1);
-  pool.position.set(0, -4.7 - PLACARD_Y + 0.03, 2.6);
-  pool.renderOrder = 2;
-  pool.userData.processDecal = true;
-  pool.userData.assistantNonInteractive = true;
-  group.add(pool);
-
-  // Brass-style numeral plate under the frame, as on a gallery wall label.
+  // Printed numeral label under the sheet, matching the warm paper system.
   const numberCanvas = document.createElement("canvas");
   numberCanvas.width = 128;
   numberCanvas.height = 64;
   const numberPaint = numberCanvas.getContext("2d");
   if (numberPaint) {
-    numberPaint.fillStyle = "rgba(8, 14, 24, 0.95)";
+    numberPaint.fillStyle = "#fbfaf6";
     numberPaint.fillRect(0, 0, 128, 64);
-    numberPaint.strokeStyle = "rgba(255, 209, 102, 0.75)";
+    numberPaint.strokeStyle = "#b8b1a4";
     numberPaint.lineWidth = 3;
     numberPaint.strokeRect(3, 3, 122, 58);
-    numberPaint.fillStyle = "rgba(255, 226, 160, 0.95)";
+    numberPaint.fillStyle = "#30343a";
     numberPaint.font = `800 34px ${MONO}`;
     numberPaint.textAlign = "center";
     numberPaint.textBaseline = "middle";
@@ -1120,9 +1277,11 @@ function createPlacard(index: number): Placard {
   numberTexture.generateMipmaps = false;
   const numberMaterial = new THREE.MeshBasicMaterial({
     map: numberTexture,
-    transparent: true,
-    depthWrite: false,
+    color: "#efece4",
+    transparent: false,
+    depthWrite: true,
     side: THREE.DoubleSide,
+    toneMapped: true,
   });
   const numberPlate = new THREE.Mesh(
     new THREE.PlaneGeometry(1.1, 0.55),
@@ -1141,7 +1300,7 @@ function createPlacard(index: number): Placard {
   group.userData.processLabel = `${index + 1}. ${SLIDE_TITLES[index]}`;
   group.userData.processSurfaceSize = { width: PLACARD_W, height: PLACARD_H };
 
-  return { group, faceMaterial, frameMaterial, poolMaterial, numberMaterial };
+  return { group, faceMaterial, frameMaterial, numberMaterial };
 }
 
 /**
@@ -1250,15 +1409,14 @@ function createInvitation() {
 }
 
 /**
- * Builds the orientation gallery: eight lit placards in alternating bays down
+ * Builds the orientation gallery: five paper-white lightboxes in alternating bays down
  * the hall, with the chamber's process transport deciding which one is
  * currently being read.
  *
- * Nothing is hidden. Every placard stays lit enough to look like an exhibition
- * hall from the door, and the "current" one is simply brought up — brighter
- * face, hotter frame, a stronger beam and floor pool. That matters because the
+ * Nothing is hidden. Every warm-white page remains fully opaque, and the
+ * "current" one is indicated by the guided camera rather than light emission. That matters because the
  * visitor can leave the tour at any moment and walk the gallery themselves;
- * a room where seven of eight panels were switched off would look broken.
+ * a room where four of five panels were switched off would look broken.
  */
 export function buildOrientationGallery(
   context: ChamberProcessContext,
@@ -1288,25 +1446,15 @@ export function buildOrientationGallery(
   const updater: ChamberProcessUpdater = (progress, elapsed, motionEnabled = true) => {
     const p = THREE.MathUtils.clamp(progress, 0, 1);
     // The transport is divided evenly among the placards; `reading` is the
-    // continuous position within that sequence, so a placard can come up
-    // smoothly as the tour walks toward it rather than snapping on arrival.
+    // continuous position used to bring in the exit invitation at the end.
     const reading = p * placards.length;
     const breathe = motionEnabled ? (Math.sin(elapsed * 0.8) + 1) * 0.5 : 0.5;
 
-    placards.forEach((placard, index) => {
-      // 1 when the tour is standing at this placard, falling off across the
-      // neighbouring bays.
-      const focus = THREE.MathUtils.clamp(
-        1 - Math.abs(reading - (index + 0.5)),
-        0,
-        1,
-      );
-      const eased = focus * focus * (3 - 2 * focus);
-      // Screens hold rock-steady (no flicker/glitch, no overlay in front).
-      placard.faceMaterial.opacity = 0.42 + eased * 0.58;
-      placard.frameMaterial.emissiveIntensity = 0.2 + eased * 1.05;
-      placard.poolMaterial.opacity = 0.07 + eased * 0.2;
-      placard.numberMaterial.opacity = 0.5 + eased * 0.5;
+    placards.forEach((placard) => {
+      // Paper stays paper-white; focus never turns the other pages muddy gray.
+      placard.faceMaterial.opacity = 1;
+      placard.frameMaterial.emissiveIntensity = 0;
+      placard.numberMaterial.opacity = 1;
     });
 
     // The invitation comes up over the tail of the last placard, so it is

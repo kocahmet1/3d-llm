@@ -315,7 +315,7 @@ export const CHAMBER_PROCESS_STOPS: Readonly<Record<string, number>> = {
   // Not an avenue: the orientation theater's "stops" are its slides, so the
   // dial's detents land exactly on slide boundaries. A contract test ties this
   // to the deck's actual length.
-  "training-complex": 8,
+  "training-complex": 5,
   "token-stream-context": 4,
   "batch-shifted-targets": 5,
   embedding: 5,
@@ -358,12 +358,14 @@ export const CHAMBER_PROCESS_DURATION_SECONDS = 12;
  * gallery is not an operation: its transport walks the visitor from placard to
  * placard, and each placard is a page of reading. At the shared pace the tour
  * would cross the whole hall in the time it takes to read one heading, so it
- * gets a briefing-length clock instead — about seven seconds a placard.
+ * gets a briefing-length clock instead. Five placards share a 24-second pass,
+ * putting the opening panel in view for 4.8 seconds and keeping later stops
+ * brisk unless the visitor pauses to stay with one.
  */
 export const CHAMBER_PROCESS_DURATION_OVERRIDES: Readonly<
   Record<string, number>
 > = {
-  "training-complex": 56,
+  "training-complex": 24,
 };
 
 /** Seconds one pass of a chamber's process takes at normal speed. */
@@ -405,7 +407,7 @@ export const TRAINING_STATIONS: TrainingStation[] = [
     math: "B=2, T=6, V=16, d_model=8, H=2, d_head=4, blocks=2. Parameter census: embeddings 176 + blocks 2×872 + final norm 16 + vocabulary head 144 = 2,080. Because d_model and d_ff both scale by 96, 9,216 of this model's block matrices tile into one of GPT-2 small's. Only the sizes differ — the operations ahead are identical.",
     formula: "|θ| = 2,080 ; GPT-2 small: 1.24×10⁸ ; GPT-3: 1.75×10¹¹",
     shape: "corpus 2 sentences · 46 bytes → batch [2×6] → θ 2,080",
-    scaleLabel: "orientation briefing · 8 slides",
+    scaleLabel: "orientation briefing · 5 slides",
     cameraHint: "wide",
   },
   {
