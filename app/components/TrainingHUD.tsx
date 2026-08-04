@@ -23,6 +23,7 @@ import {
   chamberProcessDurationSeconds,
   chamberProcessLoops,
 } from "../lib/trainingTrace";
+import { usePointerLockEngaged } from "../lib/usePointerLockEngaged";
 import styles from "./TrainingHUD.module.css";
 
 /**
@@ -164,6 +165,10 @@ export function TrainingHUD({
 }: TrainingHUDProps) {
   const [fullCodeOpen, setFullCodeOpen] = useState(false);
   const [hudMinimized, setHudMinimized] = useState(false);
+  // While FPS look holds the mouse, panel buttons cannot be clicked at all, so
+  // the clickable ones wear a small "press Esc first" tag instead of ignoring
+  // the visitor silently.
+  const pointerLockEngaged = usePointerLockEngaged();
   const [usesCoarsePointer, setUsesCoarsePointer] = useState(false);
   const [deviceDefaultsReady, setDeviceDefaultsReady] = useState(false);
   const hudPreferenceSetRef = useRef(false);
@@ -1017,6 +1022,11 @@ export function TrainingHUD({
             ?
           </span>
           <span>Controls</span>
+          {pointerLockEngaged ? (
+            <span className={styles.escHint} aria-hidden="true">
+              <kbd>Esc</kbd> to click here
+            </span>
+          ) : null}
         </summary>
         <div className={styles.keySheet}>
           <p>{usesCoarsePointer ? "Touch navigation" : "First-person navigation"}</p>
@@ -1193,17 +1203,26 @@ export function TrainingHUD({
                 ? "playing"
                 : "held"}
           </h2>
-          <p
-            className={`${styles.dialHint} ${
-              processPlaying ? "" : styles.dialHintLive
-            }`}
-          >
-            {processLocked
-              ? "The isolated component replay owns this dial"
-              : processPlaying
-                ? "Space pauses · then turn the dial"
-                : "Turn the dial to move through the animation"}
-          </p>
+          {/* While FPS look holds the mouse the dial and its pause button
+           * cannot be grabbed, so the advice line above them switches to the
+           * one action that helps: press Esc first. */}
+          {pointerLockEngaged && !processLocked ? (
+            <p className={`${styles.dialHint} ${styles.dialHintEsc}`}>
+              Press <kbd>Esc</kbd> to free the mouse · then turn or pause
+            </p>
+          ) : (
+            <p
+              className={`${styles.dialHint} ${
+                processPlaying ? "" : styles.dialHintLive
+              }`}
+            >
+              {processLocked
+                ? "The isolated component replay owns this dial"
+                : processPlaying
+                  ? "Space pauses · then turn the dial"
+                  : "Turn the dial to move through the animation"}
+            </p>
+          )}
           <div className={styles.dialRow}>
             {/* A dial reads as an ornament until something shows which way it
              * turns, so it sits between two arrows that curl the way it goes.

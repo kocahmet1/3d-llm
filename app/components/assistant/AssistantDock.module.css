@@ -22,11 +22,80 @@
   backdrop-filter: blur(20px) saturate(135%);
 }
 
+/* No overflow clip: the pill's background already follows its radius, and the
+ * pointer-lock tag below needs to float above the pill's top edge. */
 .dockCollapsed {
   width: auto;
   padding: 0;
-  overflow: hidden;
   border-radius: 999px;
+}
+
+/*
+ * Shown only while pointer lock owns the mouse. There is no cursor then, so
+ * this button cannot be clicked; the tag names the one way out. It takes no
+ * pointer events itself — while it is visible there is nothing to click it
+ * with.
+ */
+.escHint {
+  position: absolute;
+  z-index: 3;
+  bottom: calc(100% + 8px);
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid rgba(111, 244, 255, 0.34);
+  border-radius: 999px;
+  background: rgba(4, 16, 22, 0.92);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.42);
+  color: var(--guide-cyan);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: escHintIn 200ms ease both;
+  backdrop-filter: blur(12px);
+}
+
+.escHint::after {
+  position: absolute;
+  top: 100%;
+  left: 18px;
+  border: 4px solid transparent;
+  border-top-color: rgba(111, 244, 255, 0.34);
+  content: "";
+}
+
+.escHint kbd {
+  display: inline-grid;
+  min-width: 18px;
+  height: 16px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-bottom-color: rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.24);
+  color: #eafeff;
+  font-family: inherit;
+  font-size: 7px;
+}
+
+@keyframes escHintIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .dockSetup {

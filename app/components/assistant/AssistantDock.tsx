@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import { usePointerLockEngaged } from "../../lib/usePointerLockEngaged";
 import styles from "./AssistantDock.module.css";
 
 export type AssistantDockStatus =
@@ -84,6 +85,9 @@ export function AssistantDock({
 }: AssistantDockProps) {
   const [showKeyEntry, setShowKeyEntry] = useState(false);
   const [temporaryApiKey, setTemporaryApiKey] = useState("");
+  // While FPS look holds the mouse this button cannot be clicked, so it wears
+  // a small "press Esc first" tag instead of ignoring the visitor silently.
+  const pointerLockEngaged = usePointerLockEngaged();
   // Touch screens have no right mouse button; the spotlight hints switch
   // to their tap wording there.
   const [coarsePointer, setCoarsePointer] = useState(false);
@@ -197,6 +201,11 @@ export function AssistantDock({
 
     return (
       <aside className={`${styles.dock} ${styles.dockCollapsed}`} aria-label="Voice guide">
+        {pointerLockEngaged ? (
+          <span className={styles.escHint} aria-hidden="true">
+            <kbd>Esc</kbd> to click here
+          </span>
+        ) : null}
         <button
           className={styles.enableButton}
           type="button"
