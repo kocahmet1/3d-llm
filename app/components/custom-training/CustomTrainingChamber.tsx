@@ -519,7 +519,8 @@ export function CustomTrainingChamber() {
               <h1 id="run-title">{statusLabel(run)}</h1>
               <p>
                 The graph, sample, and activity stream below all come from this
-                durable local training run.
+                durable {connection.source === "remote" ? "cloud" : "local"}{" "}
+                training run.
               </p>
             </div>
             <div className={styles.runStatusBlock}>
@@ -824,9 +825,10 @@ export function CustomTrainingChamber() {
                 Open the trainer notebook <span aria-hidden="true">→</span>
               </a>
               <small>
-                In Colab choose <strong>Runtime → Run all</strong>, wait about a
-                minute, then click the <strong>connect link</strong> the last
-                cell prints to return here already connected.
+                In Colab press <strong>Run all</strong> (or the round ▶ on the
+                first cell), approve Google&apos;s notice, wait about a minute,
+                then click the green <strong>connect link</strong> button it
+                prints to return here already connected.
               </small>
               <div className={styles.connectLinkRow}>
                 <input
