@@ -253,6 +253,10 @@ export function TrainingExperience() {
   // The canvas assigns this once mounted; changeRideMode calls it to drop
   // the visitor into free-roam FPS mode the instant Explore is selected.
   const freeRoamRequestRef = useRef<(() => void) | null>(null);
+  // The large "guide is live" coach card shown right after activation. It
+  // stays until the visitor uses the guide (spotlight or question) or
+  // closes it, and re-arms whenever the guide is switched off.
+  const [guideNoticeDismissed, setGuideNoticeDismissed] = useState(false);
 
   // The hand-off notice ("you have control now") stays up until the visitor
   // actually takes control; the canvas reports that moment through
@@ -662,6 +666,23 @@ export function TrainingExperience() {
     }
     previousVoiceEnabledRef.current = voiceEnabled;
   }, [clearSpotlightCueOwnership, voiceEnabled]);
+  // Re-arm the activation coach card for the next time the guide connects.
+  useEffect(() => {
+    if (!voiceEnabled) setGuideNoticeDismissed(false);
+  }, [voiceEnabled]);
+  // The card has done its job as soon as the visitor spotlights a component
+  // or starts a question.
+  useEffect(() => {
+    if (!voiceEnabled || guideNoticeDismissed) return;
+    if (
+      spotlightTargetId ||
+      voiceStatus === "listening" ||
+      voiceStatus === "thinking" ||
+      voiceStatus === "speaking"
+    ) {
+      setGuideNoticeDismissed(true);
+    }
+  }, [guideNoticeDismissed, spotlightTargetId, voiceEnabled, voiceStatus]);
   const assistantAudioActivity = useRemoteAudioActivity(
     voice.remoteStream,
     voice.status === "speaking",
@@ -1475,6 +1496,10 @@ export function TrainingExperience() {
         }
         error={voice.error}
         handsFree={Boolean(spotlightTargetId)}
+        activationNoticeVisible={
+          voiceStatus === "ready" && !guideNoticeDismissed
+        }
+        onDismissActivationNotice={() => setGuideNoticeDismissed(true)}
         onEnable={(temporaryApiKey) => {
           setPlaying(false);
           void voice.enable(temporaryApiKey);

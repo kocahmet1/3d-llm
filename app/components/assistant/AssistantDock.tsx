@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useState,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
@@ -30,6 +31,12 @@ export interface AssistantDockProps {
    * the dock then invites speaking instead of asking for a held button.
    */
   handsFree?: boolean;
+  /**
+   * Shows the large "guide is live" coach notice beside the scene right
+   * after activation, until the visitor uses the guide or dismisses it.
+   */
+  activationNoticeVisible?: boolean;
+  onDismissActivationNotice?: () => void;
   onEnable: (temporaryApiKey?: string) => void;
   onDisable: () => void;
   onTalkStart: () => void;
@@ -68,6 +75,8 @@ export function AssistantDock({
   processPhaseLabel = "REPLAYING",
   error,
   handsFree = false,
+  activationNoticeVisible = false,
+  onDismissActivationNotice,
   onEnable,
   onDisable,
   onTalkStart,
@@ -75,6 +84,16 @@ export function AssistantDock({
 }: AssistantDockProps) {
   const [showKeyEntry, setShowKeyEntry] = useState(false);
   const [temporaryApiKey, setTemporaryApiKey] = useState("");
+  // Touch screens have no right mouse button; the spotlight hints switch
+  // to their tap wording there.
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(pointer: coarse)");
+    const sync = () => setCoarsePointer(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
   const busy = status === "connecting" || status === "thinking";
   const talking = status === "listening" || status === "speaking";
   const canTalk = enabled && status !== "connecting" && status !== "error";
@@ -196,6 +215,38 @@ export function AssistantDock({
   }
 
   return (
+    <>
+      {activationNoticeVisible ? (
+        <aside
+          className={styles.activationNotice}
+          role="status"
+          aria-live="polite"
+        >
+          <header className={styles.noticeHeader}>
+            <span className={styles.guideGem} aria-hidden="true" />
+            <strong>Your guide is live</strong>
+            <button
+              type="button"
+              className={styles.closeButton}
+              aria-label="Dismiss guide tip"
+              onClick={() => onDismissActivationNotice?.()}
+            >
+              ×
+            </button>
+          </header>
+          <p className={styles.noticeHeadline}>
+            {coarsePointer
+              ? "Tap any component to highlight it"
+              : "Right-click any component to highlight it"}
+          </p>
+          <p className={styles.noticeCopy}>
+            The guide lifts it into the spotlight and explains what it does.
+            {coarsePointer
+              ? " Hold the mic button to ask your own questions."
+              : " Hold V to ask your own questions. Right-click empty space to release."}
+          </p>
+        </aside>
+      ) : null}
     <aside className={styles.dock} aria-label="Voice guide" data-status={status}>
       <header className={styles.header}>
         <span className={styles.guideGem} aria-hidden="true" />
@@ -234,6 +285,16 @@ export function AssistantDock({
           <strong>{processLabel}</strong>
         </div>
       ) : null}
+
+      <p className={styles.spotlightTip}>
+        {processLabel || handsFree
+          ? coarsePointer
+            ? "Tap empty space to release the highlight"
+            : "Right-click empty space or press Esc to release"
+          : coarsePointer
+            ? "Tap a component to highlight it"
+            : "Right-click a component to highlight it"}
+      </p>
 
       {error ? <p className={styles.error}>{error}</p> : null}
       {status === "error" ? (
@@ -294,5 +355,6 @@ export function AssistantDock({
         </span>
       </button>
     </aside>
+    </>
   );
 }

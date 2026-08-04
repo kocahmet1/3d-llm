@@ -387,6 +387,128 @@
   transform: translateX(-50%);
 }
 
+.spotlightTip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 3px 0;
+  color: #7fb4ae;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+
+.spotlightTip::before {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--guide-mint);
+  box-shadow: 0 0 7px rgba(125, 255, 215, 0.75);
+  content: "";
+}
+
+/* Large post-activation coach card: parked on the right edge of the scene,
+ * out of the station panel's way, until the visitor uses the guide (or
+ * dismisses it). */
+.activationNotice {
+  --guide-cyan: #6ff4ff;
+  --guide-mint: #7dffd7;
+  position: absolute;
+  z-index: 44;
+  top: 108px;
+  /* Sits just left of the signal-key legend (right: 22px, 122px wide) and
+   * clear of the right-edge branch button that fork chambers show. */
+  right: 158px;
+  width: min(324px, calc(100vw - 44px));
+  box-sizing: border-box;
+  padding: 15px 16px 16px;
+  border: 1.5px solid rgba(125, 255, 215, 0.55);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 16% 0%, rgba(86, 255, 214, 0.16), transparent 38%),
+    linear-gradient(145deg, rgba(6, 26, 27, 0.95), rgba(2, 11, 15, 0.9));
+  box-shadow:
+    0 26px 80px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 38px rgba(121, 248, 207, 0.2);
+  color: #eafff8;
+  font-family: Inter, "Segoe UI", sans-serif;
+  pointer-events: auto;
+  backdrop-filter: blur(20px) saturate(135%);
+  animation:
+    noticeReveal 280ms ease-out both,
+    noticePulse 2.4s ease-in-out 320ms 3;
+}
+
+@media (max-width: 860px) {
+  .activationNotice {
+    top: 64px;
+    right: max(12px, env(safe-area-inset-right));
+    left: max(12px, env(safe-area-inset-left));
+    width: auto;
+  }
+}
+
+.noticeHeader {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 10px;
+}
+
+.noticeHeader strong {
+  color: #d9fff3;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.noticeHeadline {
+  margin: 12px 0 0;
+  color: #effffb;
+  font-size: 16px;
+  font-weight: 760;
+  letter-spacing: 0.005em;
+  line-height: 1.32;
+}
+
+.noticeCopy {
+  margin: 8px 0 0;
+  color: #a3ccc4;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+@keyframes noticeReveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes noticePulse {
+  0%,
+  100% {
+    box-shadow:
+      0 26px 80px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 0 38px rgba(121, 248, 207, 0.2);
+  }
+  50% {
+    box-shadow:
+      0 26px 80px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 0 58px rgba(121, 248, 207, 0.42);
+  }
+}
+
 @keyframes voiceBar {
   from { height: 4px; opacity: 0.45; }
   to { height: 18px; opacity: 1; }
