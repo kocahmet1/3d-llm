@@ -201,7 +201,8 @@ export function TrainingExperience() {
     useState<MachineRoomCue | null>(null);
   const [movementDiscovered, setMovementDiscovered] = useState(false);
   // First-visit guided tour: "touring" while the canvas drives the camera,
-  // "handoff" briefly after it releases control (auto-dismissed below).
+  // "handoff" after it releases control (cleared by the canvas the moment
+  // the visitor takes over with the mouse, keys, or touch).
   const [introTour, setIntroTour] = useState<IntroTourState>(null);
   /**
    * True while a director flight is filming. The HUD's coaching cues are
@@ -253,12 +254,9 @@ export function TrainingExperience() {
   // the visitor into free-roam FPS mode the instant Explore is selected.
   const freeRoamRequestRef = useRef<(() => void) | null>(null);
 
-  // The hand-off notice ("you have control now") dismisses itself.
-  useEffect(() => {
-    if (introTour !== "handoff") return undefined;
-    const timer = window.setTimeout(() => setIntroTour(null), 10_000);
-    return () => window.clearTimeout(timer);
-  }, [introTour]);
+  // The hand-off notice ("you have control now") stays up until the visitor
+  // actually takes control; the canvas reports that moment through
+  // onIntroTourChange(null), so there is no timer here.
 
   const derivedStation = useMemo(
     () =>
@@ -1456,6 +1454,9 @@ export function TrainingExperience() {
         onBranchChange={setBranchSide}
         onRestart={restart}
       />
+      {/* The voice guide points at chamber exhibits; the machine room has
+          none, so the dock would be a dead control there. */}
+      {navigationMode !== "machine-room" ? (
       <AssistantDock
         enabled={voice.isEnabled}
         status={voice.status}
@@ -1485,6 +1486,7 @@ export function TrainingExperience() {
         onTalkStart={startAssistantQuestion}
         onTalkEnd={stopAssistantQuestion}
       />
+      ) : null}
       <p className={styles.screenReaderStatus} aria-live="polite">
         {currentStation?.title}. {currentStation?.story}
         {activeComponentProcess

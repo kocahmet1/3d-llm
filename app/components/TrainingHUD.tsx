@@ -657,7 +657,7 @@ export function TrainingHUD({
                     : "Tap a station to select it"
                   : machineRoomCue.approaching
                     ? "Keep scrolling to move in"
-                    : "Choose a station and scroll to move in"}
+                    : "Scroll or double-click a station to move in"}
             </strong>
             <span>
               {introTour === "touring"
@@ -696,7 +696,7 @@ export function TrainingHUD({
             <span>
               {usesCoarsePointer
                 ? "Drag to look, use the movement pad to walk, tap a station to select it, then pinch or use +/- to zoom"
-                : "Move around with WASD and the mouse — or aim at one of the 7 stations and scroll in to zoom into it"}
+                : "Move around with WASD and the mouse — or aim at one of the 7 stations and scroll in or double-click to enter it"}
             </span>
           </span>
         </div>
@@ -715,7 +715,7 @@ export function TrainingHUD({
             <kbd>S</kbd>
             <kbd>D</kbd>
           </span>
-          <span>Aim at any station and scroll to move in</span>
+          <span>Aim at any station — scroll or double-click to move in</span>
         </div>
       ) : null}
 
@@ -1061,6 +1061,12 @@ export function TrainingHUD({
               </div>
               <div>
                 <dt>
+                  <span className={styles.clickKey}>Double-click</span>
+                </dt>
+                <dd>Enter the aimed station</dd>
+              </div>
+              <div>
+                <dt>
                   <kbd>W</kbd> <kbd>S</kbd>
                 </dt>
                 <dd>Forward / back</dd>
@@ -1091,9 +1097,15 @@ export function TrainingHUD({
               </div>
               <div>
                 <dt>
+                  <kbd>M</kbd>
+                </dt>
+                <dd>Back to the machine room</dd>
+              </div>
+              <div>
+                <dt>
                   <kbd>Q</kbd> <kbd>E</kbd>
                 </dt>
-                <dd>Choose a branch</dd>
+                <dd>Pick left / right branch at forks</dd>
               </div>
               <div>
                 <dt>

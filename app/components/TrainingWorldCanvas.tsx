@@ -140,6 +140,9 @@ const MACHINE_ROOM_RISE_SECONDS = 0.42;
 const MACHINE_ROOM_REVEAL_SECONDS = 0.65;
 const MACHINE_ROOM_FOV = 58;
 const MACHINE_ROOM_CUE_RADIUS = 4;
+// The room is domestic scale with the units at arm's length, so the
+// full-rate mouse look that suits 50 m halls feels twitchy in here.
+const MACHINE_ROOM_LOOK_SCALE = 0.55;
 
 const FALLBACK_PHASE_COLORS: Record<TrainingPhase, string> = {
   overview: "#72f5c3",
@@ -762,6 +765,12 @@ function createGraffitiDecal(
     width: number;
     height: number;
     color: THREE.ColorRepresentation;
+    /**
+     * The rack of cans. When more than one colour is given, the fill fades
+     * between them left to right across each row — the blend a writer lays
+     * down by switching cans mid-word — instead of a single flat colour.
+     */
+    colors?: readonly THREE.ColorRepresentation[];
     outline?: THREE.ColorRepresentation;
     highlight?: THREE.ColorRepresentation;
     seed?: number;
@@ -786,18 +795,52 @@ function createGraffitiDecal(
     /** Centre-weighted, so overspray thins out away from the letters. */
     const spread = () => random() + random() + random() - 1.5;
 
-    const base = new THREE.Color(options.color);
-    const fill = base.getStyle();
+    const palette = (
+      options.colors && options.colors.length > 0
+        ? [...options.colors]
+        : [options.color]
+    ).map((entry) => new THREE.Color(entry));
+    /** The fill at a point along the row, blended between adjacent cans. */
+    const colorAt = (position: number) => {
+      if (palette.length === 1) return palette[0].clone();
+      const clamped = THREE.MathUtils.clamp(position, 0, 1);
+      const scaled = clamped * (palette.length - 1);
+      const index = Math.min(palette.length - 2, Math.floor(scaled));
+      return palette[index].clone().lerp(palette[index + 1], scaled - index);
+    };
     const outline = new THREE.Color(options.outline ?? "#0b0a10").getStyle();
     const highlight = new THREE.Color(
-      options.highlight ?? base.clone().lerp(new THREE.Color("#ffffff"), 0.55),
+      options.highlight ??
+        colorAt(0.5).lerp(new THREE.Color("#ffffff"), 0.55),
     ).getStyle();
+
+    // Letters are packed slightly tighter than their metrics, the way they
+    // crowd when the piece is sized by eye.
+    const tracking = 0.95;
+    const graffitiFont = (size: number) =>
+      `italic 900 ${Math.round(size)}px Impact, Haettenschweiler, "Arial Black", sans-serif`;
+    /**
+     * A row is measured up front and shrunk to fit, so a long line runs to the
+     * edge of the piece instead of off the wall.
+     */
+    const fitted = (text: string, size: number) => {
+      paint.font = graffitiFont(size);
+      const span =
+        [...text].reduce(
+          (total, glyph) => total + paint.measureText(glyph).width,
+          0,
+        ) * tracking;
+      const maxSpan = canvas.width * 0.9;
+      return span > maxSpan ? size * (maxSpan / span) : size;
+    };
 
     // The piece, then the smaller tag scrawled under it in one fast pass.
     let cursorY = canvas.height * 0.05;
     const rows = lines.map((text, index) => {
-      const size =
-        index === 0 ? canvas.height * 0.44 : canvas.height * 0.185;
+      const size = fitted(
+        text,
+        index === 0 ? canvas.height * 0.44 : canvas.height * 0.185,
+      );
       const baseline = cursorY + size * 0.82;
       cursorY = baseline + size * 0.3;
       return {
@@ -817,24 +860,22 @@ function createGraffitiDecal(
       paint.textBaseline = "alphabetic";
       // The heaviest condensed face in the stack is the closest the platform
       // gets to a fat cap.
-      paint.font = `italic 900 ${Math.round(row.size)}px Impact, Haettenschweiler, "Arial Black", sans-serif`;
+      paint.font = graffitiFont(row.size);
       paint.lineJoin = "round";
       paint.lineCap = "round";
 
       // Set letter by letter rather than as a string. A single fillText is
       // the giveaway — perfectly even tracking and a dead-level baseline read
-      // as type, not as a hand working a can down a wall. Letters are also
-      // packed slightly tighter than their metrics, the way they crowd when
-      // the piece is sized by eye.
+      // as type, not as a hand working a can down a wall.
       const glyphs = [...row.text];
       const widths = glyphs.map((glyph) => paint.measureText(glyph).width);
-      const tracking = 0.95;
       const span =
         widths.reduce((total, glyph) => total + glyph, 0) * tracking;
       let cursorX = -span / 2;
       const placed = glyphs.map((glyph, index) => {
         const centerX = cursorX + widths[index] / 2;
         cursorX += widths[index] * tracking;
+        const along = glyphs.length === 1 ? 0.5 : index / (glyphs.length - 1);
         return {
           glyph,
           centerX,
@@ -842,6 +883,10 @@ function createGraffitiDecal(
           lean: (random() - 0.5) * 0.13,
           drop: (random() - 0.5) * row.size * 0.07,
           scale: 0.94 + random() * 0.13,
+          // Each letter takes its colour from where it sits in the fade,
+          // nudged off true — the switch between cans is judged by eye, not
+          // measured.
+          fill: colorAt(along + (random() - 0.5) * 0.12).getStyle(),
         };
       });
 
@@ -855,8 +900,9 @@ function createGraffitiDecal(
         const length = row.size * (0.16 + random() * 0.62);
         const thickness = row.size * (0.022 + random() * 0.022);
         const wander = (random() - 0.5) * thickness * 2.2;
-        paint.strokeStyle = fill;
-        paint.fillStyle = fill;
+        // A run sheds whatever colour the can was laying down right there.
+        paint.strokeStyle = source.fill;
+        paint.fillStyle = source.fill;
         const segments = 8;
         for (let segment = 0; segment < segments; segment += 1) {
           const from = segment / segments;
@@ -883,9 +929,9 @@ function createGraffitiDecal(
 
         // The halo of mist that always lands around the stroke.
         paint.globalAlpha = 0.14;
-        paint.shadowColor = fill;
+        paint.shadowColor = letter.fill;
         paint.shadowBlur = row.size * 0.45;
-        paint.fillStyle = fill;
+        paint.fillStyle = letter.fill;
         paint.fillText(letter.glyph, 0, 0);
 
         // A thin, dark keyline rather than the thick even border a sticker
@@ -898,8 +944,8 @@ function createGraffitiDecal(
 
         // Colour built up in passes, each slightly off the last, so the edge
         // is soft and the density is uneven the way a can lays it down.
-        paint.fillStyle = fill;
-        paint.shadowColor = fill;
+        paint.fillStyle = letter.fill;
+        paint.shadowColor = letter.fill;
         paint.shadowBlur = row.size * 0.045;
         for (const pass of [
           { x: 0, y: 0, alpha: 0.82 },
@@ -972,7 +1018,8 @@ function createGraffitiDecal(
       const x = canvas.width / 2 + spread() * canvas.width * 0.24;
       const y = canvas.height / 2 + spread() * canvas.height * 0.26;
       paint.globalAlpha = 0.05 + random() * 0.16;
-      paint.fillStyle = random() > 0.35 ? fill : highlight;
+      paint.fillStyle =
+        random() > 0.35 ? colorAt(random()).getStyle() : highlight;
       paint.beginPath();
       paint.arc(x, y, 0.35 + random() * 1.5, 0, Math.PI * 2);
       paint.fill();
@@ -1005,6 +1052,80 @@ function createGraffitiDecal(
   );
   return decal;
 }
+
+/**
+ * The chambers a writer has been through, and what they left on the wall.
+ *
+ * Every entry shares one placement recipe, applied in `addShell`: the paint
+ * lies on a side wall at `±(width / 2 - 0.7)` — clear of the deepest wall
+ * relief (up to 0.55 proud of the inner face) while staying outside walkable
+ * space, which stops 0.85 inside the wall. Vertically it sits in the one band
+ * a writer could actually reach off the deck: above the datum rail (top edge
+ * ≈ −2.6 chamber-local) and below the lowest relief tier, a stretch that runs
+ * clear for the whole depth of the hall in every chamber shell. Keep
+ * `y − height / 2` above −2.55 and `z` a few metres clear of the end walls,
+ * and tagging another chamber is one new entry here.
+ */
+type ChamberGraffitiSpec = {
+  /** The piece, then the smaller lines scrawled under it. */
+  lines: readonly string[];
+  width: number;
+  height: number;
+  /** The rack of cans — fill fades between them across each row. */
+  colors: readonly [THREE.ColorRepresentation, ...THREE.ColorRepresentation[]];
+  highlight?: THREE.ColorRepresentation;
+  seed?: number;
+  /** Which side wall on the way in: 1 the right hand (+x), −1 the left. */
+  side: 1 | -1;
+  /** Chamber-local z. Visitors enter from +z and walk toward −z. */
+  z: number;
+  /** Vertical centre of the piece. */
+  y: number;
+  /** Roll, in radians. Nothing painted freehand sits perfectly level. */
+  tilt: number;
+};
+
+const CHAMBER_GRAFFITI: Partial<Record<string, ChamberGraffitiSpec>> = {
+  // Early in the tour: the classic passing-through claim, left on the left
+  // wall where the token stream rolls by.
+  "token-stream-context": {
+    lines: ["CODEX", "WAS HERE"],
+    width: 7.2,
+    height: 3.2,
+    colors: ["#35e0c8", "#4fa8ff", "#b07bff"],
+    highlight: "#eafff6",
+    seed: 0x51c0de77,
+    side: -1,
+    z: -3,
+    y: -0.95,
+    tilt: -0.024,
+  },
+  // Deep in the learning phase, where the stakes feel highest.
+  loss: {
+    lines: ["GPT", "IS KING"],
+    width: 7.6,
+    height: 3.2,
+    colors: ["#ffd166", "#ff9440", "#ff2f6e"],
+    highlight: "#fff2cf",
+    seed: 0x2b9d4a1f,
+    side: 1,
+    z: -6,
+    y: -0.95,
+    tilt: 0.028,
+  },
+  // The original: somebody got into the final chamber with a can.
+  "model-changed-next-step": {
+    lines: ["GPT-2", "IS GOATED"],
+    width: 6.8,
+    height: 3,
+    colors: ["#ff2f6e", "#ff5c8a", "#ffd166"],
+    highlight: "#ffe7f0",
+    side: 1,
+    z: 6,
+    y: -1.1,
+    tilt: 0.02,
+  },
+};
 
 function easedProgress(value: number, start: number, end: number) {
   const normalized = THREE.MathUtils.clamp((value - start) / Math.max(0.0001, end - start), 0, 1);
@@ -1619,25 +1740,32 @@ function addShell(
     chamber.add(marquee);
   }
 
-  // Somebody got into the final chamber with a can. The side wall's relief
-  // blocks stand 0.43 proud of the inner face and navigation stops 0.85 inside
-  // the wall, so 0.7 lays the paint just clear of the blocks while staying out
-  // of walkable space. It sits low, above the datum rail and below the lowest
-  // relief tier — the band a writer could actually reach off the deck, and the
-  // one stretch of side wall that runs clear for the whole depth of the hall.
-  if (context.station.id === "model-changed-next-step") {
-    const graffiti = createGraffitiDecal(["GPT-2", "IS GOATED"], {
-      width: 6.2,
-      height: 2.8,
-      color: "#ff2f6e",
-      highlight: "#ffd166",
+  // Writers have been through a few of the halls. The reachable-band geometry
+  // that keeps every piece clear of relief, rails, and walkable space lives
+  // with `CHAMBER_GRAFFITI`; each entry only says which wall, where along it,
+  // and what the cans held.
+  const graffitiSpec = CHAMBER_GRAFFITI[context.station.id];
+  if (graffitiSpec) {
+    const graffiti = createGraffitiDecal(graffitiSpec.lines, {
+      width: graffitiSpec.width,
+      height: graffitiSpec.height,
+      color: graffitiSpec.colors[0],
+      colors: graffitiSpec.colors,
+      highlight: graffitiSpec.highlight,
+      seed: graffitiSpec.seed,
     });
-    graffiti.name = "gpt2-goated-graffiti";
-    // Right-hand wall on the way in: the visitor enters from +z and walks
-    // toward the exit, so this reads a few paces into the room.
-    graffiti.position.set(width / 2 - 0.7, -1.2, 6);
-    // Nothing painted freehand sits perfectly level.
-    graffiti.rotation.set(0, -Math.PI / 2, 0.02);
+    graffiti.name = `${context.station.id}-graffiti`;
+    graffiti.position.set(
+      graffitiSpec.side * (width / 2 - 0.7),
+      graffitiSpec.y,
+      graffitiSpec.z,
+    );
+    // Turned to face into the room from whichever wall carries it.
+    graffiti.rotation.set(
+      0,
+      -graffitiSpec.side * (Math.PI / 2),
+      graffitiSpec.tilt,
+    );
     chamber.add(graffiti);
   }
 
@@ -5999,6 +6127,18 @@ export function TrainingWorldCanvas({
     const TOUCH_TAP_SLOP_PX = 10;
     const TOUCH_TAP_MAX_MS = 420;
     const PINCH_DOLLY_PER_PIXEL = 0.055;
+    // Machine-room double-click entry. Detected manually from pointerdown
+    // pairs rather than the dblclick event, because the first click of the
+    // pair usually engages pointer lock and browsers are inconsistent about
+    // dblclick once the pointer is captured.
+    const DOUBLE_CLICK_WINDOW_MS = 420;
+    const DOUBLE_CLICK_NDC_SLOP = 0.1;
+    let lastPrimaryClickAt = -Infinity;
+    const lastPrimaryClickNdc = new THREE.Vector2(2, 2); // off-screen sentinel
+    /** When pointer lock last engaged; distinguishes a lock that a
+     * double-click's first click just created (clientX/Y still hold that
+     * click's spot) from long-standing FPS capture (aim = crosshair). */
+    let pointerLockEngagedAt = -Infinity;
     let targetYaw = machineRoom.bounds.spawnYaw;
     let targetPitch = machineRoom.bounds.spawnPitch;
     let glanceYaw = targetYaw;
@@ -6140,6 +6280,12 @@ export function TrainingWorldCanvas({
     }
 
     let tourPhase: IntroTourPhase = "fly-in";
+    /**
+     * True while the post-tour "You have the control now" notice is on
+     * screen. It stays visible until the visitor actually takes control
+     * (click, wheel, WASD, or touch — see dismissHandoffNotice).
+     */
+    let handoffNoticeActive = false;
     /** Time inside the current unit glance / dwell beat. */
     let tourTimer = 0;
     /** Time since the current phase began — drives the safety bails. */
@@ -6193,9 +6339,10 @@ export function TrainingWorldCanvas({
 
     /**
      * End the flow — either the natural hand-off at the tour's finish
-     * (handoff = true, which surfaces the "you have control" notice) or a
-     * silent cancel because the visitor took over. Control transfers from
-     * the camera's current pose with no snap.
+     * (handoff = true, which surfaces the "you have control" notice and
+     * keeps it up until the visitor takes control) or a silent cancel
+     * because the visitor took over. Control transfers from the camera's
+     * current pose with no snap.
      */
     const finishTour = (handoff: boolean) => {
       if (!introActive) return;
@@ -6212,11 +6359,23 @@ export function TrainingWorldCanvas({
       // free-roam targets onto it so nothing jumps.
       targetYaw = glanceYaw;
       targetPitch = glancePitch;
+      handoffNoticeActive = handoff;
       latest.current.onIntroTourChange?.(handoff ? "handoff" : null);
     };
 
     /** Cancel the flow and hand control over with no snap. */
     const cancelIntro = () => finishTour(false);
+
+    /**
+     * The hand-off notice has done its job the moment the visitor takes
+     * control themselves; every manual-input path funnels through
+     * beginManualControl, which calls this.
+     */
+    const dismissHandoffNotice = () => {
+      if (!handoffNoticeActive) return;
+      handoffNoticeActive = false;
+      latest.current.onIntroTourChange?.(null);
+    };
 
     if (tourExtended) latest.current.onIntroTourChange?.("touring");
 
@@ -7265,6 +7424,9 @@ export function TrainingWorldCanvas({
     };
 
     const beginManualControl = () => {
+      // Any manual input means the visitor has taken over — retire the
+      // post-tour hand-off notice.
+      dismissHandoffNotice();
       // Inside the machine room the visitor already has manual control and
       // has no pose to seed from the route.
       if (navigationRegion.kind === "machine-room") {
@@ -7657,9 +7819,11 @@ export function TrainingWorldCanvas({
 
     const applyLookDelta = (deltaX: number, deltaY: number) => {
       if (deltaX !== 0 || deltaY !== 0) cancelGalleryTour();
-      targetYaw -= deltaX * 0.00235;
+      const lookRate =
+        navigationRegion.kind === "machine-room" ? MACHINE_ROOM_LOOK_SCALE : 1;
+      targetYaw -= deltaX * 0.00235 * lookRate;
       targetPitch = THREE.MathUtils.clamp(
-        targetPitch - deltaY * 0.0021,
+        targetPitch - deltaY * 0.0021 * lookRate,
         -Math.PI * 0.485,
         Math.PI * 0.485,
       );
@@ -7714,13 +7878,13 @@ export function TrainingWorldCanvas({
     };
 
     /**
-     * Direct touch selection in the machine room. The desktop experience
-     * selects by crosshair aim; on a phone, tapping a miniature should make
-     * that choice explicit before a pinch or the + button moves toward it.
+     * Raycasts through `ndc` at the machine-room miniatures and resolves the
+     * desk unit under it, or -1. Shared by touch selection and the desktop
+     * double-click entry.
      */
-    const selectMachineUnitAt = (ndc: THREE.Vector2): boolean => {
+    const pickMachineUnitAt = (ndc: THREE.Vector2): number => {
       if (navigationRegion.kind !== "machine-room" || roomTransition) {
-        return false;
+        return -1;
       }
       machineRoom.pickRoot.updateMatrixWorld(true);
       assistantRaycaster.setFromCamera(ndc, camera);
@@ -7734,22 +7898,31 @@ export function TrainingWorldCanvas({
           const unitIndex = machineRoom.units.findIndex(
             (unit) => unit.pickGroup === cursor,
           );
-          if (unitIndex >= 0) {
-            const unit = machineRoom.units[unitIndex];
-            roomHoveredIndex = unitIndex;
-            roomZoomLockIndex = unitIndex;
-            roomZoomLockCooldown = 3;
-            reportMachineRoomCue({
-              unitId: unit.id,
-              label: unit.label,
-              approaching: true,
-            });
-            return true;
-          }
+          if (unitIndex >= 0) return unitIndex;
           cursor = cursor.parent;
         }
       }
-      return false;
+      return -1;
+    };
+
+    /**
+     * Direct touch selection in the machine room. The desktop experience
+     * selects by crosshair aim; on a phone, tapping a miniature should make
+     * that choice explicit before a pinch or the + button moves toward it.
+     */
+    const selectMachineUnitAt = (ndc: THREE.Vector2): boolean => {
+      const unitIndex = pickMachineUnitAt(ndc);
+      if (unitIndex < 0) return false;
+      const unit = machineRoom.units[unitIndex];
+      roomHoveredIndex = unitIndex;
+      roomZoomLockIndex = unitIndex;
+      roomZoomLockCooldown = 3;
+      reportMachineRoomCue({
+        unitId: unit.id,
+        label: unit.label,
+        approaching: true,
+      });
+      return true;
     };
 
     /**
@@ -7854,6 +8027,44 @@ export function TrainingWorldCanvas({
       if (event.pointerType !== "touch" && tryOpenTrainingScreen(event)) {
         event.preventDefault();
         return;
+      }
+      // Double-click entry: a quick second click on the same machine-room
+      // station dives straight into it — the pointer alternative to
+      // scrolling inward.
+      if (
+        event.pointerType !== "touch" &&
+        navigationRegion.kind === "machine-room" &&
+        !roomTransition
+      ) {
+        const now = performance.now();
+        if (
+          document.pointerLockElement === canvas &&
+          now - pointerLockEngagedAt > DOUBLE_CLICK_WINDOW_MS
+        ) {
+          // Long-standing FPS capture: the center crosshair is the aim.
+          pickNdc.set(0, 0);
+        } else {
+          // Free cursor — or a lock the first click of this pair just
+          // engaged, which freezes clientX/Y at that same spot.
+          clientToNdc(event.clientX, event.clientY, pickNdc);
+        }
+        const isDoubleClick =
+          now - lastPrimaryClickAt <= DOUBLE_CLICK_WINDOW_MS &&
+          lastPrimaryClickNdc.distanceTo(pickNdc) <= DOUBLE_CLICK_NDC_SLOP;
+        lastPrimaryClickAt = now;
+        lastPrimaryClickNdc.copy(pickNdc);
+        if (isDoubleClick) {
+          const unitIndex = pickMachineUnitAt(pickNdc);
+          if (unitIndex >= 0) {
+            event.preventDefault();
+            lastPrimaryClickAt = -Infinity;
+            roomHoveredIndex = unitIndex;
+            roomZoomLockIndex = unitIndex;
+            roomZoomLockCooldown = MACHINE_ZOOM_LOCK_GRACE;
+            startRoomDive(unitIndex);
+            return;
+          }
+        }
       }
       if (event.pointerType === "touch") {
         event.preventDefault();
@@ -8005,7 +8216,10 @@ export function TrainingWorldCanvas({
     const onPointerLockChange = () => {
       const locked = document.pointerLockElement === canvas;
       canvas.style.cursor = locked ? "none" : "crosshair";
-      if (locked) dragging = false;
+      if (locked) {
+        dragging = false;
+        pointerLockEngagedAt = performance.now();
+      }
     };
     const resetTouchInput = () => {
       touchMoveForward = 0;
@@ -9940,8 +10154,9 @@ export function TrainingWorldCanvas({
       clearFocusStage();
       if (freeRoamRequestRef) freeRoamRequestRef.current = null;
       // Leave no stale tour banner behind if the canvas unmounts mid-flow.
-      if (introActive && tourExtended) {
+      if ((introActive && tourExtended) || handoffNoticeActive) {
         introActive = false;
+        handoffNoticeActive = false;
         latest.current.onIntroTourChange?.(null);
       }
       unregisterDirectorCanvas(directorApi);
@@ -10005,7 +10220,7 @@ export function TrainingWorldCanvas({
         ref={canvasRef}
         role="application"
         tabIndex={0}
-        aria-label="First-person 3D training world. On touch screens, drag the scene to look, drag the movement pad to walk, pinch or hold the plus and minus buttons to move toward or away, tap an object to inspect it, and use Room to return to the machine. With a mouse and keyboard, click to capture the mouse, look with the mouse, move with W A S D, use the wheel to move toward or away, press M to return to the room, and right-click a component to spotlight it."
+        aria-label="First-person 3D training world. On touch screens, drag the scene to look, drag the movement pad to walk, pinch or hold the plus and minus buttons to move toward or away, tap an object to inspect it, and use Room to return to the machine. With a mouse and keyboard, click to capture the mouse, look with the mouse, move with W A S D, use the wheel to move toward or away, double-click a station to enter it, press M to return to the room, and right-click a component to spotlight it."
         style={{
           display: "block",
           width: "100%",

@@ -217,6 +217,25 @@ function requestHeader(init, name) {
   return new Headers(init?.headers).get(name);
 }
 
+test("Realtime tutor sounds energetic, diligent, and unhurried", async () => {
+  const { context } = await loadContextModules();
+  const prompt = context.SESSION_TUTOR_INSTRUCTIONS;
+
+  assert.match(prompt, /# Personality and Tone/);
+  assert.match(prompt, /bright, enthusiastic young woman/i);
+  assert.match(prompt, /sprightly, warm, curious/i);
+  assert.match(prompt, /clear, comfortable pace/i);
+  assert.match(prompt, /DO NOT rush/);
+  assert.match(prompt, /explain one logical step at a time/i);
+  assert.match(prompt, /CURRENT SPOTLIGHT/);
+  assert.match(prompt, /Never invent a displayed value/i);
+  assert.doesNotMatch(
+    prompt,
+    /speak (?:very )?fast|talk quickly|increase speaking speed/i,
+    "the energetic persona must not introduce a conflicting speed instruction",
+  );
+});
+
 test("assistant context covers every station and every world binding", async () => {
   const { trace, context } = await loadContextModules();
   const stationIds = trace.TRAINING_STATIONS.map(({ id }) => id);
