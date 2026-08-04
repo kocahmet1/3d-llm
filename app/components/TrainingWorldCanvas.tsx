@@ -741,6 +741,271 @@ function createFacePanel(
   return panel;
 }
 
+/**
+ * Spray paint laid straight onto a wall, rather than a sign hung on it.
+ *
+ * Deliberately none of `createFacePanel`'s furniture: no plate, no backing, no
+ * border — the texture is transparent everywhere the can did not reach. What
+ * sells it as paint instead of a decal is the layering a writer actually works
+ * in: runs first, so the letters sit on top of their own drips; then a heavy
+ * outline; then the fill, softened at the edge the way an aerosol feathers;
+ * then a highlight offset up-left, as a second can lands slightly off
+ * register. Fine overspray settles over the whole piece at the end.
+ *
+ * It is lit as a matte surface — a faint emissive keeps it legible in a dim
+ * chamber without turning it into the lightbox that a `MeshBasicMaterial`
+ * would give.
+ */
+function createGraffitiDecal(
+  lines: readonly string[],
+  options: {
+    width: number;
+    height: number;
+    color: THREE.ColorRepresentation;
+    outline?: THREE.ColorRepresentation;
+    highlight?: THREE.ColorRepresentation;
+    seed?: number;
+  },
+): THREE.Mesh {
+  const { width, height } = options;
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = Math.max(256, Math.round((canvas.width * height) / width));
+  const paint = canvas.getContext("2d");
+
+  if (paint) {
+    // Seeded, so a chamber's paint is identical on every visit and every build.
+    let state = (options.seed ?? 0x5bf03635) >>> 0;
+    const random = () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let value = state;
+      value = Math.imul(value ^ (value >>> 15), value | 1);
+      value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+    /** Centre-weighted, so overspray thins out away from the letters. */
+    const spread = () => random() + random() + random() - 1.5;
+
+    const base = new THREE.Color(options.color);
+    const fill = base.getStyle();
+    const outline = new THREE.Color(options.outline ?? "#0b0a10").getStyle();
+    const highlight = new THREE.Color(
+      options.highlight ?? base.clone().lerp(new THREE.Color("#ffffff"), 0.55),
+    ).getStyle();
+
+    // The piece, then the smaller tag scrawled under it in one fast pass.
+    let cursorY = canvas.height * 0.05;
+    const rows = lines.map((text, index) => {
+      const size =
+        index === 0 ? canvas.height * 0.44 : canvas.height * 0.185;
+      const baseline = cursorY + size * 0.82;
+      cursorY = baseline + size * 0.3;
+      return {
+        text,
+        size,
+        baseline,
+        tilt: index === 0 ? -0.05 : -0.035,
+        drips: index === 0 ? 6 : 2,
+      };
+    });
+
+    for (const row of rows) {
+      paint.save();
+      paint.translate(canvas.width / 2, row.baseline);
+      paint.rotate(row.tilt);
+      paint.textAlign = "center";
+      paint.textBaseline = "alphabetic";
+      // The heaviest condensed face in the stack is the closest the platform
+      // gets to a fat cap.
+      paint.font = `italic 900 ${Math.round(row.size)}px Impact, Haettenschweiler, "Arial Black", sans-serif`;
+      paint.lineJoin = "round";
+      paint.lineCap = "round";
+
+      // Set letter by letter rather than as a string. A single fillText is
+      // the giveaway — perfectly even tracking and a dead-level baseline read
+      // as type, not as a hand working a can down a wall. Letters are also
+      // packed slightly tighter than their metrics, the way they crowd when
+      // the piece is sized by eye.
+      const glyphs = [...row.text];
+      const widths = glyphs.map((glyph) => paint.measureText(glyph).width);
+      const tracking = 0.95;
+      const span =
+        widths.reduce((total, glyph) => total + glyph, 0) * tracking;
+      let cursorX = -span / 2;
+      const placed = glyphs.map((glyph, index) => {
+        const centerX = cursorX + widths[index] / 2;
+        cursorX += widths[index] * tracking;
+        return {
+          glyph,
+          centerX,
+          width: widths[index],
+          lean: (random() - 0.5) * 0.13,
+          drop: (random() - 0.5) * row.size * 0.07,
+          scale: 0.94 + random() * 0.13,
+        };
+      });
+
+      // Runs first, so the letters sit on top of the paint they shed. Each
+      // starts under a real letter at the baseline, tapers as it travels, and
+      // ends in the bead where it ran out of paint and stopped.
+      for (let drip = 0; drip < row.drips; drip += 1) {
+        const source = placed[Math.floor(random() * placed.length)];
+        const x = source.centerX + (random() - 0.5) * source.width * 0.55;
+        const startY = source.drop + row.size * 0.02;
+        const length = row.size * (0.16 + random() * 0.62);
+        const thickness = row.size * (0.022 + random() * 0.022);
+        const wander = (random() - 0.5) * thickness * 2.2;
+        paint.strokeStyle = fill;
+        paint.fillStyle = fill;
+        const segments = 8;
+        for (let segment = 0; segment < segments; segment += 1) {
+          const from = segment / segments;
+          const to = (segment + 1) / segments;
+          paint.globalAlpha = 0.9 - from * 0.3;
+          paint.lineWidth = thickness * (1 - from * 0.6);
+          paint.beginPath();
+          paint.moveTo(x + wander * from, startY + length * from);
+          paint.lineTo(x + wander * to, startY + length * to);
+          paint.stroke();
+        }
+        paint.globalAlpha = 0.72;
+        paint.beginPath();
+        paint.arc(x + wander, startY + length, thickness * 0.46, 0, Math.PI * 2);
+        paint.fill();
+        paint.globalAlpha = 1;
+      }
+
+      for (const letter of placed) {
+        paint.save();
+        paint.translate(letter.centerX, letter.drop);
+        paint.rotate(letter.lean);
+        paint.scale(letter.scale, letter.scale);
+
+        // The halo of mist that always lands around the stroke.
+        paint.globalAlpha = 0.14;
+        paint.shadowColor = fill;
+        paint.shadowBlur = row.size * 0.45;
+        paint.fillStyle = fill;
+        paint.fillText(letter.glyph, 0, 0);
+
+        // A thin, dark keyline rather than the thick even border a sticker
+        // would have.
+        paint.globalAlpha = 0.85;
+        paint.shadowBlur = 0;
+        paint.lineWidth = row.size * 0.075;
+        paint.strokeStyle = outline;
+        paint.strokeText(letter.glyph, 0, 0);
+
+        // Colour built up in passes, each slightly off the last, so the edge
+        // is soft and the density is uneven the way a can lays it down.
+        paint.fillStyle = fill;
+        paint.shadowColor = fill;
+        paint.shadowBlur = row.size * 0.045;
+        for (const pass of [
+          { x: 0, y: 0, alpha: 0.82 },
+          { x: -0.013, y: 0.011, alpha: 0.4 },
+          { x: 0.015, y: -0.009, alpha: 0.38 },
+        ]) {
+          paint.globalAlpha = pass.alpha;
+          paint.fillText(letter.glyph, pass.x * row.size, pass.y * row.size);
+        }
+        paint.shadowBlur = 0;
+
+        // Second can, barely off register — a hint of another colour catching
+        // the top-left of each letter, not a bevel over the whole glyph.
+        paint.globalAlpha = 0.2;
+        paint.fillStyle = highlight;
+        paint.fillText(letter.glyph, -row.size * 0.018, -row.size * 0.028);
+        paint.globalAlpha = 1;
+
+        paint.restore();
+      }
+
+      paint.restore();
+    }
+
+    // Uneven coverage. `source-atop` confines these to pixels that already
+    // carry paint, so the letters and their runs vary in density — heavier
+    // where the can lingered, thinner where it swept — instead of reading as
+    // one flat fill.
+    paint.save();
+    paint.globalCompositeOperation = "source-atop";
+    for (let patch = 0; patch < 200; patch += 1) {
+      const x = random() * canvas.width;
+      const y = random() * canvas.height;
+      const radius = 10 + random() * 58;
+      // Soft-edged, and only a few percent deep. A flat disc at any strength
+      // reads as a bubble laid over the letter rather than as coverage.
+      const strength = 0.025 + random() * 0.05;
+      const tone = random() > 0.5 ? "255, 255, 255" : "0, 0, 0";
+      const wash = paint.createRadialGradient(x, y, 0, x, y, radius);
+      wash.addColorStop(0, `rgba(${tone}, ${strength})`);
+      wash.addColorStop(1, `rgba(${tone}, 0)`);
+      paint.fillStyle = wash;
+      paint.beginPath();
+      paint.arc(x, y, radius, 0, Math.PI * 2);
+      paint.fill();
+    }
+    paint.restore();
+
+    // Pinholes: a rough wall never takes paint evenly, and the pitting that
+    // shows through is most of what separates aerosol from a printed decal.
+    paint.save();
+    paint.globalCompositeOperation = "destination-out";
+    for (let pit = 0; pit < 260; pit += 1) {
+      paint.globalAlpha = 0.08 + random() * 0.3;
+      paint.beginPath();
+      paint.arc(
+        random() * canvas.width,
+        random() * canvas.height,
+        0.4 + random() * 2.2,
+        0,
+        Math.PI * 2,
+      );
+      paint.fill();
+    }
+    paint.restore();
+
+    // Overspray: the mist that lands outside the stroke, tight around the
+    // piece and thinning fast.
+    for (let speck = 0; speck < 420; speck += 1) {
+      const x = canvas.width / 2 + spread() * canvas.width * 0.24;
+      const y = canvas.height / 2 + spread() * canvas.height * 0.26;
+      paint.globalAlpha = 0.05 + random() * 0.16;
+      paint.fillStyle = random() > 0.35 ? fill : highlight;
+      paint.beginPath();
+      paint.arc(x, y, 0.35 + random() * 1.5, 0, Math.PI * 2);
+      paint.fill();
+    }
+    paint.globalAlpha = 1;
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.anisotropy = 4;
+  const decal = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, height),
+    new THREE.MeshStandardMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      // Held just under full so the wall's relief reads faintly through the
+      // paint, the way aerosol sits in a rough surface instead of on it.
+      opacity: 0.93,
+      roughness: 0.92,
+      metalness: 0,
+      // Pigment, not a lamp: just enough self-light to stay readable where the
+      // room's fill does not reach the wall.
+      emissive: "#ffffff",
+      emissiveMap: texture,
+      emissiveIntensity: 0.2,
+      side: THREE.FrontSide,
+    }),
+  );
+  return decal;
+}
+
 function easedProgress(value: number, start: number, end: number) {
   const normalized = THREE.MathUtils.clamp((value - start) / Math.max(0.0001, end - start), 0, 1);
   return normalized * normalized * (3 - 2 * normalized);
@@ -1352,6 +1617,28 @@ function addShell(
     }
     marquee.position.set(0, baseY, signZ);
     chamber.add(marquee);
+  }
+
+  // Somebody got into the final chamber with a can. The side wall's relief
+  // blocks stand 0.43 proud of the inner face and navigation stops 0.85 inside
+  // the wall, so 0.7 lays the paint just clear of the blocks while staying out
+  // of walkable space. It sits low, above the datum rail and below the lowest
+  // relief tier — the band a writer could actually reach off the deck, and the
+  // one stretch of side wall that runs clear for the whole depth of the hall.
+  if (context.station.id === "model-changed-next-step") {
+    const graffiti = createGraffitiDecal(["GPT-2", "IS GOATED"], {
+      width: 6.2,
+      height: 2.8,
+      color: "#ff2f6e",
+      highlight: "#ffd166",
+    });
+    graffiti.name = "gpt2-goated-graffiti";
+    // Right-hand wall on the way in: the visitor enters from +z and walks
+    // toward the exit, so this reads a few paces into the room.
+    graffiti.position.set(width / 2 - 0.7, -1.2, 6);
+    // Nothing painted freehand sits perfectly level.
+    graffiti.rotation.set(0, -Math.PI / 2, 0.02);
+    chamber.add(graffiti);
   }
 
   context.group.add(chamber);
