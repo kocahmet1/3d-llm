@@ -17,19 +17,30 @@ import type {
   TrainingRunSnapshot,
 } from "../../lib/customTrainingTypes";
 import {
+  clearRemoteTrainerConnection,
   controlTrainingRun,
   getCurrentTrainingRun,
+  getTrainerConnection,
   getTrainerHealth,
   getTrainingRun,
+  restoreRemoteTrainerConnection,
   resumeTrainingRunFromCheckpoint,
+  setRemoteTrainerConnection,
   startTrainingRun,
   TrainerBridgeError,
+  type TrainerConnection,
 } from "../../lib/trainingClient";
+import {
+  adoptTrainerLinkFromLocation,
+  parseTrainerConnectInput,
+} from "../../lib/remoteTrainerLink";
 import { ModelTestLab } from "./ModelTestLab";
 import styles from "./CustomTrainingChamber.module.css";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const TERMINAL_STATUSES = new Set(["completed", "stopped", "failed"]);
+const COLAB_NOTEBOOK_URL =
+  "https://colab.research.google.com/github/kocahmet1/3d-llm/blob/main/notebooks/train_in_colab.ipynb";
 
 const PRESETS: ReadonlyArray<{
   id: TrainingPreset;
@@ -263,6 +274,10 @@ export function CustomTrainingChamber() {
   const [starting, setStarting] = useState(false);
   const [controlBusy, setControlBusy] = useState(false);
   const [surface, setSurface] = useState<"monitor" | "test">("monitor");
+  const [connection, setConnection] = useState<TrainerConnection>(
+    getTrainerConnection,
+  );
+  const [connectInput, setConnectInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const connect = useCallback(async () => {
@@ -293,9 +308,40 @@ export function CustomTrainingChamber() {
   }, []);
 
   useEffect(() => {
+    // A connect link from the Colab notebook (or an earlier remote connection
+    // stored for this tab) takes effect before the first health probe.
+    if (!adoptTrainerLinkFromLocation()) {
+      restoreRemoteTrainerConnection();
+    }
+    setConnection(getTrainerConnection());
     const timer = window.setTimeout(() => void connect(), 0);
     return () => window.clearTimeout(timer);
   }, [connect]);
+
+  const connectPastedLink = () => {
+    const parsed = parseTrainerConnectInput(connectInput);
+    if (!parsed) {
+      setMessage(
+        "Paste the connect link exactly as the trainer notebook printed it.",
+      );
+      return;
+    }
+    try {
+      setConnection(setRemoteTrainerConnection(parsed.url, parsed.token));
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "That trainer link is not valid.",
+      );
+      return;
+    }
+    setConnectInput("");
+    void connect();
+  };
+
+  const useLocalTrainer = () => {
+    setConnection(clearRemoteTrainerConnection());
+    void connect();
+  };
 
   const activeRunId = run?.id;
   const activeRunStatus = run?.status;
@@ -444,11 +490,17 @@ export function CustomTrainingChamber() {
         </div>
         <div className={`${styles.bridgeBadge} ${styles[bridge]}`} role="status">
           <span aria-hidden="true" />
-          {bridge === "online"
-            ? "Local trainer connected"
-            : bridge === "checking"
-              ? "Finding local trainer"
-              : "Local trainer offline"}
+          {connection.source === "remote"
+            ? bridge === "online"
+              ? "Cloud trainer connected"
+              : bridge === "checking"
+                ? "Contacting cloud trainer"
+                : "Cloud trainer offline"
+            : bridge === "online"
+              ? "Local trainer connected"
+              : bridge === "checking"
+                ? "Finding local trainer"
+                : "Local trainer offline"}
         </div>
       </header>
 
@@ -505,12 +557,22 @@ export function CustomTrainingChamber() {
 
           {bridge === "offline" ? (
             <div className={styles.inlineWarning} role="status">
-              <span>
-                Live connection was interrupted. If the local launcher stopped,
-                run <code>npm run dev:training</code> once from the project root,
-                leave it open, and use the Local URL it prints. The last received
-                run state remains safe here.
-              </span>
+              {connection.source === "remote" ? (
+                <span>
+                  Live connection to the cloud trainer was interrupted. Check
+                  that its Colab notebook tab is still open and running; if
+                  Colab went to sleep, run the notebook again and use the fresh
+                  connect link it prints. The last received run state remains
+                  safe here.
+                </span>
+              ) : (
+                <span>
+                  Live connection was interrupted. If the local launcher stopped,
+                  run <code>npm run dev:training</code> once from the project root,
+                  leave it open, and use the Local URL it prints. The last received
+                  run state remains safe here.
+                </span>
+              )}
               <button type="button" onClick={() => void connect()}>
                 Reconnect
               </button>
@@ -529,7 +591,14 @@ export function CustomTrainingChamber() {
                   Before resuming from checkpoint
                 </strong>
               </div>
-              {bridge === "online" ? (
+              {connection.source === "remote" ? (
+                <p>
+                  This run lives in the connected cloud trainer. Keep its Colab
+                  notebook running; if it disconnected, run the notebook again,
+                  click its fresh connect link, then resume. The saved corpus
+                  does not need to be uploaded again.
+                </p>
+              ) : bridge === "online" ? (
                 <p>
                   One local trainer is connected. Keep the PowerShell window
                   running <code>npm run dev:training</code> open, and do not run
@@ -542,12 +611,14 @@ export function CustomTrainingChamber() {
                   the Local URL it prints.
                 </p>
               )}
-              <p>
-                The original PowerShell window is not required. If the command
-                is already running, use its Local URL instead of starting it
-                again. Then click Resume from checkpoint; the saved corpus does
-                not need to be uploaded again.
-              </p>
+              {connection.source === "remote" ? null : (
+                <p>
+                  The original PowerShell window is not required. If the command
+                  is already running, use its Local URL instead of starting it
+                  again. Then click Resume from checkpoint; the saved corpus does
+                  not need to be uploaded again.
+                </p>
+              )}
             </aside>
           ) : null}
 
@@ -690,12 +761,13 @@ export function CustomTrainingChamber() {
       ) : (
         <section className={styles.setup} aria-labelledby="setup-title">
           <div className={styles.setupIntro}>
-            <p className={styles.eyebrow}>SIDE FEATURE · REAL LOCAL PYTORCH</p>
+            <p className={styles.eyebrow}>SIDE FEATURE · REAL PYTORCH · CLOUD OR LOCAL</p>
             <h1 id="setup-title">Train a model on your own text.</h1>
             <p className={styles.lede}>
               Supply plain text, choose a safe model preset, and watch the same
               loss, samples, logs, and checkpoints a researcher would inspect.
-              Your corpus stays on this computer.
+              Your corpus goes only to the trainer you connect — this computer,
+              or your own free Colab session.
             </p>
             <div className={styles.promiseRow}>
               <span><strong>01</strong> Supply text</span>
@@ -706,49 +778,96 @@ export function CustomTrainingChamber() {
 
           <aside
             className={styles.localRequirement}
-            aria-labelledby="local-training-required-title"
+            aria-labelledby="trainer-connect-title"
             data-status={bridge}
           >
             <div className={styles.localRequirementCopy}>
               <span className={styles.localRequirementKicker}>
                 Required for real training
               </span>
-              <h2 id="local-training-required-title">
-                Run this site on your local machine.
+              <h2 id="trainer-connect-title">
+                Connect a PyTorch trainer to this page.
               </h2>
               <p>
-                Training is unavailable on the hosted site because it cannot
-                reach the loopback-only PyTorch trainer. Download or clone{" "}
-                <a
-                  href="https://github.com/kocahmet1/3d-llm"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  kocahmet1/3d-llm from GitHub
-                </a>{" "}
-                onto the computer you want to train on, install its Node and
-                trainer dependencies, then start both pieces with this command.
+                Real training happens in a companion trainer that this page
+                talks to. The fastest path is the free cloud trainer: open the
+                notebook, run it, and click the connect link it prints — no
+                installation, and Colab usually includes a free GPU.
               </p>
+              <details className={styles.altLocal}>
+                <summary>Prefer this computer? Run the local trainer.</summary>
+                <p>
+                  Download or clone{" "}
+                  <a
+                    href="https://github.com/kocahmet1/3d-llm"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    kocahmet1/3d-llm from GitHub
+                  </a>{" "}
+                  onto the computer you want to train on, install its Node and
+                  trainer dependencies, then run{" "}
+                  <code>npm run dev:training</code> once from the project root.
+                  Leave that terminal open and open the{" "}
+                  <strong>Local URL</strong> it prints.
+                </p>
+              </details>
             </div>
             <div className={styles.localCommandCard}>
-              <span>From the project root</span>
-              <code>npm run dev:training</code>
+              <span>Free cloud trainer · Google Colab</span>
+              <a
+                className={styles.colabLaunch}
+                href={COLAB_NOTEBOOK_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open the trainer notebook <span aria-hidden="true">→</span>
+              </a>
               <small>
-                Run it once, leave that terminal open, then open the <strong>Local URL</strong> it prints.
+                In Colab choose <strong>Runtime → Run all</strong>, wait about a
+                minute, then click the <strong>connect link</strong> the last
+                cell prints to return here already connected.
               </small>
+              <div className={styles.connectLinkRow}>
+                <input
+                  value={connectInput}
+                  onChange={(event) => setConnectInput(event.currentTarget.value)}
+                  placeholder="…or paste the connect link here"
+                  aria-label="Trainer connect link"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  onClick={connectPastedLink}
+                  disabled={!connectInput.trim()}
+                >
+                  Connect
+                </button>
+              </div>
             </div>
             <div className={styles.localConnectionState} role="status">
               <span aria-hidden="true" />
               <strong>
-                {bridge === "online"
-                  ? "Local trainer connected"
-                  : bridge === "checking"
-                    ? "Checking this machine"
-                    : "No local trainer detected"}
+                {connection.source === "remote"
+                  ? bridge === "online"
+                    ? "Cloud trainer connected"
+                    : bridge === "checking"
+                      ? "Contacting cloud trainer"
+                      : "Cloud trainer not reachable"
+                  : bridge === "online"
+                    ? "Local trainer connected"
+                    : bridge === "checking"
+                      ? "Checking this machine"
+                      : "No local trainer detected"}
               </strong>
               {bridge === "offline" ? (
                 <button type="button" onClick={() => void connect()}>
                   Try connection again
+                </button>
+              ) : null}
+              {connection.source === "remote" ? (
+                <button type="button" onClick={useLocalTrainer}>
+                  Use local trainer instead
                 </button>
               ) : null}
             </div>
@@ -827,7 +946,7 @@ export function CustomTrainingChamber() {
                 <span>{starting ? "Preparing run…" : "Start real training"}</span><span aria-hidden="true">→</span>
               </button>
               <small className={styles.localNote}>
-                Requires the locally launched site and trainer. Leaving this
+                Requires a connected trainer — cloud or local. Leaving this
                 page does not stop the trainer.
               </small>
             </aside>

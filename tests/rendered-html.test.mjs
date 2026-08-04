@@ -137,7 +137,7 @@ test("the opening room exposes a proximity-gated custom-training console", async
   assert.match(promptStyles, /prefers-reduced-motion/);
 });
 
-test("custom training chamber renders a truthful local-training setup", async () => {
+test("custom training chamber renders a truthful trainer-connection setup", async () => {
   const response = await render("/custom-training");
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -149,13 +149,55 @@ test("custom training chamber renders a truthful local-training setup", async ()
   assert.match(html, /Training choices/i);
   assert.match(html, /Start real training/i);
   assert.match(html, /Local trainer/i);
-  assert.match(html, /Run this site on your local machine/i);
-  assert.match(html, /Training is unavailable on the hosted site/i);
+  assert.match(html, /Connect a PyTorch trainer to this page/i);
+  assert.match(html, /free cloud trainer/i);
+  assert.match(html, /colab\.research\.google\.com\/github\/kocahmet1\/3d-llm/i);
+  assert.match(html, /Open the trainer notebook/i);
+  assert.match(html, /connect link/i);
   assert.match(html, /kocahmet1\/3d-llm from GitHub/i);
   assert.match(html, /https:\/\/github\.com\/kocahmet1\/3d-llm/i);
   assert.match(html, /npm run dev:training/i);
   assert.match(html, /Local URL/i);
   assert.doesNotMatch(html, /mock training|simulated loss/i);
+});
+
+test("the hosted page adopts a user-supplied cloud trainer safely", async () => {
+  const [client, link, chamber, service, notebook] = await Promise.all([
+    readSource("app/lib/trainingClient.ts"),
+    readSource("app/lib/remoteTrainerLink.ts"),
+    readSource("app/components/custom-training/CustomTrainingChamber.tsx"),
+    readSource("trainer/src/chamber_trainer/service.py"),
+    readSource("notebooks/train_in_colab.ipynb"),
+  ]);
+
+  // The client refuses plaintext remote endpoints and attaches the token as a
+  // header, never as a query parameter.
+  assert.match(client, /must start with https:\/\//);
+  assert.match(client, /Authorization: `Bearer \$\{connection\.token\}`/);
+  assert.match(client, /sessionStorage/);
+  assert.doesNotMatch(client, /localStorage/);
+
+  // The connect link is adopted from the fragment and then removed from the
+  // address bar so tokens do not linger in history or copied URLs.
+  assert.match(link, /trainerToken/);
+  assert.match(link, /replaceState/);
+  assert.match(chamber, /adoptTrainerLinkFromLocation/);
+  assert.match(chamber, /colab\.research\.google\.com/);
+
+  // The companion still binds loopback only, and remote origins or hosts are
+  // usable only together with a required bearer token.
+  assert.match(service, /CHAMBER_TRAINER_AUTH_TOKEN/);
+  assert.match(service, /CHAMBER_TRAINER_ALLOWED_ORIGINS/);
+  assert.match(service, /CHAMBER_TRAINER_ALLOWED_HOSTS/);
+  assert.match(service, /compare_digest/);
+  assert.match(service, /requires an authorization/);
+  assert.match(service, /may bind only to 127\.0\.0\.1 or localhost/);
+
+  // The notebook wires the same contract: token, tunnel, and connect link.
+  assert.match(notebook, /CHAMBER_TRAINER_AUTH_TOKEN/);
+  assert.match(notebook, /trycloudflare/);
+  assert.match(notebook, /#trainer=/);
+  assert.match(notebook, /trainerToken/);
 });
 
 test("completed runs expose real checkpoint-backed model sampling", async () => {

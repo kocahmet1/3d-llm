@@ -1,10 +1,18 @@
-"""Loopback-only HTTP companion for real, locally executed training runs."""
+"""Loopback-only HTTP companion for real, locally executed training runs.
+
+The listener always binds a loopback interface. Remote browser pages (for
+example the hosted site talking through a user's own HTTPS tunnel) may be
+allowed explicitly, and only as a package deal: extra origins or hosts require
+a shared authorization token, so an unconfigured companion remains exactly as
+private as before.
+"""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
+import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -31,6 +39,29 @@ MAX_SAMPLE_PROMPT_CHARACTERS = 2_048
 RUN_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 CHECKPOINT_FILE_PATTERN = re.compile(r"^checkpoint_([0-9]{8})\.pt$")
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _split_csv_env(name: str) -> tuple[str, ...]:
+    raw = os.environ.get(name, "")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _normalize_origin(origin: str) -> str:
+    candidate = origin.strip().rstrip("/")
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.path:
+        raise ValueError(
+            f"allowed origins must look like https://host[:port], got {origin!r}"
+        )
+    return candidate
+
+
+def _normalize_hostname(host: str) -> str:
+    candidate = host.strip().lower().rstrip(".")
+    if not candidate or "/" in candidate or ":" in candidate:
+        # Bare DNS hostnames only: no scheme, path, port, or IPv6 literal.
+        raise ValueError(f"allowed hosts must be bare hostnames, got {host!r}")
+    return candidate
 ACTIVE_STATES = {
     "queued",
     "preparing",
@@ -1311,15 +1342,44 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
         if origin is None:
             return None
         parsed = urlsplit(origin)
-        if parsed.scheme not in {"http", "https"} or parsed.hostname not in LOCAL_HOSTS:
-            raise ServiceError(HTTPStatus.FORBIDDEN, "only loopback browser origins are allowed")
-        return origin
+        if parsed.scheme in {"http", "https"} and parsed.hostname in LOCAL_HOSTS:
+            return origin
+        allowed = self.server.allowed_origins  # type: ignore[attr-defined]
+        if origin.rstrip("/") in allowed:
+            return origin
+        raise ServiceError(
+            HTTPStatus.FORBIDDEN,
+            "only loopback browser origins (or explicitly allowed origins) are accepted",
+        )
 
     def _require_local_host(self) -> None:
         host = self.headers.get("Host", "")
         parsed = urlsplit(f"//{host}")
-        if parsed.hostname not in LOCAL_HOSTS:
-            raise ServiceError(HTTPStatus.FORBIDDEN, "the companion accepts loopback hosts only")
+        hostname = parsed.hostname
+        if hostname in LOCAL_HOSTS:
+            return
+        allowed = self.server.allowed_hosts  # type: ignore[attr-defined]
+        if hostname is not None and hostname.lower() in allowed:
+            return
+        raise ServiceError(
+            HTTPStatus.FORBIDDEN,
+            "the companion accepts loopback hosts (or explicitly allowed hosts) only",
+        )
+
+    def _require_authorization(self) -> None:
+        expected = self.server.auth_token  # type: ignore[attr-defined]
+        if expected is None:
+            return
+        header = self.headers.get("Authorization", "")
+        scheme, _, supplied = header.partition(" ")
+        if scheme.lower() == "bearer" and hmac.compare_digest(
+            supplied.strip().encode("utf-8"), expected.encode("utf-8")
+        ):
+            return
+        raise ServiceError(
+            HTTPStatus.UNAUTHORIZED,
+            "a valid trainer authorization token is required",
+        )
 
     def _send_json(self, status: int, value: object, *, origin: str | None = None) -> None:
         body = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -1380,7 +1440,9 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                 "service": "chamber-trainer-companion",
                 "version": "0.1.0",
                 "instanceId": self.server.instance_id,  # type: ignore[attr-defined]
-                "localOnly": True,
+                "localOnly": not (
+                    self.server.allowed_origins or self.server.allowed_hosts  # type: ignore[attr-defined]
+                ),
                 "maxRequestBytes": MAX_REQUEST_BYTES,
                 "presets": sorted(PRESETS),
             }
@@ -1444,6 +1506,7 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
         try:
             self._require_local_host()
             origin = self._origin()
+            self._require_authorization()
             status, payload = self._dispatch(method)
             self._send_json(status, payload, origin=origin)
         except ServiceError as error:
@@ -1470,7 +1533,10 @@ class CompanionRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Authorization, Content-Type, X-Chamber-Trainer-Instance",
+            )
             self.send_header("Access-Control-Max-Age", "600")
             self.end_headers()
         except ServiceError as error:
@@ -1487,9 +1553,15 @@ class CompanionHTTPServer(ThreadingHTTPServer):
         manager: RunManager | None,
         *,
         instance_id: str | None = None,
+        allowed_origins: frozenset[str] = frozenset(),
+        allowed_hosts: frozenset[str] = frozenset(),
+        auth_token: str | None = None,
     ) -> None:
         self.manager = manager
         self.instance_id = instance_id or uuid4().hex
+        self.allowed_origins = allowed_origins
+        self.allowed_hosts = allowed_hosts
+        self.auth_token = auth_token
         super().__init__(address, CompanionRequestHandler)
 
     def server_bind(self) -> None:
@@ -1502,7 +1574,15 @@ class CompanionHTTPServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def serve(*, host: str, port: int, runs_dir: str | Path) -> None:
+def serve(
+    *,
+    host: str,
+    port: int,
+    runs_dir: str | Path,
+    allowed_origins: tuple[str, ...] = (),
+    allowed_hosts: tuple[str, ...] = (),
+    auth_token: str | None = None,
+) -> None:
     if host not in {"127.0.0.1", "localhost"}:
         raise ValueError("the companion may bind only to 127.0.0.1 or localhost")
     if not 1 <= port <= 65_535:
@@ -1511,12 +1591,29 @@ def serve(*, host: str, port: int, runs_dir: str | Path) -> None:
         os.environ.get("CHAMBER_TRAINER_INSTANCE_ID", "").strip()[:128]
         or uuid4().hex
     )
+    origins = frozenset(
+        _normalize_origin(origin)
+        for origin in (*allowed_origins, *_split_csv_env("CHAMBER_TRAINER_ALLOWED_ORIGINS"))
+    )
+    hosts = frozenset(
+        _normalize_hostname(entry)
+        for entry in (*allowed_hosts, *_split_csv_env("CHAMBER_TRAINER_ALLOWED_HOSTS"))
+    )
+    token = (auth_token or os.environ.get("CHAMBER_TRAINER_AUTH_TOKEN", "")).strip() or None
+    if (origins or hosts) and token is None:
+        raise ValueError(
+            "allowing non-loopback origins or hosts requires an authorization "
+            "token (set CHAMBER_TRAINER_AUTH_TOKEN or pass --auth-token)"
+        )
     # Bind before loading durable run state. A losing duplicate therefore
     # cannot mark the winning process's active run as interrupted.
     server = CompanionHTTPServer(
         (host, port),
         None,
         instance_id=instance_id,
+        allowed_origins=origins,
+        allowed_hosts=hosts,
+        auth_token=token,
     )
     manager: RunManager | None = None
     try:
@@ -1526,6 +1623,13 @@ def serve(*, host: str, port: int, runs_dir: str | Path) -> None:
             f"chamber trainer companion listening on http://{host}:{port}",
             flush=True,
         )
+        if origins or hosts:
+            print(
+                "remote access enabled for origins "
+                f"{sorted(origins) or '[]'} and hosts {sorted(hosts) or '[]'} "
+                "(authorization token required)",
+                flush=True,
+            )
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
         print("stopping companion; saving the active run at its next safe step", flush=True)

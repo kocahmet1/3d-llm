@@ -11,8 +11,99 @@ import type {
   TrainingSample,
 } from "./customTrainingTypes";
 
-export const TRAINER_BRIDGE_URL =
+export const DEFAULT_LOCAL_TRAINER_URL =
   process.env.NEXT_PUBLIC_CHAMBER_TRAINER_URL ?? "http://127.0.0.1:8765";
+
+export type TrainerConnectionSource = "local" | "remote";
+
+export interface TrainerConnection {
+  baseUrl: string;
+  token: string | null;
+  source: TrainerConnectionSource;
+}
+
+const LOCAL_CONNECTION: TrainerConnection = {
+  baseUrl: DEFAULT_LOCAL_TRAINER_URL,
+  token: null,
+  source: "local",
+};
+
+// The remote connection (a user's own HTTPS tunnel, for example from the
+// Colab notebook) lives in per-tab sessionStorage only. The token is a
+// throwaway secret that protects that user's temporary trainer, not an
+// account credential, and it never appears in a URL after adoption.
+const REMOTE_CONNECTION_STORAGE_KEY = "chamber-trainer-remote-connection";
+
+let activeConnection: TrainerConnection = LOCAL_CONNECTION;
+
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+export function normalizeTrainerBaseUrl(raw: string): string {
+  const parsed = new URL(raw);
+  const loopback = LOOPBACK_HOSTNAMES.has(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
+    throw new Error("A remote trainer link must start with https://");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Trainer links must not embed credentials.");
+  }
+  parsed.hash = "";
+  parsed.search = "";
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+export function getTrainerConnection(): TrainerConnection {
+  return activeConnection;
+}
+
+export function setRemoteTrainerConnection(
+  rawUrl: string,
+  token: string | null,
+): TrainerConnection {
+  const baseUrl = normalizeTrainerBaseUrl(rawUrl);
+  const cleanToken = token?.trim() || null;
+  activeConnection = { baseUrl, token: cleanToken, source: "remote" };
+  try {
+    window.sessionStorage.setItem(
+      REMOTE_CONNECTION_STORAGE_KEY,
+      JSON.stringify({ baseUrl, token: cleanToken }),
+    );
+  } catch {
+    // Storage may be unavailable; the in-memory connection still works.
+  }
+  return activeConnection;
+}
+
+export function clearRemoteTrainerConnection(): TrainerConnection {
+  activeConnection = LOCAL_CONNECTION;
+  try {
+    window.sessionStorage.removeItem(REMOTE_CONNECTION_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+  return activeConnection;
+}
+
+export function restoreRemoteTrainerConnection(): TrainerConnection {
+  if (typeof window === "undefined") return activeConnection;
+  try {
+    const raw = window.sessionStorage.getItem(REMOTE_CONNECTION_STORAGE_KEY);
+    if (raw) {
+      const stored = JSON.parse(raw) as { baseUrl?: unknown; token?: unknown };
+      if (typeof stored.baseUrl === "string") {
+        activeConnection = {
+          baseUrl: normalizeTrainerBaseUrl(stored.baseUrl),
+          token:
+            typeof stored.token === "string" && stored.token ? stored.token : null,
+          source: "remote",
+        };
+      }
+    }
+  } catch {
+    activeConnection = LOCAL_CONNECTION;
+  }
+  return activeConnection;
+}
 
 class TrainerBridgeError extends Error {
   status: number;
@@ -28,20 +119,26 @@ async function bridgeRequest<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const connection = activeConnection;
   let response: Response;
   try {
-    response = await fetch(`${TRAINER_BRIDGE_URL}${path}`, {
+    response = await fetch(`${connection.baseUrl}${path}`, {
       cache: "no-store",
       ...init,
       headers: {
         Accept: "application/json",
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(connection.token
+          ? { Authorization: `Bearer ${connection.token}` }
+          : {}),
         ...init?.headers,
       },
     });
   } catch {
     throw new TrainerBridgeError(
-      "The local trainer is not reachable. Start the Training Chamber locally and try again.",
+      connection.source === "remote"
+        ? "The cloud trainer is not reachable. Check that its Colab notebook is still running, then connect again with a fresh link."
+        : "The local trainer is not reachable. Start the Training Chamber locally and try again.",
     );
   }
 

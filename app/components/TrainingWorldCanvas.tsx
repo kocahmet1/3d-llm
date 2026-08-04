@@ -140,9 +140,15 @@ const MACHINE_ROOM_RISE_SECONDS = 0.42;
 const MACHINE_ROOM_REVEAL_SECONDS = 0.65;
 const MACHINE_ROOM_FOV = 58;
 const MACHINE_ROOM_CUE_RADIUS = 4;
-// The room is domestic scale with the units at arm's length, so the
-// full-rate mouse look that suits 50 m halls feels twitchy in here.
-const MACHINE_ROOM_LOOK_SCALE = 0.55;
+// Mouse-look feel. Radians of turn per pixel of mouse travel, plus the
+// damping lambda that chases the target pose — higher is snappier, with
+// less trailing glide after the hand stops.
+const LOOK_YAW_RATE = 0.0016;
+const LOOK_PITCH_RATE = 0.00145;
+const LOOK_DAMPING = 30;
+// The room is domestic scale with the units at arm's length, so it runs
+// at a fraction of the already-reduced base rate.
+const MACHINE_ROOM_LOOK_SCALE = 0.6;
 
 const FALLBACK_PHASE_COLORS: Record<TrainingPhase, string> = {
   overview: "#72f5c3",
@@ -7821,9 +7827,9 @@ export function TrainingWorldCanvas({
       if (deltaX !== 0 || deltaY !== 0) cancelGalleryTour();
       const lookRate =
         navigationRegion.kind === "machine-room" ? MACHINE_ROOM_LOOK_SCALE : 1;
-      targetYaw -= deltaX * 0.00235 * lookRate;
+      targetYaw -= deltaX * LOOK_YAW_RATE * lookRate;
       targetPitch = THREE.MathUtils.clamp(
-        targetPitch - deltaY * 0.0021 * lookRate,
+        targetPitch - deltaY * LOOK_PITCH_RATE * lookRate,
         -Math.PI * 0.485,
         Math.PI * 0.485,
       );
@@ -9020,8 +9026,8 @@ export function TrainingWorldCanvas({
         cameraLight.color.set("#ffd9b0");
       } else if (inMachineRoom) {
         reportNavigationMode("machine-room");
-        glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, 18, delta);
-        glancePitch = THREE.MathUtils.damp(glancePitch, targetPitch, 18, delta);
+        glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, LOOK_DAMPING, delta);
+        glancePitch = THREE.MathUtils.damp(glancePitch, targetPitch, LOOK_DAMPING, delta);
 
         let frameDollyDistance = 0;
         if (Math.abs(pendingDollyDistance) > 0.001) {
@@ -9385,8 +9391,8 @@ export function TrainingWorldCanvas({
           baseQuaternion.setFromRotationMatrix(cameraMatrix);
         }
 
-        glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, 14, delta);
-        glancePitch = THREE.MathUtils.damp(glancePitch, targetPitch, 14, delta);
+        glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, LOOK_DAMPING, delta);
+        glancePitch = THREE.MathUtils.damp(glancePitch, targetPitch, LOOK_DAMPING, delta);
         glanceEuler.set(glancePitch, glanceYaw, 0, "YXZ");
         glanceQuaternion.setFromEuler(glanceEuler);
         camera.position.copy(cameraPosition);
@@ -9416,8 +9422,8 @@ export function TrainingWorldCanvas({
 
         if (introActive && tourExtended) driveTourChamber(delta);
 
-        glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, 18, delta);
-        glancePitch = THREE.MathUtils.damp(glancePitch, targetPitch, 18, delta);
+        glanceYaw = THREE.MathUtils.damp(glanceYaw, targetYaw, LOOK_DAMPING, delta);
+        glancePitch = THREE.MathUtils.damp(glancePitch, targetPitch, LOOK_DAMPING, delta);
         let frameDollyDistance = 0;
         if (Math.abs(pendingDollyDistance) > 0.001) {
           frameDollyDistance =

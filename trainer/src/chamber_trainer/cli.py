@@ -57,6 +57,28 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path("runs/custom"),
         help="durable run records, events, corpora, and checkpoints",
     )
+    serve.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        metavar="ORIGIN",
+        help="additionally allow this browser origin (e.g. a hosted site); "
+        "requires --auth-token or CHAMBER_TRAINER_AUTH_TOKEN",
+    )
+    serve.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        metavar="HOSTNAME",
+        help="additionally accept this Host header (e.g. an HTTPS tunnel "
+        "hostname); requires an authorization token",
+    )
+    serve.add_argument(
+        "--auth-token",
+        default=None,
+        help="bearer token required on every request when remote access is "
+        "enabled (CHAMBER_TRAINER_AUTH_TOKEN is the env equivalent)",
+    )
     return parser
 
 
@@ -114,7 +136,14 @@ def _serve(args: argparse.Namespace) -> int:
     from .service import serve
 
     try:
-        serve(host=args.host, port=args.port, runs_dir=args.runs_dir)
+        serve(
+            host=args.host,
+            port=args.port,
+            runs_dir=args.runs_dir,
+            allowed_origins=tuple(args.allow_origin),
+            allowed_hosts=tuple(args.allow_host),
+            auth_token=args.auth_token,
+        )
     except OSError as error:
         address_unavailable = error.errno in {errno.EACCES, errno.EADDRINUSE} or getattr(
             error, "winerror", None

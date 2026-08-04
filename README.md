@@ -364,9 +364,11 @@ npm run dev:training
 
 Run the last command once, leave it open, and open its printed Local URL. In
 **Custom Training**, upload this `README.md` as a sample corpus and choose
-**Micro**, **64 byte tokens**, **Quick**, and **CPU**. The companion is
-loopback-only, so a hosted page cannot start it. Full test instructions are in
-[`demo/JUDGE-TESTING.md`](demo/JUDGE-TESTING.md).
+**Micro**, **64 byte tokens**, **Quick**, and **CPU**. The companion binds
+loopback only; a hosted page can reach a trainer solely through the user's own
+tunnel and one-time token (see
+[Train from the hosted site](#train-from-the-hosted-site-free-colab-trainer)).
+Full test instructions are in [`demo/JUDGE-TESTING.md`](demo/JUDGE-TESTING.md).
 
 ## Run locally
 
@@ -400,9 +402,10 @@ prepared corpus and saved configuration are reused automatically.
 The chamber accepts local `.txt` and `.md` files, derives a guarded training
 configuration from the selected preset, and shows authentic loss, validation,
 throughput, fixed-seed text samples, checkpoints, and process logs. Training
-continues in the local companion when the browser navigates away. The hosted
-site cannot start PyTorch by itself, so its chamber shows a connection notice
-until that loopback-only companion is running.
+continues in the companion when the browser navigates away. The hosted site
+cannot start PyTorch by itself: its chamber offers two ways to connect a
+trainer — the free Colab cloud trainer described below, or this locally
+launched companion.
 
 Useful project commands:
 
@@ -446,6 +449,36 @@ chamber-trainer train --config configs/local.toml
 
 See `trainer/README.md` for configuration, device, precision, checkpoint, and
 resume details.
+
+## Train from the hosted site (free Colab trainer)
+
+Visitors to the hosted site can train without installing anything. The chamber
+links to [`notebooks/train_in_colab.ipynb`](notebooks/train_in_colab.ipynb),
+which runs the same PyTorch companion on the visitor's own free Google Colab
+session (usually with a free GPU) and connects it back to the site:
+
+1. The visitor opens the notebook and chooses **Runtime → Run all**.
+2. The notebook installs `trainer/`, opens a private `trycloudflare.com` HTTPS
+   tunnel to a loopback-bound companion, and generates a one-time bearer token.
+3. The last cell prints a connect link back to
+   `/custom-training#trainer=…&trainerToken=…`. The page adopts the fragment,
+   strips it from the address bar, and keeps the connection in per-tab session
+   storage only.
+4. Upload text, choose a preset, and start training as usual. The corpus goes
+   only to the visitor's own Colab session, never to the site's servers.
+
+Security model: the companion still binds only 127.0.0.1. Remote use requires
+three explicit settings, which the notebook supplies —
+`CHAMBER_TRAINER_ALLOWED_ORIGINS` (the hosted site's origin, checked against
+the browser `Origin` header), `CHAMBER_TRAINER_ALLOWED_HOSTS` (the tunnel
+hostname, checked against `Host`), and `CHAMBER_TRAINER_AUTH_TOKEN` (required
+as `Authorization: Bearer` on every request). The service refuses to enable
+remote origins or hosts without a token, so an unconfigured companion behaves
+exactly as before. The CLI equivalents are `chamber-trainer serve
+--allow-origin … --allow-host … --auth-token …`.
+
+Colab sessions idle out after roughly 90 minutes and cap at about 12 hours;
+the chamber shows a reconnect notice with recovery steps when that happens.
 
 The package also exposes the requested Bun-compatible server entry. After
 installing dependencies, this command builds the site and then serves it:

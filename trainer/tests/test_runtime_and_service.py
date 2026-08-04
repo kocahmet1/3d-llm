@@ -1039,5 +1039,183 @@ class ObservableEngineTests(unittest.TestCase):
             self.assertIn("completed", states)
 
 
+class RemoteAccessTests(unittest.TestCase):
+    REMOTE_ORIGIN = "https://inside-one-training-step.example"
+    TUNNEL_HOST = "random-words.trycloudflare.com"
+    TOKEN = "remote-test-token"
+
+    def _server(self, manager: RunManager) -> CompanionHTTPServer:
+        return CompanionHTTPServer(
+            ("127.0.0.1", 0),
+            manager,
+            instance_id="remote-access-instance",
+            allowed_origins=frozenset({self.REMOTE_ORIGIN}),
+            allowed_hosts=frozenset({self.TUNNEL_HOST}),
+            auth_token=self.TOKEN,
+        )
+
+    def test_default_server_still_rejects_remote_origins(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = RunManager(temporary)
+            server = CompanionHTTPServer(("127.0.0.1", 0), manager)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request(
+                    "GET", "/health", headers={"Origin": self.REMOTE_ORIGIN}
+                )
+                response = connection.getresponse()
+                payload = json.loads(response.read())
+                self.assertEqual(response.status, 403)
+                self.assertIn("origin", payload["error"])
+                connection.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                manager.shutdown()
+
+    def test_allowed_origin_tunnel_host_and_token_are_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = RunManager(temporary)
+            server = self._server(manager)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+
+                # Preflight needs no token but must advertise Authorization.
+                connection.request(
+                    "OPTIONS",
+                    "/health",
+                    headers={"Origin": self.REMOTE_ORIGIN, "Host": self.TUNNEL_HOST},
+                )
+                preflight = connection.getresponse()
+                preflight.read()
+                self.assertEqual(preflight.status, 204)
+                self.assertEqual(
+                    preflight.getheader("Access-Control-Allow-Origin"),
+                    self.REMOTE_ORIGIN,
+                )
+                self.assertIn(
+                    "Authorization",
+                    preflight.getheader("Access-Control-Allow-Headers") or "",
+                )
+
+                # Missing token: refused, but CORS headers still present so the
+                # browser can read the error body.
+                connection.request(
+                    "GET",
+                    "/health",
+                    headers={"Origin": self.REMOTE_ORIGIN, "Host": self.TUNNEL_HOST},
+                )
+                unauthorized = connection.getresponse()
+                unauthorized_payload = json.loads(unauthorized.read())
+                self.assertEqual(unauthorized.status, 401)
+                self.assertIn("authorization", unauthorized_payload["error"])
+                self.assertEqual(
+                    unauthorized.getheader("Access-Control-Allow-Origin"),
+                    self.REMOTE_ORIGIN,
+                )
+
+                # Wrong token: also refused.
+                connection.request(
+                    "GET",
+                    "/health",
+                    headers={
+                        "Origin": self.REMOTE_ORIGIN,
+                        "Host": self.TUNNEL_HOST,
+                        "Authorization": "Bearer wrong-token",
+                    },
+                )
+                wrong = connection.getresponse()
+                wrong.read()
+                self.assertEqual(wrong.status, 401)
+
+                # Correct token: accepted, health reports remote access.
+                connection.request(
+                    "GET",
+                    "/health",
+                    headers={
+                        "Origin": self.REMOTE_ORIGIN,
+                        "Host": self.TUNNEL_HOST,
+                        "Authorization": f"Bearer {self.TOKEN}",
+                    },
+                )
+                ok = connection.getresponse()
+                ok_payload = json.loads(ok.read())
+                self.assertEqual(ok.status, 200)
+                self.assertTrue(ok_payload["ok"])
+                self.assertFalse(ok_payload["localOnly"])
+                self.assertEqual(
+                    ok.getheader("Access-Control-Allow-Origin"), self.REMOTE_ORIGIN
+                )
+
+                # An origin outside the allowlist stays forbidden even with the
+                # correct token.
+                connection.request(
+                    "GET",
+                    "/health",
+                    headers={
+                        "Origin": "https://evil.example",
+                        "Host": self.TUNNEL_HOST,
+                        "Authorization": f"Bearer {self.TOKEN}",
+                    },
+                )
+                forbidden = connection.getresponse()
+                forbidden.read()
+                self.assertEqual(forbidden.status, 403)
+
+                # A Host outside loopback and the allowlist stays forbidden.
+                connection.request(
+                    "GET",
+                    "/health",
+                    headers={
+                        "Origin": self.REMOTE_ORIGIN,
+                        "Host": "unexpected.example",
+                        "Authorization": f"Bearer {self.TOKEN}",
+                    },
+                )
+                bad_host = connection.getresponse()
+                bad_host.read()
+                self.assertEqual(bad_host.status, 403)
+                connection.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                manager.shutdown()
+
+    def test_serve_refuses_remote_access_without_a_token(self) -> None:
+        with patch.object(service_module, "CompanionHTTPServer") as server_class:
+            with self.assertRaises(ValueError):
+                service_module.serve(
+                    host="127.0.0.1",
+                    port=8765,
+                    runs_dir="unused",
+                    allowed_origins=(self.REMOTE_ORIGIN,),
+                )
+        server_class.assert_not_called()
+
+    def test_serve_rejects_malformed_origins_and_hosts(self) -> None:
+        with patch.object(service_module, "CompanionHTTPServer") as server_class:
+            with self.assertRaises(ValueError):
+                service_module.serve(
+                    host="127.0.0.1",
+                    port=8765,
+                    runs_dir="unused",
+                    allowed_origins=("ftp://nope.example",),
+                    auth_token="token",
+                )
+            with self.assertRaises(ValueError):
+                service_module.serve(
+                    host="127.0.0.1",
+                    port=8765,
+                    runs_dir="unused",
+                    allowed_hosts=("https://not-a-bare-host.example",),
+                    auth_token="token",
+                )
+        server_class.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
