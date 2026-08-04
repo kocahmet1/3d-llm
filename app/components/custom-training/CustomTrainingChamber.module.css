@@ -436,6 +436,49 @@
   line-height: 1.5;
 }
 
+.twoClickRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.twoClickRow span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid rgba(121, 247, 189, 0.24);
+  border-radius: 999px;
+  background: rgba(10, 29, 27, 0.5);
+  color: #cfe9dd;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+}
+
+.twoClickRow strong {
+  color: #79f7bd;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.twoClickRow i {
+  color: #6fae97;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.twoClickRow em {
+  color: #a99e7f;
+  font-size: 9px;
+  font-style: italic;
+}
+
 .altLocal {
   margin-top: 10px;
 }

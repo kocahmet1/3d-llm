@@ -804,14 +804,24 @@ export function CustomTrainingChamber() {
                 Required for real training
               </span>
               <h2 id="trainer-connect-title">
-                Connect a PyTorch trainer to this page.
+                Connect a PyTorch trainer to this page — two clicks, you&apos;re
+                set.
               </h2>
               <p>
                 Real training happens in a companion trainer that this page
-                talks to. The fastest path is the free cloud trainer: open the
-                notebook, run it, and click the connect link it prints — no
-                installation, and Colab usually includes a free GPU.
+                talks to. The free cloud trainer needs no installation and no
+                setup — Colab usually even includes a free GPU:
               </p>
+              <div className={styles.twoClickRow}>
+                <span>
+                  <strong>Click 1</strong> Run all in the notebook
+                </span>
+                <i aria-hidden="true">→</i>
+                <span>
+                  <strong>Click 2</strong> Its green connect link
+                </span>
+                <em>≈1 minute in between — then train away</em>
+              </div>
               {hostedSite ? null : (
                 <details className={styles.altLocal}>
                   <summary>Prefer this computer? Run the local trainer.</summary>
