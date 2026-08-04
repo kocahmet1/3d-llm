@@ -1446,7 +1446,7 @@ const LOGITS_COMPONENT_TARGETS = deepFreeze<readonly AssistantTargetContext[]>([
     },
     whyItMatters: "Logits can be any real number and are not comparable to a probability until softmax normalizes them.",
     commonMisconceptions: [
-      "This trace deliberately stores logits as log(p)+ln(10), so every value here is negative and they sum to a specific constant under exp; general logits can be any sign and do not share that property.",
+      "This trace deliberately stores logits as log(p)+ln(10), so these sixteen values are mixed-sign and their exponentials sum to exactly 10 by construction; general logits can be any real numbers, and their exponential sum can be any positive value.",
       "A higher logit means a higher resulting probability, but the raw number itself is not a probability.",
     ],
     relatedTargetIds: ["logits:softmax-operation", "logits:probabilities", "station:vocabulary-projection"],

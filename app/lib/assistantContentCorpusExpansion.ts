@@ -105,6 +105,7 @@ export const CORPUS_EXPANSION_COMPONENT_TARGETS: readonly AssistantTargetContext
     commonMisconceptions: [
       "The scanner is not a learned neural-network layer.",
       "Cleaning is not semantic reasoning; it follows explicit preprocessing rules.",
+      "Lowercasing is a toy simplification for this 16-entry vocabulary: real pipelines keep case, and cleaning at scale means deduplication, quality filtering, and Unicode normalization.",
     ],
     relatedTargetIds: ["corpus:source-text", "corpus:normalized-text"],
     explanationByMode: {

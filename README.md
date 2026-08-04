@@ -137,10 +137,11 @@ they are not claimed to be outputs from `configs/toy.toml`.
 | Input | Action |
 | --- | --- |
 | `W` / `S` | Continue along the lesson / return toward the previous station |
-| `A` / `D` | Select the left / right branch at a junction |
+| `A` / `D` | Step sideways for a different view |
+| `Q` / `E` | Select the left / right branch at a junction |
 | Mouse | Look around the 3D world |
 | Mouse wheel | Travel along the route |
-| `Space` | Play or pause the ride |
+| `Space` | Play or pause the current chamber's process animation |
 | Hold `V` | Ask the in-world voice guide about the exhibit under the reticle |
 | Right click | Spotlight the component under the pointer (or under the center crosshair while the mouse is captured): a magnified replica takes center stage, the guide moves beside it and starts listening for your question |
 | Right click on empty space / `Esc` | Release the spotlight and stop listening |
