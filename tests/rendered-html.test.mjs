@@ -184,6 +184,12 @@ test("the hosted page adopts a user-supplied cloud trainer safely", async () => 
   assert.match(chamber, /adoptTrainerLinkFromLocation/);
   assert.match(chamber, /colab\.research\.google\.com/);
 
+  // The hosted page never probes 127.0.0.1 and shows Colab-only guidance
+  // instead of local-trainer notices.
+  assert.match(chamber, /isHostedPage/);
+  assert.match(chamber, /No trainer connected yet/);
+  assert.match(chamber, /never probes 127\.0\.0\.1/);
+
   // The companion still binds loopback only, and remote origins or hosts are
   // usable only together with a required bearer token.
   assert.match(service, /CHAMBER_TRAINER_AUTH_TOKEN/);

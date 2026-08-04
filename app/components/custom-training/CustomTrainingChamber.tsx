@@ -41,6 +41,12 @@ const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const TERMINAL_STATUSES = new Set(["completed", "stopped", "failed"]);
 const COLAB_NOTEBOOK_URL =
   "https://colab.research.google.com/github/kocahmet1/3d-llm/blob/main/notebooks/train_in_colab.ipynb";
+const LOOPBACK_PAGE_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+function isHostedPage(): boolean {
+  if (typeof window === "undefined") return false;
+  return !LOOPBACK_PAGE_HOSTNAMES.has(window.location.hostname);
+}
 
 const PRESETS: ReadonlyArray<{
   id: TrainingPreset;
@@ -278,11 +284,19 @@ export function CustomTrainingChamber() {
     getTrainerConnection,
   );
   const [connectInput, setConnectInput] = useState("");
+  const [hostedSite, setHostedSite] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const connect = useCallback(async () => {
     setBridge("checking");
     setMessage(null);
+    if (isHostedPage() && getTrainerConnection().source === "local") {
+      // The hosted page never probes 127.0.0.1: nothing can answer there,
+      // and Chrome would show a confusing local-network permission prompt.
+      // Connecting a cloud trainer switches the source to "remote".
+      setBridge("offline");
+      return;
+    }
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 2_500);
     try {
@@ -314,6 +328,7 @@ export function CustomTrainingChamber() {
       restoreRemoteTrainerConnection();
     }
     setConnection(getTrainerConnection());
+    setHostedSite(isHostedPage());
     const timer = window.setTimeout(() => void connect(), 0);
     return () => window.clearTimeout(timer);
   }, [connect]);
@@ -496,11 +511,13 @@ export function CustomTrainingChamber() {
               : bridge === "checking"
                 ? "Contacting cloud trainer"
                 : "Cloud trainer offline"
-            : bridge === "online"
-              ? "Local trainer connected"
-              : bridge === "checking"
-                ? "Finding local trainer"
-                : "Local trainer offline"}
+            : hostedSite
+              ? "No trainer connected"
+              : bridge === "online"
+                ? "Local trainer connected"
+                : bridge === "checking"
+                  ? "Finding local trainer"
+                  : "Local trainer offline"}
         </div>
       </header>
 
@@ -795,24 +812,26 @@ export function CustomTrainingChamber() {
                 notebook, run it, and click the connect link it prints — no
                 installation, and Colab usually includes a free GPU.
               </p>
-              <details className={styles.altLocal}>
-                <summary>Prefer this computer? Run the local trainer.</summary>
-                <p>
-                  Download or clone{" "}
-                  <a
-                    href="https://github.com/kocahmet1/3d-llm"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    kocahmet1/3d-llm from GitHub
-                  </a>{" "}
-                  onto the computer you want to train on, install its Node and
-                  trainer dependencies, then run{" "}
-                  <code>npm run dev:training</code> once from the project root.
-                  Leave that terminal open and open the{" "}
-                  <strong>Local URL</strong> it prints.
-                </p>
-              </details>
+              {hostedSite ? null : (
+                <details className={styles.altLocal}>
+                  <summary>Prefer this computer? Run the local trainer.</summary>
+                  <p>
+                    Download or clone{" "}
+                    <a
+                      href="https://github.com/kocahmet1/3d-llm"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      kocahmet1/3d-llm from GitHub
+                    </a>{" "}
+                    onto the computer you want to train on, install its Node and
+                    trainer dependencies, then run{" "}
+                    <code>npm run dev:training</code> once from the project root.
+                    Leave that terminal open and open the{" "}
+                    <strong>Local URL</strong> it prints.
+                  </p>
+                </details>
+              )}
             </div>
             <div className={styles.localCommandCard}>
               <span>Free cloud trainer · Google Colab</span>
@@ -856,18 +875,25 @@ export function CustomTrainingChamber() {
                     : bridge === "checking"
                       ? "Contacting cloud trainer"
                       : "Cloud trainer not reachable"
-                  : bridge === "online"
-                    ? "Local trainer connected"
-                    : bridge === "checking"
-                      ? "Checking this machine"
-                      : "No local trainer detected"}
+                  : hostedSite
+                    ? "No trainer connected yet"
+                    : bridge === "online"
+                      ? "Local trainer connected"
+                      : bridge === "checking"
+                        ? "Checking this machine"
+                        : "No local trainer detected"}
               </strong>
-              {bridge === "offline" ? (
+              {connection.source === "local" && hostedSite ? (
+                <small className={styles.connectHint}>
+                  Start the free Colab trainer, then click its connect link.
+                </small>
+              ) : null}
+              {bridge === "offline" && !(connection.source === "local" && hostedSite) ? (
                 <button type="button" onClick={() => void connect()}>
                   Try connection again
                 </button>
               ) : null}
-              {connection.source === "remote" ? (
+              {connection.source === "remote" && !hostedSite ? (
                 <button type="button" onClick={useLocalTrainer}>
                   Use local trainer instead
                 </button>

@@ -429,6 +429,13 @@
   opacity: 0.45;
 }
 
+.connectHint {
+  max-width: 170px;
+  color: #b3a888;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
 .altLocal {
   margin-top: 10px;
 }
